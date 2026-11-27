@@ -2,7 +2,7 @@ import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type { mailSchema } from "@trafficflow/db/mail";
 import { carryDialect, dialect, type LockMode } from "@trafficflow/db/dialect";
 import {
-  AccountErasedError, assertBinding, bindDb, bindingOf, BindingRefusedError, carryBinding, claimIdempotencyKey, rebindTx,
+  AccountErasedError, assertBinding, bindDb, bindingOf, BindingRefusedError, carryBinding, claimIdempotencyKey,
   fencedAccountOf, fencedAccountWrite, inTransactionHandle, markFenced, readAccountErasedAt,
   type AccountBound, type LedgerTx, type NothingBound, type Tx,
 } from "@trafficflow/db";
@@ -53,13 +53,6 @@ export type PassRoster = (limit: number, offset?: number, priority?: "recovery")
  */
 export function dbFor(db: Db, accountId: string): BoundDb {
   return bindDb(db, { account: accountId });
-}
-
-/** Name or clear an exact lookup key while keeping the transaction's account. */
-export async function setAccountLookupKey(tx: LedgerTx, accountId: string, key: string | null): Promise<void> {
-  if (bindingOf(tx) === undefined) return;
-  assertBinding(tx, accountId);
-  await rebindTx(tx, { key });
 }
 
 /** A credential lookup carries the presented key for one indexed read. */

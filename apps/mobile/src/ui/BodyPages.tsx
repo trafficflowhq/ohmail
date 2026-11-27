@@ -5,47 +5,45 @@
  * message. A clamped caller (`numberOfLines`) draws the first page and offers no press.
  */
 import { Fragment, memo, useContext, useMemo, useState } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import { QUOTED_HISTORY_LIMITS, quotedHistoryOfText } from "../mail/quoted-tree";
-import { useTheme, type Theme } from "../theme";
+import { useTheme } from "../theme";
 import { Copy } from "../copy";
 import { Txt, type TxtProps } from "./base";
 import { bodyPages, pageBlocks, pagesAskedFor } from "./body-pages";
 import { FoldContext, HistoryRow, type FoldScope } from "./HistoryFold";
+import { linkedText, MailLinkSheet, useMailLinks } from "./MailLinks";
 
 type BodyPagesProps = Omit<TxtProps, "children"> & { text: string; highlight?: string };
-
-function marked(text: string, phrase: string | undefined, t: Theme) {
-  const start = phrase ? text.indexOf(phrase) : -1;
-  if (!phrase || start < 0) return text;
-  const end = start + phrase.length;
-  return (
-    <>{text.slice(0, start)}
-      <Text maxFontSizeMultiplier={t.textCap} minimumFontScale={t.textKey} style={{ backgroundColor: t.c.accentSoft }}>
-        {text.slice(start, end)}
-      </Text>{text.slice(end)}
-    </>
-  );
-}
+type PagesProps = BodyPagesProps & { onLink?: (url: string) => void };
 
 /** One page, kept across a further press: only the new page is laid out, in its blocks. */
 const Page = memo(
-  function Page({ text, style, highlight, ...rest }: BodyPagesProps) {
+  function Page({ text, style, highlight, onLink, ...rest }: PagesProps) {
     const theme = useTheme();
     return (
       <View style={style}>
-        {pageBlocks(text).map((block, i) => <Txt key={i} {...rest}>{marked(block, highlight, theme)}</Txt>)}
+        {pageBlocks(text).map((block, i) => <Txt key={i} {...rest}>{linkedText(block, theme, onLink, { highlight, asWritten: true })}</Txt>)}
       </View>
     );
   },
-  (a, b) => a.text === b.text && a.highlight === b.highlight && a.variant === b.variant && a.tone === b.tone
+  (a, b) => a.text === b.text && a.onLink === b.onLink && a.highlight === b.highlight && a.variant === b.variant && a.tone === b.tone
     && a.selectable === b.selectable && a.numberOfLines === b.numberOfLines,
 );
 
 /** Under a {@link HistoryFold} the body folds its quoted history; a clamped preview never does. */
 export function BodyPages(props: BodyPagesProps) {
   const scope = useContext(FoldContext);
-  return scope !== null && props.numberOfLines === undefined ? <FoldedPages scope={scope} {...props} /> : <Pages {...props} />;
+  const links = useMailLinks();
+  const clamped = props.numberOfLines !== undefined;
+  return (
+    <>
+      {scope !== null && !clamped
+        ? <FoldedPages scope={scope} {...props} onLink={links.open} />
+        : <Pages {...props} onLink={clamped ? undefined : links.open} />}
+      {links.url !== null ? <MailLinkSheet url={links.url} onClose={links.close} /> : null}
+    </>
+  );
 }
 
 /** Blank lines at either end of a stretch are the cut's, not the writer's. */
@@ -55,7 +53,7 @@ const trimmed = (s: string): string => s.replace(/^(?:[ \t]*\n)+/, "").replace(/
  * The body cut at its history: the new words, the end marker (parent-relative, so it stays a direct
  * child of the panel: this is a fragment), the row, the history once opened, and what follows it.
  */
-function FoldedPages({ scope, text, ...rest }: BodyPagesProps & { scope: FoldScope }) {
+function FoldedPages({ scope, text, ...rest }: PagesProps & { scope: FoldScope }) {
   const [openFor, setOpenFor] = useState<string | null>(null);
   const lines = useMemo(() => text.replace(/\r\n?/g, "\n").split("\n"), [text]);
   const range = useMemo(
@@ -89,18 +87,18 @@ function FoldedPages({ scope, text, ...rest }: BodyPagesProps & { scope: FoldSco
   );
 }
 
-function Pages({ text, highlight, ...rest }: BodyPagesProps) {
+function Pages({ text, highlight, onLink, ...rest }: PagesProps) {
   const theme = useTheme();
   const [kept, setKept] = useState<{ text: string; pages: number }>({ text, pages: 1 });
   const asked = pagesAskedFor(kept, text);
   const plan = bodyPages(text, asked, rest.numberOfLines !== undefined);
-  if (plan.pages === null) return <Txt {...rest}>{marked(text, highlight, theme)}</Txt>;
+  if (plan.pages === null) return <Txt {...rest}>{linkedText(text, theme, onLink, { highlight, asWritten: true })}</Txt>;
   const more = plan.more;
   return (
     <>
       {/* The caller's top margin belongs above the first page, not between pages. */}
       {plan.pages.map((page, i) => (
-        <Page key={i} {...rest} highlight={highlight} style={i === 0 ? rest.style : [rest.style, { marginTop: 0 }]} text={page} />
+        <Page key={i} {...rest} onLink={onLink} highlight={highlight} style={i === 0 ? rest.style : [rest.style, { marginTop: 0 }]} text={page} />
       ))}
       {more !== null ? (
         <Txt

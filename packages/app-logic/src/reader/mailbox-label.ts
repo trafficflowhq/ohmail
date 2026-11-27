@@ -45,6 +45,27 @@ export function mailboxAddressCount(facts: readonly { address: string }[]): numb
   return new Set(facts.map((m) => m.address.trim().toLowerCase())).size;
 }
 
+/** A bare delivery address already named on the recipient line adds no routing information. */
+export function distinctDeliveryLabel(
+  label: string | null | undefined,
+  recipients:
+    | {
+        to: readonly { address: string }[];
+        cc: readonly { address: string }[];
+      }
+    | undefined,
+  ownAddresses: readonly string[],
+): string | null {
+  if (!label || !recipients) return label ?? null;
+  const key = label.toLowerCase();
+  const matches = (address: string) => address.trim().toLowerCase() === key;
+  const repeated =
+    ownAddresses.some(matches) &&
+    (recipients.to.some(({ address }) => matches(address)) ||
+      recipients.cc.some(({ address }) => matches(address)));
+  return repeated ? null : label;
+}
+
 export function mailboxLabelResolver(
   facts: readonly MailboxLabelFact[] | null,
 ): (mailboxId: string, form?: "short" | "label") => string | null {

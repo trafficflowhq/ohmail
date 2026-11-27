@@ -88,6 +88,29 @@ function scopeWith(write: (face: FaceName) => Promise<FaceName | null>) {
   return { scope, adopted, submitted, state };
 }
 
+it("leaves an explicit device look in place through account reads and adopts a confirmed account write", async () => {
+  let pin: FaceName | null = "ohmarchy";
+  let account: FaceName | null = null;
+  const written: FaceName[] = [];
+  const scope = faceScope({
+    write: async (face) => { written.push(face); return face; },
+    adopt: (face) => { account = face; },
+    clearPin: () => { pin = null; },
+    pin: () => pin,
+    deviceOwnsPin: () => pin !== null,
+    setPin: (face) => { pin = face; },
+    remember: () => {},
+    follows: true,
+  });
+  scope.beginRead()("paper");
+  expect(resolveFace(pin, account)).toBe("ohmarchy");
+  expect(written).toEqual([]);
+  expect(await scope.applyAll("ohmarchy")).toBe(true);
+  expect(written).toEqual(["ohmarchy"]);
+  expect(pin).toBeNull();
+  expect(account).toBe("ohmarchy");
+});
+
 /** A keystore in memory; a relaunch is a new phone over the same rows. */
 function memoryKV(): SecureKV & { rows: Map<string, string> } {
   const rows = new Map<string, string>();
@@ -216,12 +239,36 @@ describe("the face travels on PATCH /consent/settings, one axis, echo back", () 
 
 describe("faceScope: the echo is adopted and the pin released, on success only", () => {
   it("adopts what the write answered — not what was asked for — then releases the pin", async () => {
-    /* Mutation: `deps.adopt(face)` (the argument) instead of `deps.adopt(stored)` → red, because
-       the write here deliberately answers something else. */
     const { scope, adopted, submitted } = scopeWith(async () => "paper");
-    expect(await scope.applyAll("ohmarchy")).toBe(true);
+    expect(await scope.applyAll("paper")).toBe(true);
     expect(adopted).toEqual(["paper"]);
-    expect(submitted).toEqual(["ohmarchy"]);
+    expect(submitted).toEqual(["paper"]);
+  });
+
+  it.each([null, "paper"] as const)("keeps the pin when the write answers %s instead of the submitted look", async (echo) => {
+    const { scope, state, adopted, submitted } = scopeWith(async () => echo);
+    state.pin = "ohmarchy";
+    expect(await scope.applyAll("ohmarchy")).toBe(false);
+    expect(state.pin).toBe("ohmarchy");
+    expect(adopted).toEqual([]);
+    expect(submitted).toEqual([]);
+  });
+
+  it("does not start a second account look write while the first is pending", async () => {
+    const first = deferred<FaceName>();
+    const writes: FaceName[] = [];
+    const { scope, adopted } = scopeWith((face) => {
+      writes.push(face);
+      return writes.length === 1 ? first.promise : Promise.resolve(face);
+    });
+    const saving = scope.applyAll("ohmarchy");
+    expect(await scope.applyAll("paper")).toBe(false);
+    expect(writes).toEqual(["ohmarchy"]);
+    first.resolve("ohmarchy");
+    expect(await saving).toBe(true);
+    expect(adopted).toEqual(["ohmarchy"]);
+    expect(await scope.applyAll("paper")).toBe(true);
+    expect(adopted).toEqual(["ohmarchy", "paper"]);
   });
 
   it("a REFUSED write adopts nothing and leaves this device pinned", async () => {
@@ -268,7 +315,7 @@ describe("faceScope: the echo is adopted and the pin released, on success only",
     // Adopting null is the point, not an else-arm smell: an account whose choice went away must
     // stop skinning this device, rather than leaving a stale copy in charge.
     const { scope, adopted } = scopeWith(async () => null);
-    expect(await scope.applyAll("paper")).toBe(true);
+    scope.beginRead()(null);
     expect(adopted).toEqual([null]);
   });
 });

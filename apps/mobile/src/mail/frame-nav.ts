@@ -9,7 +9,10 @@
 
 import { SAFE_HREF, isMailto } from "@ohmail/client-engine";
 import { refuse, type RefusalArg } from "../refusal";
-import { PHONE_LINK_SCHEME } from "./sanitize";
+export { isMailto };
+
+/** The scheme the document carries in place of its real destinations. */
+export const PHONE_LINK_SCHEME = "ohmail-link:";
 
 export type FrameNavDecision =
   | { kind: "load" }
@@ -37,6 +40,24 @@ export function frameNavDecision(url: string, links: readonly string[]): FrameNa
     return { kind: "confirm", url: target };
   }
   return { kind: "refuse" };
+}
+
+/** The actual host, without the username, path or port. */
+export function linkHostname(url: string): string | null {
+  const authority = /^https?:[/\\]*([^/\\?#]+)/i.exec(url.replace(/[\t\r\n]/g, "").trim())?.[1];
+  if (!authority) return null;
+  const hostPort = authority.slice(authority.lastIndexOf("@") + 1);
+  const address = hostPort.startsWith("[") ? /^\[[^\]]+\]/.exec(hostPort)?.[0] : hostPort.split(":")[0];
+  if (!address) return null;
+  const printable = address.replace(/\p{C}/gu, "");
+  // React Native's URL parser does not reliably strip user info or parse IPv6 hostnames.
+  if (printable.startsWith("[")) return printable;
+  try {
+    const hostname = decodeURIComponent(printable).replace(/\p{C}/gu, "");
+    return new URL("https://" + hostname + "/").hostname || hostname;
+  } catch {
+    return printable;
+  }
 }
 
 /**

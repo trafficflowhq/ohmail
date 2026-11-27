@@ -7,12 +7,15 @@
  * on the phone.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryMirrorStore } from "@ohmail/client-engine";
 import { refuse, sayArg } from "../src/refusal";
 import type { MobileEngineDeps } from "../src/engine/boot";
-import type { LetterWords } from "../src/compose/letter-keeper";
+import { openLetterKeeper, type LetterWords } from "../src/compose/letter-keeper";
 import { dto, listen, mailServer } from "./helpers/mail-server";
 import { deviceDisk } from "./helpers/device-disk";
-import { wordsOf } from "../src/compose/letter-store";
+import { letterDoor, wordsOf, type Letter } from "../src/compose/letter-store";
+import { restoreLetters, type LetterKeep, type OutboxRow } from "../src/compose/letter-restore";
+import { keptRecipients } from "../src/state/live";
 import { baseAfter, baseFor, waitedFor, type DraftBase } from "../src/ui/compose-keep";
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
@@ -314,6 +317,53 @@ describe("a letter being written survives a hard stop", () => {
     } finally { fake.server.close(); }
   }, 60_000);
 
+  it.each(["outbox", "server"] as const)("recovers a signed letter already in the %s without a second draft", async (source) => {
+    const { fake, origin } = await server();
+    const disk = deviceDisk();
+    const url = "https://example.test/contact";
+    const signature = `Example team\nContact us (${url})`;
+    const signatureHtml = `<p>Example team<br><a href="${url}">Contact us</a></p>`;
+    const html = `<p>${WORDS.body}</p>${signatureHtml}`;
+    try {
+      const first = await launch(disk, origin, { offline: true });
+      const letter = first.compose();
+      letter.addFile({ filename: "note.txt", contentType: "text/plain", contentBase64: "SGVsbG8=", sizeBytes: 5 });
+      letter.markSend(signature, signatureHtml);
+      await first.letters.landed();
+      if (source === "outbox") {
+        const result = await first.engine.mutate({
+          kind: "mail_send", mailboxId: WORDS.mailboxId!, inReplyTo: null, subject: WORDS.subject, to: TO,
+          body: `${WORDS.body}\n\n${signature}`, html,
+        });
+        expect(result.status).toBe("queued");
+      } else {
+        fake.addDraft({
+          id: "held-letter", mailboxId: WORDS.mailboxId, subject: WORDS.subject, to: TO, cc: [], bcc: [],
+          body: `${WORDS.body}\n${signature}`, status: "unverified", updatedAt: new Date().toISOString(),
+          html: html.replaceAll("<p>", '<p style="margin-top:0;margin-bottom:0">').replace("<br>", "<br />"),
+        });
+      }
+      kill(first, disk);
+
+      const next = await launch(disk, origin, { offline: source === "outbox" });
+      const restored = await next.restore();
+      expect(restored).toMatchObject({ kept: 0, unclear: 0, unconfirmed: 0 });
+      if (source === "outbox") {
+        const queued = next.engine.pendingMutations().find((row) => row.mutation.kind === "mail_send");
+        expect(queued?.mutation).toMatchObject({ html });
+        expect(next.letters.letter(letter.id)?.send?.key).toBe(queued?.key);
+        next.net.offline = false;
+        await next.flush();
+        expect(drafts(fake)).toHaveLength(0);
+        expect(sends(fake)).toHaveLength(1);
+      } else {
+        expect(drafts(fake).map((row) => row.id)).toEqual(["held-letter"]);
+        expect(next.letters.filesOf("held-letter").map((file) => file.filename)).toEqual(["note.txt"]);
+        expect(sends(fake)).toHaveLength(0);
+      }
+    } finally { fake.server.close(); }
+  }, 60_000);
+
   it("a Send killed before its outbox row, beside an older sent mail of the same subject: the letter is kept, never dropped", async () => {
     const { fake, origin } = await server();
     const disk = deviceDisk();
@@ -490,6 +540,347 @@ describe("a letter being written survives a hard stop", () => {
   const FWD: LetterWords = { ...WORDS, mode: "forward", messageId: "m1", subject: "Fwd: Welcome", body: "See below" };
   const forwardTo = (first: Awaited<ReturnType<typeof launch>>, parts: string[]) =>
     first.actions.sendForward("m1", TO, FWD.body, null, [], false, false, null, { forwardParts: parts });
+
+  async function markedForward(draftId: string | null, outbox: OutboxRow[], drafts: Parameters<typeof restoreLetters>[0]["drafts"] = () => [], forwardParts?: string[]) {
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    const stamp = "2026-11-25T08:00:00Z";
+    const send = { at: stamp, key: null, mailboxId: "mb-2", forwardParts };
+    const letter: Letter = {
+      v: 1, id: "forward", ...FWD, draftId, savedAs: null, files: [], forwardKept: null,
+      send, keep: null, updatedAt: stamp,
+    };
+    door.put(letter);
+    const keep = vi.fn(async (draft: LetterKeep) => {
+      draft.row({ draftId: "recovered", key: null });
+      return "kept" as const;
+    });
+    const restored = await restoreLetters({
+      door, owned: new Set(), outbox: () => outbox, keep, hasMessage: () => true, drafts,
+      firstSync: async () => undefined, parse: (value) => value ? [{ name: null, address: value }] : [],
+    });
+    return { mark: door.letter(letter.id)?.send, keep, restored };
+  }
+
+  const forwardMutation = { kind: "mail_send", forwardOf: FWD.messageId, mailboxId: "mb-2", to: TO, subject: FWD.subject, body: FWD.body };
+
+  it("recognizes its queued forward by the sender at Send even when the draft had another sender", async () => {
+    const state = await markedForward(null, [
+      { key: "other-sender", mutation: { ...forwardMutation, mailboxId: "mb-1" } },
+      { key: "same-press", mutation: forwardMutation },
+    ]);
+    expect(state.mark?.key).toBe("same-press");
+    expect(state.keep).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { detail: "a different subject", draftId: null, queued: { ...forwardMutation, subject: "Fwd: Later" } },
+    { detail: "a different draft", draftId: "first-draft", queued: { ...forwardMutation, draftId: "other-draft" } },
+  ])("does not attach restored words to a queued forward with $detail", async ({ draftId, queued }) => {
+    const state = await markedForward(draftId, [{ key: "unrelated", mutation: queued }]);
+    expect(state.mark).toBeUndefined();
+    expect(state.restored.unclear).toBe(1);
+    expect(state.keep).toHaveBeenCalledOnce();
+  });
+
+  it("does not drop a bound forward because another sent draft has identical text and recipients", async () => {
+    const state = await markedForward("first-draft", [], () => [{
+      id: "other-draft", status: "sent", forwardOfMessageId: FWD.messageId, mailboxId: "mb-2",
+      subject: FWD.subject, body: FWD.body, to: TO, updatedAt: "2026-11-25T08:00:01Z",
+    }]);
+    expect(state.restored.unclear).toBe(1);
+    expect(state.keep).toHaveBeenCalledOnce();
+  });
+
+  it("distinguishes queued forwards by the source attachments they carry", async () => {
+    const state = await markedForward(null, [
+      { key: "unrelated", mutation: { ...forwardMutation, forwardParts: ["part-a"] } },
+      { key: "same-press", mutation: { ...forwardMutation, forwardParts: ["part-b", "part-a"] } },
+    ], () => [], ["part-a", "part-b"]);
+    expect(state.mark?.key).toBe("same-press");
+    expect(state.keep).not.toHaveBeenCalled();
+  });
+
+  it("keeps the draft when the interrupted press matches two queued forwards", async () => {
+    const state = await markedForward(null, [
+      { key: "one", mutation: forwardMutation }, { key: "other", mutation: forwardMutation },
+    ]);
+    expect(state.mark).toBeUndefined();
+    expect(state.restored.unclear).toBe(1);
+  });
+
+  it("restores a forward's recipient-only edit and chosen mailbox into its draft", async () => {
+    const { fake, origin } = await server();
+    fake.addMessage({ ...dto("m2"), mailboxId: "mb-2" });
+    const disk = deviceDisk();
+    try {
+      const first = await launch(disk, origin);
+      await first.engine.syncOnce();
+      holdTheClock();
+      const words = { ...FWD, to: "", body: "", mailboxId: "mb-2" };
+      const letter = first.compose({ words });
+      letter.edit({ ...words, cc: "copy@fake.test", bcc: "blind@fake.test" });
+      letter.flush();
+      await first.letters.landed();
+      kill(first, disk);
+
+      const second = await launch(disk, origin);
+      expect((await second.restore()).kept).toBe(1);
+      expect(drafts(fake)[0]).toMatchObject({
+        mailboxId: "mb-2", forwardOfMessageId: "m1", subject: "Fwd: Welcome", body: "",
+        cc: [{ address: "copy@fake.test" }], bcc: [{ address: "blind@fake.test" }],
+      });
+    } finally { fake.server.close(); }
+  }, 60_000);
+
+  it("restores an explicit sender-only edit without making a draft for an untouched forward", async () => {
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    const changed = { fromEdited: true, mailboxId: "mb-2" };
+    const blank: Letter = {
+      v: 1, id: "untouched", ...FWD, draftId: null, savedAs: null, files: [], forwardKept: null,
+      body: "", to: "", cc: "", bcc: "", send: null, keep: null, updatedAt: "2026-11-25T08:00:00Z",
+    };
+    door.put(blank);
+    door.put({ ...blank, id: "changed", ...changed });
+    const keep = vi.fn(async (draft: LetterKeep) => {
+      draft.row({ draftId: "recovered", key: null });
+      return "kept" as const;
+    });
+    const restored = await restoreLetters({
+      door, owned: new Set(), outbox: () => [], keep, hasMessage: () => true, drafts: () => [],
+      firstSync: async () => undefined, parse: () => [],
+    });
+    expect(restored.kept).toBe(1);
+    expect(keep).toHaveBeenCalledOnce();
+    expect(keep).toHaveBeenCalledWith(expect.objectContaining({ mailboxId: "mb-2", to: [], body: "" }));
+  });
+
+  it.each([null, "d-reply"])("matches a reply's queued send only to the mailbox selected before the interruption (draft %s)", async (draftId) => {
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    const at = "2026-11-25T08:00:00Z";
+    door.put({
+      v: 1, id: "changed", ...FWD, mode: "reply", mailboxId: "mb-2",
+      body: "See below", draftId, savedAs: null, files: [], forwardKept: null,
+      send: { at, key: null, mailboxId: "mb-2" }, keep: null, updatedAt: at,
+    });
+    const keep = vi.fn(async (_draft: LetterKeep) => "refused" as const);
+    await restoreLetters({
+      door, owned: new Set(), keep, hasMessage: () => true, drafts: () => [],
+      firstSync: async () => undefined, parse: () => [],
+      outbox: () => [
+        { key: "earlier", mutation: { kind: "mail_send", inReplyTo: "m1", body: "See below", mailboxId: "mb-1", draftId } },
+        { key: "chosen", mutation: { kind: "mail_send", inReplyTo: "m1", body: "See below", mailboxId: "mb-2", draftId } },
+      ],
+    });
+    expect(door.letter("changed")?.send?.key).toBe("chosen");
+    expect(keep).not.toHaveBeenCalled();
+  });
+
+  it("finds the bound forward's exact pending send after the copies, words and forwarded files change", async () => {
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    const at = "2026-11-25T08:00:00Z";
+    const copies = [{ name: null, address: "review@fake.test" }];
+    door.put({
+      v: 1, id: "forward", ...FWD, cc: "review@fake.test", draftId: "d-1", savedAs: null,
+      files: [], forwardKept: ["att-1"], send: { at, key: null, forwardParts: ["att-1"] }, keep: null, updatedAt: at,
+    });
+    const sent = {
+      kind: "mail_send", draftId: "d-1", forwardOf: "m1", mailboxId: FWD.mailboxId,
+      body: FWD.body, subject: FWD.subject, to: keptRecipients(FWD.to), cc: copies, bcc: [], forwardParts: ["att-1"],
+    };
+    const keep = vi.fn(async (_draft: LetterKeep) => "refused" as const);
+    await restoreLetters({
+      door, owned: new Set(), keep, hasMessage: () => true, drafts: () => [],
+      firstSync: async () => undefined, parse: keptRecipients,
+      outbox: () => [
+        { key: "old-words", mutation: { ...sent, body: "Earlier words" } },
+        { key: "old-copies", mutation: { ...sent, cc: [] } },
+        { key: "old-files", mutation: { ...sent, forwardParts: [] } },
+        { key: "chosen", mutation: sent },
+      ],
+    });
+    expect(door.letter("forward")?.send?.key).toBe("chosen");
+    expect(keep).not.toHaveBeenCalled();
+  });
+
+  it("never mistakes a sent reply row for a forward of the same message", async () => {
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    const at = "2026-11-25T08:00:00Z";
+    door.put({
+      v: 1, id: "forward", ...FWD, draftId: null, savedAs: null, files: [], forwardKept: null,
+      send: { at, key: null }, keep: null, updatedAt: at,
+    });
+    const kept = vi.fn(async (draft: LetterKeep) => {
+      draft.row({ draftId: "kept-forward", key: null });
+      return "kept" as const;
+    });
+    const restored = await restoreLetters({
+      door, owned: new Set(), keep: kept, hasMessage: () => true,
+      firstSync: async () => undefined, parse: keptRecipients, outbox: () => [],
+      drafts: () => [{
+        id: "sent-reply", status: "sent", mailboxId: FWD.mailboxId, inReplyToMessageId: "m1",
+        to: keptRecipients(FWD.to), cc: keptRecipients(FWD.cc), bcc: keptRecipients(FWD.bcc),
+        subject: FWD.subject, body: FWD.body, updatedAt: at,
+      }],
+    });
+    expect(restored.unclear).toBe(1);
+    expect(kept).toHaveBeenCalledWith(expect.objectContaining({ mode: "forward", messageId: "m1" }));
+  });
+
+  it("keeps newer reply words when the same draft was sent elsewhere with older words", async () => {
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    const at = "2026-11-25T08:00:00Z";
+    const to = [{ name: null, address: "person@fake.test" }];
+    door.put({
+      v: 1, id: "reply", ...FWD, mode: "reply", draftId: "d-1", savedAs: null, files: [], forwardKept: null,
+      envelope: { to, cc: [], subject: "Re: Welcome" },
+      send: { at, key: null, mailboxId: FWD.mailboxId ?? undefined }, keep: null, updatedAt: at,
+    });
+    const kept = vi.fn(async (draft: LetterKeep) => {
+      draft.row({ draftId: "recovered-reply", key: null });
+      return "kept" as const;
+    });
+    const restored = await restoreLetters({
+      door, owned: new Set(), keep: kept, hasMessage: () => true,
+      firstSync: async () => undefined, parse: keptRecipients, outbox: () => [],
+      drafts: () => [{
+        id: "d-1", status: "sent", mailboxId: FWD.mailboxId, inReplyToMessageId: "m1",
+        to, cc: [], bcc: [], subject: "Re: Welcome", body: "Older words", updatedAt: at,
+      }],
+    });
+    expect(restored.unclear).toBe(1);
+    expect(kept).toHaveBeenCalledWith(expect.objectContaining({ mode: "reply", messageId: "m1", body: FWD.body }));
+  });
+
+  it.each([true, false])("recovers edited reply recipients and empty subject after a kill (source present: %s)", async (parentHere) => {
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    const at = "2026-11-25T08:00:00Z";
+    const words: LetterWords = {
+      ...FWD, mode: "replyAll", body: "", to: "guest@fake.test", cc: "", bcc: "secret@fake.test", subject: "",
+      envelope: { to: keptRecipients("parent@fake.test"), cc: keptRecipients("previous@fake.test"), subject: "Re: Welcome" },
+      ...{ replyRecipientsEdited: true, replySubjectEdited: true },
+    };
+    door.put({ ...words, v: 1, id: "edited-reply", draftId: null, savedAs: null, files: [], forwardKept: null, send: null, keep: null, updatedAt: at });
+    const kept = vi.fn(async (draft: LetterKeep) => {
+      draft.row({ draftId: "d-1", key: null });
+      return "kept" as const;
+    });
+    const restored = await restoreLetters({
+      door, owned: new Set(), keep: kept, hasMessage: () => parentHere,
+      firstSync: async () => undefined, parse: keptRecipients, outbox: () => [], drafts: () => [],
+    });
+    const audience = { to: keptRecipients(words.to), cc: [], bcc: keptRecipients(words.bcc) };
+    expect(restored.kept).toBe(1);
+    expect(kept).toHaveBeenCalledWith(expect.objectContaining(parentHere
+      ? { mode: "replyAll", messageId: "m1", replyEnvelope: audience, replySubject: "" }
+      : { mode: "new", messageId: null, ...audience, subject: "" }));
+  });
+
+  it("keeps the selected From when the same reopened reply still mirrors its earlier mailbox", async () => {
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    const at = "2026-11-25T08:00:00Z";
+    const to = [{ name: null, address: "person@fake.test" }];
+    const words: LetterWords = {
+      ...FWD, mode: "reply", fromEdited: false,
+      envelope: { to, cc: [], subject: "Re: Welcome" },
+    };
+    const keeper = openLetterKeeper({
+      door, id: "reply", words, draftId: "d-1", savedAs: wordsOf(words),
+      now: () => new Date(at), newFileId: uuid,
+    });
+    keeper.edit({ ...words, mailboxId: "mb-2" });
+    keeper.markKeep();
+    keeper.release();
+    const kept = vi.fn(async (draft: LetterKeep) => {
+      draft.row({ draftId: "d-1", key: null });
+      return "kept" as const;
+    });
+    const restored = await restoreLetters({
+      door, owned: new Set(), keep: kept, hasMessage: () => true,
+      firstSync: async () => undefined, parse: keptRecipients, outbox: () => [],
+      drafts: () => [{
+        id: "d-1", status: "draft", mailboxId: words.mailboxId, inReplyToMessageId: "m1",
+        to, cc: [], bcc: [], subject: "Re: Welcome", body: words.body, updatedAt: at,
+      }],
+    });
+    expect(restored.kept).toBe(1);
+    expect(kept).toHaveBeenCalledWith(expect.objectContaining({ mode: "reply", mailboxId: "mb-2", draftId: "d-1" }));
+  });
+
+  it.each([{ newPress: false }, { newPress: true }])("honors the actual draft target when an unbound send matches the words (explicit create $newPress)", async ({ newPress }) => {
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    const at = "2026-11-25T08:00:00Z";
+    door.put({
+      v: 1, id: "forward", ...FWD, draftId: "d-1", savedAs: null, files: [], forwardKept: null,
+      send: { at, key: null, ...(newPress ? { draftId: null } : {}) }, keep: null, updatedAt: at,
+    });
+    const kept = vi.fn(async (draft: LetterKeep) => {
+      draft.row({ draftId: "d-1", key: null });
+      return "kept" as const;
+    });
+    const restored = await restoreLetters({
+      door, owned: new Set(), keep: kept, hasMessage: () => true,
+      firstSync: async () => undefined, parse: keptRecipients, drafts: () => [],
+      outbox: () => [{ key: "unbound", mutation: {
+        kind: "mail_send", forwardOf: "m1", mailboxId: FWD.mailboxId, body: FWD.body, subject: FWD.subject,
+        to: keptRecipients(FWD.to), cc: keptRecipients(FWD.cc), bcc: keptRecipients(FWD.bcc),
+      } }],
+    });
+    if (newPress) {
+      expect(kept).not.toHaveBeenCalled();
+      expect(door.letter("forward")?.send?.key).toBe("unbound");
+    } else {
+      expect(restored.unclear).toBe(1);
+      expect(kept).toHaveBeenCalledWith(expect.objectContaining({ mode: "forward", draftId: "d-1", body: FWD.body }));
+    }
+  });
+
+  it.each(["old-draft", "new-draft"])("a send as new only adopts a matching Sent mirror for its new row (%s)", async (id) => {
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    const at = "2026-11-25T08:00:00Z";
+    door.put({
+      v: 1, id: "forward", ...FWD, draftId: "old-draft", savedAs: null, files: [], forwardKept: null,
+      send: { at, key: null, draftId: null }, keep: null, updatedAt: at,
+    });
+    const kept = vi.fn(async (draft: LetterKeep) => {
+      draft.row({ draftId: "recovered", key: null });
+      return "kept" as const;
+    });
+    const restored = await restoreLetters({
+      door, owned: new Set(), keep: kept, hasMessage: () => true,
+      firstSync: async () => undefined, parse: keptRecipients, outbox: () => [],
+      drafts: () => [{
+        id, status: "sent", mailboxId: FWD.mailboxId, forwardOfMessageId: "m1", subject: FWD.subject, body: FWD.body,
+        to: keptRecipients(FWD.to), cc: keptRecipients(FWD.cc), bcc: keptRecipients(FWD.bcc), updatedAt: at,
+      }],
+    });
+    if (id === "old-draft") {
+      expect(restored.unclear).toBe(1);
+      expect(kept).toHaveBeenCalledWith(expect.objectContaining({ mode: "forward", body: FWD.body }));
+    } else {
+      expect(kept).not.toHaveBeenCalled();
+      expect(door.letter("forward")).toBeUndefined();
+    }
+  });
 
   it("a forward's removed files outlive a keep, a refused send and an unverified one: each letter stays with its row", async () => {
     const { fake, origin } = await server();

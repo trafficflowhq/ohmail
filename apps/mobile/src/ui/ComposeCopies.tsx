@@ -10,7 +10,7 @@ import type { BackStep } from "./RecipientInput";
 import type { TypedCopies } from "./compose-copies";
 import { RecipientInput } from "./RecipientInput";
 
-export function ComposeCopies({ value, editable, onChange, book, back, ccField }: {
+export function ComposeCopies({ value, editable, onChange, book, back, ccField, plain }: {
   value: TypedCopies;
   editable: boolean;
   onChange: (next: TypedCopies) => void;
@@ -18,11 +18,14 @@ export function ComposeCopies({ value, editable, onChange, book, back, ccField }
   back: BackStep;
   /** The Cc input, for a caller that focuses it once the fields are asked for. */
   ccField?: RefObject<TextInput | null>;
+  plain?: boolean;
 }) {
   return (
     <>
-      <RecipientInput label={Copy.composeCc} {...(ccField ? { ref: ccField } : {})} value={value.cc} editable={editable} book={book} back={back} onChangeText={(cc) => onChange({ ...value, cc })} />
-      <RecipientInput label={Copy.composeBcc} value={value.bcc} editable={editable} book={book} back={back} onChangeText={(bcc) => onChange({ ...value, bcc })} />
+      <RecipientInput label={Copy.composeCc} {...(ccField ? { ref: ccField } : {})} value={value.cc} editable={editable}
+        book={book} back={back} plain={plain} placeholder={plain ? "" : undefined} onChangeText={(cc) => onChange({ ...value, cc })} />
+      <RecipientInput label={Copy.composeBcc} value={value.bcc} editable={editable}
+        book={book} back={back} plain={plain} placeholder={plain ? "" : undefined} onChangeText={(bcc) => onChange({ ...value, bcc })} />
     </>
   );
 }

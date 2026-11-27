@@ -314,8 +314,8 @@ describe("the sheet's wiring (source, not render — this workspace has no RN re
        `files` from one arm is still the red it always was. `sendNew` has no source to finish,
        so it carries no flag. */
     expect(COMPOSER).toContain("w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId,");
-    expect(COMPOSER).toContain("forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {}, baseFor(base.current, draftId), waitedFor(base.current, draftId), ...markupArgs)");
-    expect(COMPOSER).toContain('w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\n          baseFor(base.current, draftId), waitedFor(base.current, draftId), ...markupArgs)');
+    expect(COMPOSER).toContain("...(forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {}) },\n          baseFor(base.current, draftId), waitedFor(base.current, draftId), ...markupArgs)");
+    expect(COMPOSER).toContain('w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\n          baseFor(base.current, draftId), waitedFor(base.current, draftId), ...replyArgs)');
     expect(COMPOSER).toContain("w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined, baseFor(base.current, draftId), waitedFor(base.current, draftId), ...markupArgs)");
   });
 
@@ -333,11 +333,9 @@ describe("the sheet's wiring (source, not render — this workspace has no RN re
   });
 
   it("the cap on screen is the cap the admit rule refuses against, from the shared bound", () => {
-    // The cap is read from the mailbox this composer SENDS FROM — an opened draft's own, the
-    // parent's for a reply or forward, the resolved From for a mail with no parent, or the sender
-    // standing in for a draft's mailbox that cannot send (`compose-sender.ts`).
-    expect(COMPOSER).toContain("const mailboxId = sender !== null ? sender.keepFrom : draft?.mailboxId ?? m?.mailboxId ?? w.mailboxes.sendingId;");
-    expect(COMPOSER).toContain("const sendFrom = sender?.sendFrom ?? mailboxId;");
+    // The same sender resolution owns the picker, fallback and attachment cap.
+    expect(COMPOSER).toContain("bound: draft?.mailboxId ?? (fresh ? null : m?.mailboxId ?? w.mailboxes.sendingId),");
+    expect(COMPOSER).toContain("const { keepFrom: mailboxId, sendFrom, ...sender } = composeFromOf({ ...senderFacts, picked });");
     expect(COMPOSER).toContain('const attachCap = phoneAttachCap(w.mailboxes.rows, sendFrom ?? "", sendSurface)');
     expect(COMPOSER).toContain("{Copy.attachCap(sizeLabel(attachCap))}");
     // Admitted AFTER the shrink (`compose-attach-shrinks-photos.test.ts`), against the same cap.

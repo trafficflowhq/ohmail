@@ -27,7 +27,8 @@ describe("the unmount keep builds the close keep's request", () => {
     const unmount = sheet.slice(sheet.indexOf("atUnmount.current = () => {"), sheet.indexOf("const send = async ("));
     expect(request).toContain("const target = latestDraft.current;");
     expect(request).toContain("draftId: target");
-    expect(request).toContain("...(fresh ? copiesToKeep(copies) : {})");
+    expect(sheet).toContain("const addressed = fresh || forward;");
+    expect(request).toContain("...(addressed ? copiesToKeep(copies) : {})");
     expect(request).toContain("quiet: target !== null");
     expect(request).toContain("rebase(r);");
     expect(request).toContain("keeper?.keepAnswered(r, onScreen);");

@@ -11,6 +11,10 @@ export const PULL_RATE = 0.55;
 export const PULL_MAX = 120;
 /** How far the list must be drawn for a release to pull. */
 export const PULL_FIRE = 64;
+/** How far the list stands down while a pull it asked for runs. */
+export const PULL_HOLD = 48;
+/** A running request can outlast its waiting mark. */
+export const PULL_HOLD_CAP_MS = 15_000;
 
 /** Is this movement a pull? Down past the slop, and more down than across. */
 export function pullClaims(dx: number, dy: number): boolean {
@@ -25,4 +29,32 @@ export function pullOffset(dy: number): number {
 /** Does a release here pull? */
 export function pullFires(dy: number): boolean {
   return pullOffset(dy) >= PULL_FIRE;
+}
+
+export interface PullTrack {
+  readonly x: number;
+  readonly y: number;
+  readonly claimed: boolean;
+  readonly offset: number;
+}
+
+/** Only a finger that came down at the top can pull. */
+export function pullStart(x: number, y: number, atTop: boolean): PullTrack | null {
+  return atTop ? { x, y, claimed: false, offset: 0 } : null;
+}
+
+/** Yield to a scroll or row swipe before claim. Keep a claimed pull through a reversal. */
+export function pullMove(track: PullTrack | null, x: number, y: number, atTop: boolean): PullTrack | null {
+  if (track === null || (!track.claimed && !atTop)) return null;
+  const dx = x - track.x;
+  const dy = y - track.y;
+  if (track.claimed || pullClaims(dx, dy)) return { ...track, claimed: true, offset: pullOffset(dy) };
+  return Math.max(Math.abs(dx), Math.abs(dy)) > PULL_SLOP ? null : track;
+}
+
+/** Clear the track on release. An armed release can hold a running request's mark or start a new request. */
+export function pullEnd(track: PullTrack | null, cancelled: boolean, busy: boolean) {
+  const claimed = track?.claimed === true;
+  const hold = claimed && !cancelled && track.offset >= PULL_FIRE;
+  return { claimed, hold, run: hold && !busy };
 }

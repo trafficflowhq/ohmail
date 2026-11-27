@@ -27,7 +27,7 @@ import { retireActAdmissionsPass } from "@ohmail/organizer/act-admission-retire"
 import { CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
 import { screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { refundObligationDrainPass } from "../refund-obligation-drain.js";
-import { throttleKeysFor } from "@trafficflow/services";
+import { throttleKeysFor } from "@trafficflow/db/auth-throttle-keys";
 import { accountErasurePass } from "../account-erasure-pass.js";
 import { mailboxErasurePass } from "../mailbox-erasure-pass.js";
 import {

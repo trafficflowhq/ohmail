@@ -34,6 +34,7 @@ vi.mock("../src/ui/Sheet", () => ({
 }));
 
 vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
+vi.mock("../src/ui/MailAvatar", () => ({ MailAvatar: () => null }));
 
 vi.mock("react-native", async () => {
   const { rnDom } = await import("./_rendered-dom");
@@ -127,11 +128,27 @@ vi.mock("../src/state/live", () => ({ addressShaped: (q: string) => (q.includes(
 
 /** The device's own matches: every query finds its first eleven here, newest first. */
 const device = (q: string) => (q.trim().length < 2 ? [] : Array.from({ length: 11 }, (_, i) => ({ id: `${q.trim()}-d${i}` })));
+const overview = vi.hoisted(() => ({
+  owner: null as object | null,
+  people: [] as { person: { address: string; name: string; count: number }; from: number; to: number }[],
+  reads: [] as { session: object; counts: boolean }[],
+  totals: new Map<object, Promise<{ messageCount: number }[]>>(),
+  fixtureCounts: [3 ** 8, 7],
+}));
+vi.mock("../src/net/mailboxes", () => ({
+  readMailboxes: (session: object, counts: boolean) => {
+    overview.reads.push({ session, counts });
+    return overview.totals.get(session) ?? Promise.resolve(overview.fixtureCounts.map((messageCount) => ({ messageCount })));
+  },
+  mailboxSessionWithSignal: (session: object) => session,
+}));
 vi.mock("../src/state/world", () => ({
+  useLiveSession: () => overview.owner,
   useWorld: () => ({
     folders: { list: [] },
     search: {
       warm: () => undefined, query: (q: string) => ({ items: q.includes("@") ? [] : device(q), similar: [], indexing: false }),
+      people: overview.people,
       address: (_a: string, d: "any" | "from" | "to") => ({ items: around[d], counts: { any: 2, from: 1, to: 1 }, indexing: false }),
     },
     store: {
@@ -161,6 +178,7 @@ vi.mock("../src/state/store-views", async (importOriginal) => ({
 
 const { default: SearchScreen } = await import("../app/search");
 const { Copy } = await import("../src/copy");
+const { setActiveLocale } = await import("../src/i18n/locale");
 const { readerHeldNow } = await import("../src/ui/reader-held");
 
 let screen: ReturnType<typeof mount> | null = null;
@@ -170,12 +188,71 @@ beforeEach(() => {
   archive.asked = [];
   screen = mount(h(SearchScreen));
 });
-afterEach(() => { appearance.paper = false; screen?.unmount(); screen = null; nav.pushed = []; nav.path = "/more"; nav.folder = undefined; });
+afterEach(() => {
+  appearance.paper = false; screen?.unmount(); screen = null; nav.pushed = []; nav.path = "/more"; nav.folder = undefined;
+  overview.owner = null; overview.people = []; overview.reads = []; overview.totals.clear();
+  setActiveLocale("en");
+});
 
 const type = (text: string): void => { screen!.render(h(SearchScreen)); act(() => input.change!(text)); screen!.render(h(SearchScreen)); };
 const answer = (length: number): void => { store.ready = true; store.length = length; screen!.render(h(SearchScreen)); };
 const dragTo = (y: number): void => { list.props!.onScrollBeginDrag?.(); list.offset = y; };
 const topOf = (key: string): number => list.stack.find((c) => c.key === key)!.top;
+const fixtureTotal = overview.fixtureCounts.reduce((total, count) => total + count, 0);
+
+it.each([
+  { locale: "en", other: "de", noun: "messages", heading: "People. 6", direction: "20 from · 10 to", all: "All", fewer: "Fewer" },
+  { locale: "de", other: "en", noun: "Nachrichten", heading: "Personen. 6", direction: "20 von · 10 an", all: "Alle", fewer: "Weniger" },
+] as const)("shows the people and message counts and expands them in $locale", async ({ locale, other, noun, heading, direction, all, fewer }) => {
+  appearance.paper = true;
+  setActiveLocale(locale);
+  overview.owner = {};
+  overview.people = Array.from({ length: 6 }, (_, i) => ({
+    person: { name: `Contact ${i + 1}`, address: `contact-${i + 1}@example.test`, count: 30 - i },
+    from: 20 - i, to: 10,
+  }));
+  await act(async () => { screen!.render(h(SearchScreen)); });
+  const press = (label: string) => {
+    const control = screen!.el.querySelector<HTMLElement>(`[data-label="${label}"]`);
+    expect(control, label).not.toBeNull();
+    act(() => control!.click());
+  };
+  expect(screen!.el.textContent).toContain(heading);
+  expect(screen!.el.textContent).toContain(direction);
+  const localCount = new Intl.NumberFormat(locale).format(fixtureTotal);
+  const foreignCount = new Intl.NumberFormat(other).format(fixtureTotal);
+  expect(localCount).not.toBe(foreignCount);
+  expect(screen!.el.textContent).toContain(`${localCount} ${noun}`);
+  expect(screen!.el.textContent).not.toContain(`${foreignCount} ${noun}`);
+  expect(screen!.el.textContent).not.toContain("Contact 6");
+  expect(screen!.el.querySelector(`[data-label="${Copy.searchSortLabel}"]`)).toBeNull();
+  press(all);
+  expect(screen!.el.textContent).toContain("Contact 6");
+  press(fewer);
+  expect(screen!.el.textContent).not.toContain("Contact 6");
+  const first = [...screen!.el.querySelectorAll<HTMLElement>("[data-label]")].find((el) => el.dataset.label?.includes("Contact 1"));
+  expect(first).toBeDefined();
+  act(() => first!.click());
+  expect(archive.asked.map(([address, dir]) => [address, dir])).toEqual([["contact-1@example.test", "any"]]);
+  expect(overview.reads).toEqual([{ session: overview.owner, counts: true }]);
+});
+
+it("clears the displayed mailbox total when the signed-in session changes", async () => {
+  appearance.paper = true;
+  overview.owner = {};
+  await act(async () => { screen!.render(h(SearchScreen)); });
+  const previousTotal = `${new Intl.NumberFormat("en").format(fixtureTotal)} messages`;
+  expect(screen!.el.textContent).toContain(previousTotal);
+
+  const replacement = {};
+  let settle!: (mailboxes: { messageCount: number }[]) => void;
+  overview.totals.set(replacement, new Promise((resolve) => { settle = resolve; }));
+  overview.owner = replacement;
+  screen!.render(h(SearchScreen));
+  expect(screen!.el.textContent).not.toContain(previousTotal);
+  await act(async () => { settle([{ messageCount: 1 }]); });
+  expect(screen!.el.textContent).toContain("1 message");
+});
 
 it("groups the search result count and sort on the paper surface above the matches", () => {
   appearance.paper = true;
@@ -185,6 +262,23 @@ it("groups the search result count and sort on the paper surface above the match
   expect(head?.textContent).toContain("Results.");
   expect(head?.parentElement?.querySelector(`[data-label="${Copy.searchSortLabel}"]`)).not.toBeNull();
   expect((head?.compareDocumentPosition(screen!.el.querySelector('[data-row="s0"]')!) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("applies and clears the paper place filter at the chip", () => {
+  appearance.paper = true;
+  screen!.render(h(SearchScreen));
+  const press = (label: string) => {
+    const control = screen!.el.querySelector<HTMLElement>(`[data-label="${label}"]`);
+    expect(control, label).not.toBeNull();
+    act(() => control!.click());
+  };
+  press(Copy.searchFacetPlace);
+  const ohbox = [...screen!.el.querySelectorAll("button")].find((el) => el.textContent === Copy.ohbox);
+  expect(ohbox).toBeDefined();
+  act(() => ohbox!.click());
+  expect(store.question).toEqual({ query: "", folder: "INBOX" });
+  press(Copy.ohbox);
+  expect(store.question?.folder).toBeUndefined();
 });
 
 describe("a search opens at its top", () => {
@@ -244,7 +338,7 @@ describe("a result opened from Search stays over it", () => {
     const pane = () => h(SearchScreen, { inPane: true });
     screen = mount(pane());
     expect(readerHeldNow(), "the pane holds nothing by itself").toBe(false);
-    input.change!("fenwick");
+    act(() => input.change!("fenwick"));
     screen.render(pane());
     act(() => (screen!.el.querySelector('[data-row="fenwick-d0"]') as HTMLElement).click());
     expect(nav.pushed).toEqual(["/message/fenwick-d0"]);

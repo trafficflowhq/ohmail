@@ -137,6 +137,32 @@ describe("the world reads the engine's mirror", () => {
     }
   });
 
+  it("names both unread senders on a folded row and keeps a single sender's address", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    try {
+      for (const sender of ["ada", "bo", "sender"]) {
+        fake.addRule(ruleDto(`allow-${sender}`, "sender", `${sender}@fake.test`, "INBOX"));
+      }
+      fake.addMessage({ ...dto("one", { from: { name: "Ada Green", address: "ada@fake.test" } }), threadId: "meeting" });
+      fake.addMessage({
+        ...dto("two", { from: { name: "Bo Brown", address: "bo@fake.test" }, date: "2026-08-19T09:00:00Z" }),
+        threadId: "meeting",
+      });
+      fake.addMessage(dto("solo", { from: { name: "Test Sender", address: "sender@fake.test" } }));
+      const live = await liveWorldOn(fake, origin);
+      try {
+        const { fresh } = liveOhbox(presentedOf(live.engine.read(), view.now), view);
+        expect(fresh.find((m) => m.id === "two")?.rowByline).toEqual({ name: "Bo, Ada", address: undefined, spokenName: "Bo Brown, Ada Green" });
+        expect(fresh.find((m) => m.id === "solo")?.rowByline).toEqual({ name: "Test Sender", address: "sender@fake.test", spokenName: "Test Sender" });
+      } finally {
+        live.store.close();
+      }
+    } finally {
+      fake.server.close();
+    }
+  });
+
   it("a letter dated after it arrived, or with no Date, is placed and timed by its arrival", async () => {
     const fake = mailServer();
     const origin = await listen(fake.server);

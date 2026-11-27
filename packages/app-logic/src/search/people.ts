@@ -4,29 +4,13 @@
  * holds it anywhere. Nothing typed: everybody, the most mail first. The book is the shell's, which leaves the account's
  * own addresses out.
  */
-import { addressBook, type AddressBookEntry, type EntityReader, type SearchHit } from "@ohmail/client-engine";
-import { useMemo } from "react";
-import { atStamp, useDerivedVersion } from "../engine/context.js";
-import type { RestingSearchPerson } from "./types.js";
+import type { AddressBookEntry, SearchHit } from "@ohmail/client-engine";
 
-/** This closure holds only the address-book inputs and the book it builds lazily. */
-function peopleFrom(
-  presented: EntityReader,
-  ownAddresses: readonly string[],
-): () => readonly AddressBookEntry[] {
-  let book: readonly AddressBookEntry[] | undefined;
-  return () => (book ??= addressBook(presented, { exclude: ownAddresses }));
-}
-
-export function usePeople(
-  presented: EntityReader,
-  ownAddresses: readonly string[],
-): () => readonly AddressBookEntry[] {
-  const version = useDerivedVersion();
-  return useMemo(
-    () => atStamp(version, peopleFrom(presented, ownAddresses)),
-    [presented, version, ownAddresses],
-  );
+/** A person on the resting screen, with counts from the messages this device holds. */
+export interface RestingSearchPerson {
+  readonly person: AddressBookEntry;
+  readonly from: number;
+  readonly to: number;
 }
 
 /** How near a person is to the text: 0 nearest; null not meant at all. */

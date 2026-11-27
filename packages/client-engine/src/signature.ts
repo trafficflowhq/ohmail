@@ -118,7 +118,7 @@ export function signatureHtml(sig: string): string {
  * the compose grammar by the server that stored it and reduced again on the way out
  * (`sanitizeOutboundHtml` is idempotent, so this is never the only gate). Absent, `undefined`
  * or `null` takes {@link signatureHtml}'s escaped text path — what every caller did before this
- * argument existed and what the phone's two send arms still do — so the two-argument call is
+ * argument existed — so the two-argument call is
  * byte-identical to the one it replaced.
  */
 export function withSignature<M extends { body: string; html?: string | null }>(

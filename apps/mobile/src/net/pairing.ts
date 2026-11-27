@@ -2058,7 +2058,10 @@ async function buildSession(
     // a repair that runs, persists, and changes nothing until the launch after.
     apiBase,
     accountId: profile.accountId,
-    auth: { headers: () => bearer.headers(), fetch: paired },
+    auth: {
+      headers: () => bearer.headers(), fetch: paired,
+      credentialGeneration: () => bearer.credentialGeneration(),
+    },
     /* Cloud's request body carries 3 MiB; a send past it stages there, and only there. */
     stageAttachments: profile.flavor === "managed",
   });

@@ -9,17 +9,18 @@
  * confirm sheet, which names the destination. Remote images re-enter only as gated `data:` URIs.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Linking, useWindowDimensions, View, type LayoutChangeEvent } from "react-native";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useWindowDimensions, View, type LayoutChangeEvent } from "react-native";
 import { router } from "expo-router";
 import { WebView } from "react-native-webview";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { letterInDark, paletteOf } from "../theme/palette";
-import { useWorld, useWorldToast, type WorldMail } from "../state/world";
+import { useMessageBody, useWorld, type WorldMail } from "../state/world";
 import { buildPhoneMailDocument, documentZoom } from "../mail/mail-document";
 import {
   armFrameTimer,
+  FRAME_SEED_DP,
   FRAME_UNANSWERED_MS,
   frameAwaits,
   frameFinal,
@@ -35,7 +36,7 @@ import {
   type FrameHeight,
 } from "../mail/frame-height";
 import { fetchRemoteImages, imagesSeenBy, pictureBudget, type PictureBudget } from "../mail/remote-images";
-import { frameNavDecision, openConfirmedLink } from "../mail/frame-nav";
+import { frameNavDecision } from "../mail/frame-nav";
 import { letterBand, sanitizeMailHtmlPhone, type LetterBreak, type PhoneSanitizedMail, type PhoneSanitizeOptions } from "../mail/sanitize";
 import {
   frameReadingOf,
@@ -50,7 +51,7 @@ import {
 import { drawnLength } from "../mail/frame-length";
 import { phoneFrameCeiling } from "../mail/frame-ceiling-native";
 import { blockedNotice } from "../mail/notice";
-import { Sheet, SheetRow } from "./Sheet";
+import { MailLinkSheet } from "./MailLinks";
 import { Txt } from "./base";
 import { BodyPages } from "./BodyPages";
 import { HistoryFold } from "./HistoryFold";
@@ -64,7 +65,7 @@ let lastFrameWidth: number | null = null;
 /** One sanitizer pass; a throw on hostile html is this letter's alone, never the reader's. */
 function sanitizeGuarded(html: string, opts: PhoneSanitizeOptions): PhoneSanitizedMail {
   try {
-    return sanitizeMailHtmlPhone(html, opts);
+    return sanitizeMailHtmlPhone(html, { ...opts, linkText: true });
   } catch {
     return UNREADABLE;
   }
@@ -99,9 +100,28 @@ function useFrameCount(plan: FramePlan | null, id: string, html: string, setDraw
   return plan === null ? null : frameReadingOf(plan, counted);
 }
 
-export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, onHistory, highlight }: {
-  m: WorldMail;
-  onShowAsText: () => void;
+interface MailFramePreview {
+  maxHeight: number;
+  fallback: ReactNode;
+  /** Null when the document fell back to text, which measures its own overflow. */
+  onClipped: (clipped: boolean | null) => void;
+}
+
+/** The renderer reads one cached body independently of its list row. */
+export function useMailPreview(id: string) {
+  const stored = useMessageBody(id);
+  return {
+    text: stored?.body,
+    html: stored?.html,
+    inlineImages: stored?.inlineImages,
+    complete: stored?.bodyState === "full",
+  };
+}
+
+export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, onHistory, highlight, preview }: {
+  m: Pick<WorldMail, "id" | "body" | "subject" | "html" | "senderCheck" | "inlineImages" | "loadedRemoteContent">;
+  onShowAsText?: () => void;
+  preview?: MailFramePreview;
   highlight?: string;
   /** The drawn height is the document's now (or the text fallback's), or not any more. */
   onFinal?: (final: boolean) => void;
@@ -112,13 +132,13 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
 }) {
   const t = useTheme();
   const w = useWorld();
-  const toast = useWorldToast();
   const [asked, setAsked] = useState<string | null>(null);
   const [remote, setRemote] = useState<{ id: string; map: ReadonlyMap<string, string>; pixels: ReadonlySet<string> } | null>(null);
   const [linkAsk, setLinkAsk] = useState<string | null>(null);
   const [refusedFor, setRefusedFor] = useState<string | null>(null);
   const [frameHeight, setFrameHeight] = useState<FrameHeight | null>(null);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [previewSize, setPreviewSize] = useState<{ key: string; doc: string; height: number } | null>(null);
   /** The message the reader asked to see in its own colours in a dark scheme (the web's per-message flip). */
   const [originalFor, setOriginalFor] = useState<string | null>(null);
   // THE FRAME IS AS TALL AS ITS DOCUMENT and never scrolls itself (`src/mail/frame-height.ts`). A new
@@ -148,7 +168,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   const folded = useMemo(() => sanitizeGuarded(html, { fold: true, subject: m.subject, frame, highlight }), [html, m.subject, frame, highlight]);
   const history = folded.history ?? null;
   const folding = history !== null && !historyOpen;
-  const frameId = folding ? `${m.id}#folded` : m.id;
+  const frameId = preview ? `${m.id}#preview` : folding ? `${m.id}#folded` : m.id;
   const sized = frameHeightFor(frameHeight, frameId, layoutWidth, rememberedFrameHeight(frameId));
   const update = (f: (s: FrameHeight) => FrameHeight) =>
     setFrameHeight((prev) => f(frameHeightFor(prev, frameId, layoutWidth, rememberedFrameHeight(frameId))));
@@ -163,7 +183,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   useEffect(() => armFrameTimer(awaiting === null ? null : FRAME_UNANSWERED_MS, () => update(unansweredFrameHeight)), [awaiting]);
 
   // A marked sender's pictures wait for the press whatever the stored flag says (`Mail.senderCheck`).
-  const imagesWanted = (m.loadedRemoteContent === true && m.senderCheck === undefined) || asked === m.id;
+  const imagesWanted = preview === undefined && ((m.loadedRemoteContent === true && m.senderCheck === undefined) || asked === m.id);
   const resolvedRemote = remote?.id === m.id ? remote.map : undefined;
   // THE PICTURES' LENGTH IS READ BEFORE THEY ARE WRITTEN (`src/mail/frame-length.ts`): a picture is
   // written once per reference, so a state whose document would pass this phone's ceiling (its memory
@@ -187,7 +207,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
     [paper, ink, sheetInk, inverted, highlight],
   );
   const pictures = useMemo(
-    () => ({ inlineImages: m.inlineImages, resolvedRemote, fold: folding, subject: m.subject, frame, highlight }),
+    () => ({ inlineImages: m.inlineImages, resolvedRemote, fold: folding, subject: m.subject, frame, highlight, linkText: true }),
     [m.inlineImages, resolvedRemote, folding, m.subject, frame, highlight],
   );
   // A letter wider than the frame is drawn zoomed to it; every document below is the fitted one.
@@ -241,9 +261,9 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   const loadInlineImages = w.actions.loadInlineImages;
   const cidsKey = JSON.stringify(sanitized.cids);
   useEffect(() => {
-    if (sanitized.cids.length > 0) loadInlineImages(m.id, sanitized.cids);
+    if (!preview && sanitized.cids.length > 0) loadInlineImages(m.id, sanitized.cids);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [m.id, cidsKey, loadInlineImages]);
+  }, [m.id, cidsKey, loadInlineImages, preview !== undefined]);
 
   // The consented remote fetch — through the door's proxy, or this phone on the standalone door;
   // minted to `data:`, so the document never gains network. A press the server would not record
@@ -295,7 +315,19 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   historyTo.current = onHistory;
   const historyAt = asText || history === null ? null : history.at;
   useEffect(() => { historyTo.current?.(historyAt); }, [historyAt]);
+  const doc = shows.show === "frame" ? shows.doc : null;
+  const zoom = doc === null ? 1 : documentZoom(doc);
+  const previewKey = doc !== null ? `${frameId}@${layoutWidth}:${zoom}` : null;
+  const measured = previewSize !== null && previewSize.key === previewKey && previewSize.doc === doc
+    ? previewSize.height : null;
+  const maxHeight = preview?.maxHeight;
+  const onClipped = useRef(preview?.onClipped);
+  onClipped.current = preview?.onClipped;
+  useEffect(() => {
+    if (maxHeight !== undefined) onClipped.current?.(asText ? null : measured === null || measured > maxHeight);
+  }, [asText, maxHeight, measured]);
   if (asText) {
+    if (preview) return preview.fallback;
     // The fallback states its reason — a bare plain-text render reads as a bug. An unreadable html
     // part is not read again for the fold: the text folds by its own reading.
     return (
@@ -318,11 +350,11 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
     : refusedFor === m.id && !imagesWanted ? Copy.mailImagesRefused : null;
   const notice = [lead, said].filter((x) => x !== null).join(" ") || null;
   const canLoad = !imagesWanted && pictureUrls.length > 0;
-  // The document drawn: this state's once its own count fits; otherwise the last that fitted for this html.
-  const doc = shows.show === "frame" ? shows.doc : null;
-  // The zoom the drawn document carries: its readings are read at it, and a new zoom is a new view.
-  const zoom = doc === null ? 1 : documentZoom(doc);
-  const { frame: height, spacer } = frameLayout(sized);
+  const layout = frameLayout(sized);
+  const probing = maxHeight !== undefined && measured === null;
+  // A small view measures compact documents without mistaking its viewport for the document height.
+  const height = maxHeight === undefined ? layout.frame : Math.min(maxHeight, measured ?? 1);
+  const spacer = preview ? 0 : layout.spacer;
   const flip = adaptable ? (
     <Txt
       variant="caption"
@@ -339,7 +371,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
     <View>
       {/* The sentence is a line of its own; the links are one right-aligned row under it at every
           width, wrapping as a group only when the row itself does not fit. */}
-      <View style={{ gap: 6, marginBottom: 10 }}>
+      {!preview ? <View style={{ gap: 6, marginBottom: 10 }}>
         {notice !== null ? (
           <Txt variant="caption" tone="ink3">
             {notice}
@@ -364,13 +396,18 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
             {Copy.mailShowAsText}
           </Txt>
         </View>
-      </View>
+      </View> : null}
+      {probing ? preview?.fallback : null}
       <View
         testID="mail-sheet"
+        pointerEvents={probing ? "none" : "auto"}
+        accessibilityElementsHidden={probing}
+        importantForAccessibility={probing ? "no-hide-descendants" : "auto"}
         style={[
           { backgroundColor: sheetBg, borderRadius: t.radius.card },
-          t.lift("l0"),
-          t.scheme === "dark" ? { borderWidth: 1, borderColor: t.c.hairSoft } : null,
+          preview ? null : t.lift("l0"),
+          !preview && t.scheme === "dark" ? { borderWidth: 1, borderColor: t.c.hairSoft } : null,
+          probing ? { position: "absolute", top: 0, left: 0, right: 0 } : null,
         ]}
       >
         <View testID="mail-frame-box" onLayout={onFrameLayout} style={{ borderRadius: t.radius.card, overflow: "hidden" }}>
@@ -399,7 +436,13 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
                 const view = e.nativeEvent.layoutMeasurement.height;
                 const at = Date.now();
                 const widths = { doc: e.nativeEvent.contentSize.width, frame: e.nativeEvent.layoutMeasurement.width, zoom };
-                update((s) => nextFrameHeight(s, reported, view, at, widths));
+                if (preview && doc !== null && previewKey !== null && Number.isFinite(reported) && reported > 0
+                  && widths.frame > 0 && widths.doc <= widths.frame + 1) {
+                  const height = Math.ceil(reported);
+                  setPreviewSize((was) => was?.key === previewKey && was.doc === doc && was.height === height
+                    ? was : { key: previewKey, doc, height });
+                }
+                update((s) => nextFrameHeight(s, reported, preview ? FRAME_SEED_DP : view, at, widths));
               }}
               onLoadEnd={() => setLoadedFor(frameId)}
               style={{ height, backgroundColor: sheetBg }}
@@ -412,25 +455,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
         </View>
       </View>
       {spacer > 0 ? <View style={{ height: spacer }} /> : null}
-      <Sheet open={linkAsk !== null} onClose={() => setLinkAsk(null)} label={Copy.mailOpenLinkTitle}>
-        <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
-          {Copy.mailOpenLinkTitle}
-        </Txt>
-        {/* The destination said out loud — the web prints the true host beside a disagreeing
-            label; on a phone (no hover, no status bar) the confirm carries that disclosure. */}
-        <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }} numberOfLines={3}>
-          {linkAsk ?? ""}
-        </Txt>
-        <SheetRow
-          icon="open"
-          label={Copy.mailOpenLinkOpen}
-          onPress={() => {
-            const url = linkAsk;
-            setLinkAsk(null);
-            if (url !== null) void openConfirmedLink(url, { openURL: (u) => Linking.openURL(u), say: toast.say });
-          }}
-        />
-      </Sheet>
+      {linkAsk !== null ? <MailLinkSheet url={linkAsk} onClose={() => setLinkAsk(null)} /> : null}
     </View>
   );
 }

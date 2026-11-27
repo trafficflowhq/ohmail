@@ -1,3 +1,5 @@
+import { design } from "@ohmail/tokens/design";
+
 /**
  * The two fold laws of the glass primitives, as arithmetic — no renderer needed to prove them.
  * RAIL: a vertical column is BUDGETED against its height; what does not fit folds bottom-to-top
@@ -73,7 +75,16 @@ export function railFold(groups: readonly (readonly RailEntry[])[], availableHei
 
 /** The dock's metrics: 44pt buttons, 2 inside a pill, 8 pill padding, 8 between the two pills, 12 each side. */
 export const DOCK = { btn: 44, itemGap: 2, groupPad: 8, groupGap: 8, sideInset: 12 } as const;
-export const MAIL_DOCK = { ...DOCK, btn: 48 } as const;
+const paper = design.faces.paper.phone;
+const px = Number.parseFloat;
+export const MAIL_DOCK = {
+  btn: px(paper["h-l"]),
+  action: px(paper["h-xl"]),
+  itemGap: 0,
+  groupPad: 2 * px(paper.s1),
+  groupGap: px(paper.s2),
+  sideInset: px(paper.s3),
+};
 /** The fixed verbs pill — New mail and Search, two buttons that never fold. */
 const DOCK_VERBS = 2 * DOCK.btn + DOCK.itemGap + DOCK.groupPad;
 
@@ -81,7 +92,7 @@ const DOCK_VERBS = 2 * DOCK.btn + DOCK.itemGap + DOCK.groupPad;
 export function dockNeed(k: number, mail = false): number {
   const { btn, itemGap, groupPad, groupGap, sideInset } = mail ? MAIL_DOCK : DOCK;
   const destinations = k * btn + Math.max(0, k - 1) * itemGap + groupPad;
-  const actions = mail ? 2 * (btn + groupPad + groupGap) : groupGap + DOCK_VERBS;
+  const actions = mail ? 2 * (MAIL_DOCK.action + groupGap) : groupGap + DOCK_VERBS;
   return 2 * sideInset + destinations + actions;
 }
 

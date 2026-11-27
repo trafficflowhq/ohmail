@@ -100,6 +100,8 @@
       "node": "./dist/settings/index.js",
       "default": "./src/settings/index.ts"
     },
+    "./screener-labels.en.json": "./messages/screener.en.json",
+    "./screener-labels.de.json": "./messages/screener.de.json",
     "./settings/labels.en.json": "./messages/settings.en.json",
     "./settings/labels.de.json": "./messages/settings.de.json",
     "./settings/contract": {

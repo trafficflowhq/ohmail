@@ -1,4 +1,71 @@
 import type { ViewStyle } from "react-native";
+import { design } from "@ohmail/tokens/design";
+
+const menuEdge = Number.parseFloat(design.faces.paper.phone.s2);
+const phoneMenuMax = 460;
+const anchorMenuWidth = 232;
+
+type Rect = { x: number; y: number; width: number; height: number };
+export type SheetAnchor = Rect & { host?: Rect };
+
+/** A sheet falls back to the foot when it has no measurable trigger. */
+export function phoneMenuBounds(
+  window: { width: number; height: number },
+  insets: { top: number; right: number; bottom: number; left: number },
+  keyboardHeight: number,
+  hinge: { x: number; y: number; w: number; h: number } | null,
+  options: {
+    anchor?: SheetAnchor;
+    align: "start" | "end";
+    side: "above" | "below";
+    contentHeight: number;
+  },
+): ViewStyle {
+  const { anchor } = options;
+  const host = anchor?.host ?? { x: 0, y: 0, ...window };
+  let left = Math.max(host.x + menuEdge, insets.left + menuEdge);
+  let right = Math.min(host.x + host.width, window.width - insets.right) - menuEdge;
+  let top = Math.max(host.y, insets.top) + menuEdge;
+  let bottom = Math.min(host.y + host.height - menuEdge, window.height - Math.max(insets.bottom, keyboardHeight + menuEdge));
+  if (hinge !== null) {
+    if (hinge.h < hinge.w) {
+      if ((anchor && anchor.y + anchor.height / 2 < hinge.y) || bottom <= hinge.y + hinge.h) {
+        bottom = Math.min(bottom, hinge.y - menuEdge);
+      } else {
+        top = Math.max(top, hinge.y + hinge.h + menuEdge);
+      }
+    } else if (anchor && anchor.x + anchor.width / 2 < hinge.x) {
+      right = Math.min(right, hinge.x - menuEdge);
+    } else {
+      left = Math.max(left, hinge.x + hinge.w + menuEdge);
+    }
+  }
+  const room = Math.max(0, right - left);
+  const hostBottom = host.y + host.height;
+  if (!anchor) {
+    const width = Math.min(room, phoneMenuMax);
+    return {
+      width, left: left + (room - width) / 2 - host.x,
+      bottom: hostBottom - bottom, maxHeight: Math.max(0, bottom - top),
+    };
+  }
+  const width = Math.min(room, anchorMenuWidth);
+  const aligned = options.align === "end" ? anchor.x + anchor.width - width : anchor.x;
+  const above = Math.min(anchor.y - menuEdge, bottom);
+  const below = Math.max(anchor.y + anchor.height + menuEdge, top);
+  const headroom = above - top;
+  const footroom = bottom - below;
+  const aboveFirst = options.side === "above";
+  const up = aboveFirst
+    ? headroom >= options.contentHeight || headroom >= footroom
+    : footroom < options.contentHeight && headroom > footroom;
+  return {
+    width,
+    left: Math.max(left, Math.min(aligned, right - width)) - host.x,
+    ...(up ? { bottom: hostBottom - above, maxHeight: Math.max(0, headroom) }
+      : { top: below - host.y, maxHeight: Math.max(0, footroom) }),
+  };
+}
 
 /** The room a pane-anchored sheet leaves above itself, under the top inset. */
 export const SHEET_TOP_ROOM = 12;

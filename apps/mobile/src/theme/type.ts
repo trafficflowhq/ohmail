@@ -113,6 +113,7 @@ export const type = {
   wordmark: t({ size: size.wordmark, weight: weight.heavy, tracking: tracking.wordmark }),
   h1: t({ size: size.h1, weight: weight.bold, tracking: tracking.display }),
   h2: t({ size: size.h2, weight: weight.bold, tracking: tracking.display, leading: leading.tight }),
+  streamTitle: t({ size: size.h2, weight: weight.bold, tracking: tracking.display, leading: leading.tight }),
   readerTitle: t({
     size: size.readerTitle,
     weight: weight.bold,
@@ -136,6 +137,7 @@ export const type = {
   rowSubject: t({ size: size.bodyL, weight: weight.medium, tracking: tracking.subject }),
   rowSubjectSeen: t({ size: size.bodyL, weight: weight.regular, tracking: tracking.subject }),
   body: t({ size: size.body, weight: weight.regular, leading: leading.base }),
+  bodyMedium: t({ size: size.body, weight: weight.semibold, leading: leading.base }),
   msgBody: t({ size: size.prose, weight: weight.regular, leading: leading.prose }),
   readerBody: t({ size: size.proseReader, weight: weight.regular, leading: leading.reader }),
   streamBody: t({ size: size.bodyL, weight: weight.regular, leading: leading.body }),
@@ -144,6 +146,8 @@ export const type = {
   caption: t({ size: size.caption, weight: weight.regular }),
   tabLabel: t({ size: size.caption, weight: weight.semibold, tracking: tracking.name }),
   navLabel: t({ size: size.body, weight: weight.regular }),
+  railLabel: t({ size: size.body, weight: weight.semibold }),
+  railCount: t({ size: size.bodyS, weight: weight.bold }),
   navLabelOn: t({ size: size.body, weight: weight.bold }),
   chip: t({ size: size.label, weight: weight.regular, leading: leading.relaxed }),
   tagchip: t({ size: size.micro, weight: weight.bold }),
@@ -170,6 +174,7 @@ export const type = {
 
 /** Paper's display and mail text roles, applied only inside the mail routes. */
 const paper = design.faces.paper.light;
+const paperTouch = design.faces.paper.touch;
 const ui = px(paper["t-ui"]);
 const meta = px(paper["t-meta"]);
 const reading = px(paper["t-read"]);
@@ -179,8 +184,16 @@ const text = (size: number, weight: TextStyle["fontWeight"], leading = 1.4) =>
   t({ size, weight, leading });
 
 export const paperMailType = {
+  railLabel: text(ui, "600"),
+  railCount: text(meta, "700"),
   h1: { ...text(title + 2, "800", 1.18), letterSpacing: -0.45 },
   h2: { ...text(title + 2, "800", 1.18), letterSpacing: -0.45 },
+  streamTitle: t({
+    size: px(paperTouch["t-title"]),
+    weight: paperTouch["w-display"],
+    tracking: Number.parseFloat(paperTouch.track),
+    leading: 1.2,
+  }),
   readerTitle: { ...text(title + 2, "800", 1.18), letterSpacing: -0.45 },
   cardTitle: { ...text(title, "800", 1.18), letterSpacing: -0.4 },
   heldTitle: text(title, "800", 1.2),
@@ -189,6 +202,7 @@ export const paperMailType = {
   rowSubject: text(ui, "700"),
   rowSubjectSeen: text(ui, "400"),
   body: text(ui, "400"),
+  bodyMedium: text(ui, "600"),
   msgBody: text(reading, "400", line),
   readerBody: text(reading, "400", line),
   streamBody: text(reading, "400", line),

@@ -21,7 +21,8 @@ import {
   Tag,
 } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
-import { useNoAdvice, useScreener } from "../contract.js";
+import { DeliveryLabel } from "../../place-list/DeliveryLabel.js";
+import { useNoAdvice, useScreener, useScreenerBeside } from "../contract.js";
 import "./sentence.css";
 
 const chunkText = (chunks: unknown): string =>
@@ -64,6 +65,8 @@ export function Sentence({
   const screening = useText("screening");
   const words = suggestionWords(sender, useNoAdvice());
   const model = useScreener();
+  const { mailboxWord } = useScreenerBeside();
+  const mailbox = sender.mailboxId ? mailboxWord(sender.mailboxId) : null;
   const waiting = view.segment === "waiting";
   const place =
     view.segment !== "waiting"
@@ -101,6 +104,7 @@ export function Sentence({
         <b>{chunkText(chunks)}</b>
       ),
   });
+  const delivery = mailbox ? t("place.deliveredTo", { label: mailbox }) : null;
   return (
     <div>
       <KitSentence level={2}>
@@ -144,6 +148,7 @@ export function Sentence({
             {t("place.sure", { sure: detection.confidence })} · {detection.reason}
           </span>
         ) : null}
+        {delivery ? <DeliveryLabel title={delivery}>{delivery}</DeliveryLabel> : null}
       </p>
       {choosing && scope === "sender" && sender.checked?.claimsOnly ? (
         <p className="oh-text">{screening("footListClaim", { brand: sender.checked.brand })}</p>

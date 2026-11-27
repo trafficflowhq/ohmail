@@ -3,20 +3,19 @@
  * set — else the device's own, counted over what is on screen. What is pressed narrows the device's first paint here
  * and goes to the store, each as its own filter.
  */
-import type { EngineMessage, SearchPlaceCount } from "@ohmail/wire";
-import { useEffect, useMemo, useState } from "react";
-import {
-  folderLeaf,
-  VIEW_OF_FOLDER,
-  type OhmailEngine,
-  type SearchHit,
-  type ServerSearchFacets,
-  type ServerSearchFilters,
-  type StoreSearchMeta,
+import type { EngineMessage } from "@ohmail/wire";
+import { useEffect, useState } from "react";
+import type {
+  OhmailEngine,
+  SearchHit,
+  ServerSearchFacets,
+  ServerSearchFilters,
+  StoreSearchMeta,
 } from "@ohmail/client-engine";
 import { displayAddress } from "../text/idn.js";
 import type { Translator } from "../text/translator.js";
 import type { DevicePaint } from "./local-pass.js";
+import { folderKeyOf, folderPicks, useSearchPlaceInventory } from "./place-inventory.js";
 import type { StorePass } from "./store-pass.js";
 import type { SearchFacetGroup, SearchFacetItem, SearchFacetPick, SearchListInput } from "./types.js";
 
@@ -30,10 +29,6 @@ export interface Filter {
   /** A Place picked before typing narrows the device to that full path too. */
   exactPath?: true;
 }
-
-/** The store's facet for a folder path, as the device keys it: a view id, else the leaf. */
-export const folderKeyOf = (folder: string): string =>
-  (VIEW_OF_FOLDER as Record<string, string | undefined>)[folder] ?? folderLeaf(folder);
 
 /**
  * WHAT IS PRESSED: at most one facet of each group. Where the host's server takes a person, the place and the files
@@ -285,21 +280,7 @@ export function useFacets({
     answered && (!apart || trimmed !== "")
       ? facetGroupsOf(facets, storeFacets?.exact === true, rows, pressed, t)
       : [];
-  const serverPlaces = useSearchPlaces(engine, scope, apart);
-  const useMirror = apart && serverPlaces === null;
-  const messageStamp = useMirror ? engine.read().stampOf("message") : 0;
-  const places = useMemo(() => {
-    if (!apart) return [];
-    const counts =
-      serverPlaces === null
-        ? mirrorPlaces(engine, messageStamp)
-        : new Map(serverPlaces.map(({ folder, count }) => [folder, count]));
-    return folderPicks([...counts.keys()]).map((pick) => ({
-      pick,
-      label: pick.key,
-      count: counts.get(pick.raw)!,
-    }));
-  }, [apart, engine, messageStamp, serverPlaces]);
+  const places = useSearchPlaceInventory(engine, scope, apart);
   if (!apart) return withPressed(groups, pressed);
   const inventory: SearchFacetGroup = {
     group: "folder",
@@ -324,47 +305,4 @@ export function useFacets({
     });
   }
   return withPressed(offered, pressed);
-}
-
-/** The inventory belongs to the engine and scope that asked for it. */
-function useSearchPlaces(engine: OhmailEngine, scope: SearchListInput["scope"], enabled: boolean) {
-  const [answer, setAnswer] = useState<{
-    engine: OhmailEngine;
-    scope: SearchListInput["scope"];
-    places: readonly SearchPlaceCount[];
-  }>();
-  useEffect(() => {
-    if (!enabled || scope === false) return;
-    let current = true;
-    void engine.searchPlaces().then((places) => {
-      if (current && places !== null) setAnswer({ engine, scope, places });
-    });
-    return () => {
-      current = false;
-    };
-  }, [engine, scope, enabled]);
-  return enabled && answer?.engine === engine && answer.scope === scope ? answer.places : null;
-}
-
-function mirrorPlaces(engine: OhmailEngine, _messageStamp: number): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const { folder } of engine.read().list<EngineMessage>("message")) {
-    counts.set(folder, (counts.get(folder) ?? 0) + 1);
-  }
-  return new Map([...counts].sort(([a, x], [b, y]) => y - x || a.localeCompare(b)));
-}
-
-/** Use the display leaf unless two different paths would have the same name. */
-function folderPicks(
-  paths: readonly string[],
-): (Extract<SearchFacetPick, { group: "folder" }> & { raw: string })[] {
-  const keys = new Map<string, number>();
-  for (const path of paths) {
-    const key = folderKeyOf(path);
-    keys.set(key, (keys.get(key) ?? 0) + 1);
-  }
-  return paths.map((raw) => {
-    const key = folderKeyOf(raw);
-    return { group: "folder", key: keys.get(key) === 1 ? key : raw, raw };
-  });
 }

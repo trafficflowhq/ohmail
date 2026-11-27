@@ -222,7 +222,10 @@ describe("no whole-domain scope for a shared provider, as on the web", () => {
 
   it("the sheet draws no scope switch where it is not offered", () => {
     const sheet = source("src/ui/SenderDetail.tsx");
-    expect(sheet).toMatch(/domainOffered=\{domainScopeOffered\(row\.address\)\}/);
+    expect(sheet).toContain("const domainOffered = domainScopeOffered(row.address);");
+    expect(sheet).toMatch(/domainOffered \? \(\s*<View ref=\{scopeMenu.anchorRef\}/);
+    expect(sheet).toContain('open={menu === "scope" && domainOffered}');
+    expect(sheet).toContain("domainOffered={domainOffered}");
     expect(sheet).toMatch(/const scopeControl = !domainOffered \? null : \(/);
   });
 });

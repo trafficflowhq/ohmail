@@ -175,7 +175,7 @@ describe("controls: no false sentence", () => {
 
 describe("\"can't be edited here\" is said only where it is true", () => {
   it("a draft the phone cannot take whole, at the open: the sentence; a row not here: the gone sentence", async () => {
-    const live = await scene(draftRow({ inReplyToMessageId: "m1", cc: [{ name: null, address: "c@fake.test" }] }));
+    const live = await scene(draftRow({ html: "<p>the <b>body</b></p>" }));
     expect(live.rowNow()?.edit).toBeNull();
     expect(live.plan(null).kind).toBe("notEditable");
     expect(composeDraftPlan("d-404", null, undefined, () => undefined).kind).toBe("gone");
@@ -188,7 +188,8 @@ describe("\"can't be edited here\" is said only where it is true", () => {
   it("the route renders each plan's own sentence and holds the sheet it opened", () => {
     expect(ROUTE).toContain("const plan = composeDraftPlan(draftParam, held.current, w.drafts.find((d) => d.id === draftParam), (id) => w.message(id));");
     expect(ROUTE).toContain("hint={plan.kind === \"notEditable\" ? Copy.draftsEditNote");
-    expect(ROUTE).toContain(": plan.kind === \"gone\" ? Copy.draftsRowGone : Copy.draftsForwardOriginalAbsent}");
+    expect(ROUTE).toContain(': plan.kind === "gone" ? Copy.draftsRowGone');
+    expect(ROUTE).toContain(': plan.kind === "replyOriginalAbsent" ? Copy.draftsReplyOriginalAbsent : Copy.draftsForwardOriginalAbsent');
     expect(ROUTE).toContain("held.current = plan.open;");
   });
 
@@ -196,8 +197,9 @@ describe("\"can't be edited here\" is said only where it is true", () => {
     // It asks only while idle on its row: its own send leaves the sheet, so it is never "elsewhere".
     expect(SHEET).toContain("const left = draftId !== null && phase === \"idle\" ? w.actions.draftLeft(draftId) : null;");
     expect(SHEET).toContain("{gone.why === \"sent\" ? Copy.composeSentElsewhere : Copy.composeDeletedElsewhere}");
-    expect(SHEET).toContain("if (goneNote !== null && !sendAsNew.current) { setFailNote(goneNote); return; }");
+    expect(SHEET).toContain("if (goneNote !== null && !asNew) { setFailNote(goneNote); return; }");
     expect(SHEET).toContain("goneNote !== null && typedSinceGone && failNote === goneNote ? (");
-    expect(SHEET).toContain("toRow(asNew && draftId !== null && w.actions.draftLeft(draftId) !== null ? null : draftId)");
+    expect(SHEET).toContain("const target = asNew && draftId !== null && w.actions.draftLeft(draftId) !== null ? null : draftId;");
+    expect(SHEET).toContain("const press = () => toRow(target);");
   });
 });

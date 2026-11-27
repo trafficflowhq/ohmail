@@ -1,5 +1,6 @@
 import { markupOf, runsOf } from "../compose/formatting";
 import { compareSearchRows, matchesSearchFacets, type SearchFilters, type SearchOrder } from "./search-facets";
+import type { RestingSearchPerson } from "@ohmail/app-logic/search/people";
 /**
  * The live world — what the mail screens render and dispatch when the connection is live; the
  * one seam between screens and engine. Reads are the shared selectors, never re-derived
@@ -94,6 +95,7 @@ import {
   OUTBOX_WITHDRAWN_CODE,
   SIG_FOLLOWING,
   effectiveSignature,
+  effectiveSignatureHtml,
   folderNameError,
   PRESS_THREW,
   pressVerdict,
@@ -169,6 +171,7 @@ import {
   type UnsubscribeClaim,
   type WaitingSend,
 } from "@ohmail/client-engine";
+import { groupPeople, groupVoices, whoOf } from "@ohmail/app-logic/ohbox/people";
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
 import { blobToBase64 } from "../mail/blob-base64";
@@ -176,7 +179,9 @@ import { drawnText, htmlWords } from "../mail/html-words";
 import { previewKindOf, type PreviewKind } from "../mail/attachment-preview";
 import { logAttachmentRefusal, logLaunchReplay } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
-import type { LetterDoor } from "../compose/letter-store";
+import type { LetterDoor, ReplyEdits } from "../compose/letter-store";
+import { replyAllRecipients, replyEnvelopeOnWire, replyEnvelopePlan } from "@ohmail/app-logic/writing/compose-from";
+export { replyAllRecipients, type ReplyAllRecipients } from "@ohmail/app-logic/writing/compose-from";
 import { ownedLetters } from "../compose/letter-keeper";
 import { settleWithdrawn } from "../compose/letter-restore";
 import {
@@ -578,8 +583,7 @@ export type WorldMail = Omit<Mail, "earlier"> & {
   bodyJunkLeaving?: true;
   /**
    * The hydrated html part, exactly as `bodyOf` reports it — non-null only on a `full` body
-   * that carries one. Attached by {@link liveMessage} alone (the reading view is its one
-   * consumer); a list row never pays for a document it will not draw.
+   * that carries one. The reader and mounted feed previews subscribe independently of list rows.
    */
   html?: string | null;
   /** The body was stored with its remote content already loaded (the account's own switch). */
@@ -591,7 +595,7 @@ export type WorldMail = Omit<Mail, "earlier"> & {
   owaInvitation?: OwaInvitationStub;
   /**
    * The engine's minted embedded images, `contentId → data: URI` — identity-stable between
-   * mints, so the reader's sanitize memo keys on it. Attached by {@link liveMessage} alone.
+   * mints, so the renderer's sanitize memo keys on it.
    */
   inlineImages?: ReadonlyMap<string, string>;
   /** Where the message physically is — the folder a `move` mutation is measured against. */
@@ -605,15 +609,7 @@ export type WorldMail = Omit<Mail, "earlier"> & {
    * offered the place the row is already in and retargeted at the filed one.
    */
   presentedFolder: Folder;
-  /**
-   * THE MAILBOX THE MESSAGE ARRIVED IN — and therefore THE SENDING MAILBOX of every compose
-   * this screen can start: a reply's From is `Engine.enrich`'s own `parent.mailboxId` and the
-   * forward arm already passes the same id explicitly, so this is the one id the composer's
-   * signature block may follow (`effectiveSignature`; SIG-MOB). The projection used to carry
-   * no mailbox handle on purpose; it carries exactly this one now BECAUSE the block must
-   * derive from the id the mutation will put on the wire — a block keyed on anything else
-   * could show one mailbox's signature and serialize under another's send.
-   */
+  /** The receiving mailbox and the starting From for a reply or forward. */
   mailboxId: string;
   /** The pile the bar shows as pressed, or the resurface pin the Done slot answers to. */
   pile: WorldPileState;
@@ -751,8 +747,8 @@ const NO_BODY: MessageBody = {
 /**
  * A LIST ROW, memoised per ENTITY OBJECT across derivations. Its inputs are the entity (replaced,
  * never edited, on change), the view (the reader's day, zone, language, tags, mailboxes and own
- * addresses — the last three by identity) and two facts the reader answers in O(1) off its own
- * caches: the pile and the conversation length. A hit re-reads those two and returns the SAME row
+ * addresses — the last three by identity) and facts the reader answers off its own caches: the
+ * pile, the conversation length and whether a sent reply awaits a copy. A hit returns the SAME row
  * object, so a list re-derived after an arrival changes the identity of the rows that moved and
  * nothing else. No body text is held: the memo is bounded by the window's rows.
  */
@@ -770,6 +766,7 @@ export function toListRow(reader: EntityReader, m: EngineMessage, v: WorldView):
     && hit.own === v.ownAddresses && hit.pile === pile && hit.thread === thread
     && hit.pendingReplyCopy === pendingReplyCopy) return hit.row;
   const row = mailRow(reader, m, v, NO_BODY, pendingReplyCopy);
+  if (row.place === "reads" || row.place === "receipts") row.recipients = { to: m.to ?? [], cc: m.cc ?? [] };
   delete (row as { bodyState?: BodyState }).bodyState;
   listRows.set(m, { day, tags: v.tags, mailboxes: v.mailboxes, own: v.ownAddresses, pile, thread, pendingReplyCopy, row });
   return row;
@@ -864,8 +861,6 @@ function mailRow(
     ...(isJunkHuskLeaving(body, physical) ? { bodyJunkLeaving: true as const } : {}),
     snippet: m.snippet,
     ...(m.hasAttachments ? { hasAttachments: true } : {}),
-    ...(v.ownAddresses?.some((own) => m.to?.some((to) => to.address.toLowerCase() === own.toLowerCase()))
-      ? { toYou: true as const } : {}),
     ...(m.remoteContent === "blocked" ? { imagesBlocked: true as const } : {}),
     /* READ STATE AS DRAWN, not as stored — the one shared derivation, so the phone bolds
        exactly the rows the desktop and the browser do (owner ruling 2026-08-31: a resurfaced
@@ -974,54 +969,6 @@ export function phoneBannerLines(o: PhoneOrganizer): { head: string; why: string
   return o.stopped
     ? { head: Copy.phoneStateNotOrganized, why: Copy.phoneBannerStopped(o.name) }
     : { head: Copy.phoneBanner(o.name), why: Copy.phoneBannerWhy };
-}
-
-/** The reply-all envelope: who stands on the To line, and who rides Cc. */
-export interface ReplyAllRecipients {
-  to: EmailAddress[];
-  cc: EmailAddress[];
-}
-
-/**
- * Who a reply-to-all is addressed to — or `null` when "all" is nobody beyond the plain reply.
- * Mirrored from `apps/webapp/app/shell/compose-from.ts#replyAllRecipients` (the reference; the
- * webapp shell is not importable from React Native). The `null` is the visibility rule as well
- * as the degenerate case: the bar offers Reply all exactly when this returns an envelope, and
- * the send path asks the same call, so promise and send are one decision. With no own addresses
- * the envelope is offered from two listed people and withheld at one — a lone recipient is
- * almost always the reader. Counted across both lines, folded, one person once.
- */
-export function replyAllRecipients(
-  parent: { from: EmailAddress; to: readonly EmailAddress[]; cc?: readonly EmailAddress[] },
-  ownAddresses: readonly string[],
-): ReplyAllRecipients | null {
-  const fold = (a: string): string => a.trim().toLowerCase();
-  const mine = new Set(ownAddresses.map(fold));
-  const sender = fold(parent.from.address);
-  const cc = parent.cc ?? [];
-  const seen = new Set<string>();
-  const others = (list: readonly EmailAddress[]): EmailAddress[] =>
-    list.filter((r) => {
-      const a = fold(r.address);
-      if (mine.has(a) || seen.has(a)) return false;
-      seen.add(a);
-      return true;
-    });
-
-  if (mine.size > 0 && mine.has(sender)) {
-    const toOthers = others(parent.to);
-    const ccOthers = others(cc);
-    if (ccOthers.length === 0) return null;
-    return { to: toOthers.length > 0 ? toOthers : [parent.from], cc: ccOthers };
-  }
-
-  seen.add(sender);
-  const toOthers = others(parent.to);
-  const ccOthers = others(cc);
-  if (toOthers.length === 0 && ccOthers.length === 0) return null;
-  const listed = new Set([...parent.to, ...cc].map((r) => fold(r.address)));
-  if (mine.size === 0 && listed.size < 2) return null;
-  return { to: [parent.from, ...toOthers], cc: ccOthers };
 }
 
 /**
@@ -1326,7 +1273,7 @@ export interface WorldDraftEdit {
   mailboxId: string;
   /** To, as the composer's field types it: `Name <address>` entries, comma-separated. */
   to: string;
-  /** A new mail's copies, typed the same way; empty where it has none. */
+  /** Copies typed the same way, empty where the draft has none. */
   cc: string;
   bcc: string;
   /** The subject of record, empty where none — never the list's stand-in. */
@@ -1334,6 +1281,8 @@ export interface WorldDraftEdit {
   html?: string;
   /** The message a forward draft forwards; `null` for every other draft. */
   forwardOf: string | null;
+  /** A reply explicitly opened by its draft ID keeps the saved envelope and thread. */
+  replyTo?: string;
   /** The original's files the row keeps, beside a forward (another device's choice included); `null`: every file. */
   forwardParts: string[] | null;
   /** The row's version as opened (`contentRevision`): the composer's saves and sends state it. */
@@ -1376,6 +1325,7 @@ const addressSet = (list: readonly EmailAddress[]): string =>
  */
 export function keptReplyOf(
   reader: EntityReader, parent: EngineMessage, waiting: readonly WaitingSend[], envelopes: readonly KeptEnvelope[], now: Date,
+  mailboxes?: WorldView["mailboxes"],
 ): KeptReply {
   const named = new Set(waiting.flatMap((w) => [w.draftId, w.paintId]).filter((id): id is string => id !== null));
   const rows = draftsList(reader, now).filter((d) => d.inReplyToMessageId === parent.id);
@@ -1383,13 +1333,16 @@ export function keptReplyOf(
   if (rows.length === 0 && !sends) return { kind: "none" };
   const subject = replySubject(parent.subject).trim();
   const audiences = envelopes.map((e) => [addressSet(e.to), addressSet(e.cc)].join("|"));
-  const row = rows.find((d) => {
+  const resumable = rows.filter((d) => {
     return d.status === "draft" && draftBodyKnown(d)
       && editableMarkup(d) !== null && d.pendingCreate === undefined
       && (d.forwardOfMessageId ?? null) === null && d.bcc.length === 0 && !named.has(d.id)
-      && d.mailboxId === parent.mailboxId && d.subject.trim() === subject
+      && (d.mailboxId === parent.mailboxId || mailboxes?.some((mailbox) => mailbox.id === d.mailboxId))
+      && d.subject.trim() === subject
       && audiences.includes([addressSet(d.to), addressSet(d.cc)].join("|"));
   });
+  if (new Set(resumable.map((draft) => draft.mailboxId)).size > 1) return { kind: "aside" };
+  const row = resumable[0];
   if (!row) return { kind: "aside" };
   const html = editableMarkup(row);
   return {
@@ -1402,20 +1355,19 @@ export function keptReplyOf(
 }
 
 /**
- * WHICH DRAFTS THE PHONE EDITS: a draft whose text and formatting the phone can keep whole, with
- * copies only on a new mail (the composer shows Cc and Bcc there). A save or a send writes the row
+ * WHICH DRAFTS THE PHONE EDITS: a draft whose text, recipients and formatting the phone can keep whole.
+ * A save or a send writes the row
  * whole, so opening any other draft here would drop part of it without a word.
  */
 export function draftEditOf(d: EngineDraft): WorldDraftEdit | null {
   const html = editableMarkup(d);
-  const copies = d.cc.length > 0 || d.bcc.length > 0;
   if (d.status !== "draft" || !draftBodyKnown(d)) return null;
-  if (copies && (d.inReplyToMessageId !== null || (d.forwardOfMessageId ?? null) !== null)) return null;
   if (html === null) return null;
   if (typeof d.mailboxId !== "string" || d.mailboxId === "") return null;
   return {
     mailboxId: d.mailboxId, to: typedRecipients(d.to), cc: typedRecipients(d.cc), bcc: typedRecipients(d.bcc), subject: d.subject, ...(html ? { html } : {}),
     forwardOf: d.forwardOfMessageId ?? null,
+    ...(d.inReplyToMessageId ? { replyTo: d.inReplyToMessageId } : {}),
     forwardParts: d.forwardOfMessageId ? d.forwardParts ?? null : null,
     revision: d.contentRevision ?? null,
   };
@@ -1582,9 +1534,11 @@ export interface WorldOhbox {
  * keeps its conversation in New until it is left or answered.
  */
 const ohboxRowMemo = new WeakMap<EngineMessage, {
-  mail: WorldMail; face: WorldMail; subject: string; unread: boolean; newSince: number; members: string; key: string; marks: string;
+  mail: WorldMail; face: WorldMail; subject: string; unread: boolean; newSince: number; members: string; key: string; marks: string; people: string;
   row: WorldMail;
 }>();
+
+const personOf = ({ name, address }: EmailAddress): Address => ({ name: name || address, address });
 
 export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | null = null): WorldOhbox {
   const box = ohboxView(pres, openHeld);
@@ -1608,14 +1562,37 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
     const tid = r.openTarget.threadId;
     const marks = tid ? marksIndex.get(tid) : undefined;
     const marksKey = marks ? marks.join(" ") : "";
-    const authors = new Set(r.members.filter((member) => !isOwnOutbound(member)).map((member) => senderKey(member.from.address)));
-    const additionalPeople = Math.max(0, authors.size - 1);
+    const people = groupPeople(r, undefined);
+    const sentTo = r.members.length === 1 || r.unreadCount === 0 ? face.sentTo : undefined;
+    const recipient = sentTo === undefined ? undefined : r.face.to?.[0];
+    const voices = groupVoices(r);
+    const byline = whoOf(
+      voices.length > 0 ? voices : [r.face],
+      (letter) => displayName(letter.from),
+      (letter) => letter.from.address !== displayName(letter.from) ? letter.from.address : undefined,
+      sentTo === undefined ? null : { label: sentTo },
+    );
+    const rowByline = {
+      name: byline.who,
+      address: recipient?.name && r.face.to.length === 1 ? recipient.address : byline.address,
+      spokenName: byline.names,
+    };
+    const contacts = people.map(({ letter }) => personOf(letter.from));
+    if (recipient) {
+      const recipientKey = senderKey(recipient.address);
+      const lead = contacts.findIndex((person) => senderKey(person.address) === recipientKey);
+      if (lead > 0) contacts.unshift(...contacts.splice(lead, 1));
+      if (contacts.length === 1 && lead < 0) contacts[0] = personOf(recipient);
+    }
+    const additionalPeople = contacts.length > 2 ? contacts.length - 1 : 0;
+    const rowPeople = contacts.slice(0, 2);
+    const peopleKey = JSON.stringify([additionalPeople, rowPeople, rowByline]);
     const hasAttachments = r.members.some((member) => member.hasAttachments);
     /* THE SAME ROW OBJECT while nothing it shows moved — see {@link toListRow}. */
     const hit = ohboxRowMemo.get(r.openTarget);
     if (hit !== undefined && hit.mail === mail && hit.face === face && hit.subject === subject
       && hit.unread === unread && hit.newSince === newSince && hit.members === members && hit.key === r.key
-      && hit.marks === marksKey && (hit.row.additionalPeople ?? 0) === additionalPeople
+      && hit.marks === marksKey && hit.people === peopleKey
       && hit.row.hasAttachments === hasAttachments
       && (hit.row.pendingReplyCopy === true) === pendingReplyCopy) return hit.row;
     const { sentTo: _openTargetFace, ...open } = mail;
@@ -1628,13 +1605,15 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
       unread,
       rowKey: r.key,
       memberIds: r.members.map((m) => m.id),
+      rowPeople,
+      rowByline,
       ...(pendingReplyCopy ? { pendingReplyCopy: true as const } : {}),
       ...(additionalPeople ? { additionalPeople } : {}),
       hasAttachments,
       ...(newSince > 0 ? { newSince } : {}),
       ...(marks ? { marks } : {}),
     };
-    ohboxRowMemo.set(r.openTarget, { mail, face, subject, unread, newSince, members, key: r.key, marks: marksKey, row });
+    ohboxRowMemo.set(r.openTarget, { mail, face, subject, unread, newSince, members, key: r.key, marks: marksKey, people: peopleKey, row });
     return row;
   };
   const resurfaced = rows.resurfaced.map(toRow);
@@ -1763,6 +1742,8 @@ export interface ScreenerRow {
    * Screener" the moment a drain landed newer mail from the very sender on screen.
    */
   routeKey: string;
+  /** The representative letter's mailbox, whether or not the row needs a delivery chip. */
+  mailboxId?: string;
   name: string;
   address: string;
   initial: string;
@@ -1867,12 +1848,12 @@ export function listClaimOf(row: Pick<ScreenerRow, "address" | "checked">, scope
  * out and Spam write no rule, and `ruleLine` promises none for them.
  */
 export function decideLinesOf(
-  row: Pick<ScreenerRow, "address" | "checked">, scope: Scope, target: string, waiting: boolean,
+  row: Pick<ScreenerRow, "address" | "checked">, scope: Scope, target: string, waiting: boolean, paper = false,
 ): { ruleLine: string; listClaim: string | null } {
   const claims = waiting ? listClaimOf(row, scope) : null;
   return claims === null
-    ? { ruleLine: Copy.decideRule(target), listClaim: null }
-    : { ruleLine: Copy.decideRuleListClaim(target), listClaim: Copy.listClaimScreenOut(claims.brand) };
+    ? { ruleLine: Copy.decideRule(target, paper), listClaim: null }
+    : { ruleLine: Copy.decideRuleListClaim(target, paper), listClaim: Copy.listClaimScreenOut(claims.brand) };
 }
 
 function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined, mailboxes: WorldView["mailboxes"]): ScreenerRow {
@@ -1900,6 +1881,7 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined, mailboxes: Worl
     time: dto.time,
     newestSubject: newest?.subject ?? "",
     newestPreview: (newest?.snippet ?? newest?.body.slice(0, 160))?.trim().replace(/\s+/g, " "),
+    ...(dto.mailboxId ? { mailboxId: dto.mailboxId } : {}),
     ...deliveryMailboxOf(mailboxes, dto.mailboxId),
     dull: dto.dull === true,
     scope: domainScopeOffered(dto.from.address) ? scope ?? dto.scope : "sender",
@@ -2477,6 +2459,8 @@ export interface WorldAddressAnswer {
 }
 
 export interface WorldSearch {
+  /** People ranked by their appearances in the account's mirror. Read only by Search. */
+  readonly people: readonly RestingSearchPerson[];
   /** The instant device answer — the engine's mirror index, synchronous, no wire. */
   query(q: string, limit?: number, filters?: SearchFilters, order?: SearchOrder): WorldSearchAnswer;
   /** Every message on this device involving one address, by direction, with all three counts. */
@@ -2494,12 +2478,16 @@ export interface WorldSearch {
  * states its answer over. `base` is the same held-delete-hiding reader the lists derive from:
  * a hit whose row left every list at the press must not survive in search for the window.
  */
-export function liveSearch(engine: OhmailEngine, base: EntityReader, v: WorldView): WorldSearch {
+export function liveSearch(
+  engine: OhmailEngine, base: EntityReader, v: WorldView,
+  readPeople: () => readonly RestingSearchPerson[] = () => [],
+): WorldSearch {
   const rows = (hits: readonly { message: EngineMessage }[]): WorldMail[] =>
     hits
       .filter((h) => base.get<EngineMessage>("message", h.message.id) !== undefined)
       .map((h) => toListRow(base, h.message, v));
   return {
+    get people() { return readPeople(); },
     query(q, limit, filters, order = "relevance") {
       const narrowed = filters && Object.values(filters).some((value) => value !== undefined);
       const accept = narrowed ? (message: EngineMessage) => {
@@ -2970,43 +2958,43 @@ export function liveAddressBook(reader: EntityReader, ownAddresses: readonly str
 /** How many suggestions a recipient field offers — the web field's six. */
 export const RECIPIENT_SUGGESTIONS = 6;
 
-/** The entries already settled, and the one still being typed after the last unquoted separator. */
-function typedTail(typed: string): { entries: string[]; tail: string } {
-  let quoted = false;
-  let cut = -1;
-  for (let i = 0; i < typed.length; i++) {
-    if (typed[i] === '"') quoted = !quoted;
-    else if ((typed[i] === "," || typed[i] === ";") && !quoted) cut = i;
-  }
-  return { entries: recipientEntries(typed.slice(0, cut + 1)), tail: typed.slice(cut + 1).trim() };
+/** Settled entries and the editable tail. A pasted column can also use line breaks or tabs. */
+export function recipientLine(typed: string, pasted = false): { entries: string[]; tail: string } {
+  const parts = recipientParts(typed, pasted ? ",;\r\n\t" : ",;");
+  const tail = parts.pop() ?? "";
+  return { entries: parts.map((part) => part.trim()).filter(Boolean), tail: tail.trimStart() };
 }
 
 /** The correspondents the part still being typed matches, the web field's `matchAddresses`. */
 export function recipientSuggestions(book: readonly AddressBookEntry[], typed: string): AddressBookEntry[] {
-  return matchAddresses(book, typedTail(typed).tail, RECIPIENT_SUGGESTIONS);
+  return matchAddresses(book, recipientLine(typed).tail.trim(), RECIPIENT_SUGGESTIONS);
 }
 
 /** The field with a suggestion in place of the part being typed, closed by a separator as the web's accept is. */
 export function withSuggestion(typed: string, entry: AddressBookEntry): string {
-  return [...typedTail(typed).entries, formatRecipient(entry)].join(", ") + ", ";
+  return [...recipientLine(typed).entries, formatRecipient(entry)].join(", ") + ", ";
 }
 
 /* Quote-aware split: `"Doe, Alice" <alice@x.org>` is ONE entry — a comma inside double quotes is
    part of the display name, not a delimiter. A naive split refused exactly the shape address
    books paste. */
-function recipientEntries(typed: string): string[] {
+function recipientParts(typed: string, separators: string): string[] {
   const entries: string[] = [];
   let held = "";
   let quoted = false;
   for (const ch of typed) {
     if (ch === '"') quoted = !quoted;
-    if ((ch === "," || ch === ";") && !quoted) {
+    if (separators.includes(ch) && !quoted) {
       entries.push(held);
       held = "";
     } else held = held + ch;
   }
   entries.push(held);
-  return entries.map((e) => e.trim()).filter((e) => e !== "");
+  return entries;
+}
+
+function recipientEntries(typed: string): string[] {
+  return recipientParts(typed, ",;").map((entry) => entry.trim()).filter(Boolean);
 }
 
 function recipientOf(entry: string): { name: string | null; address: string } | null {
@@ -3191,9 +3179,11 @@ export function sendIntentOf(m: EngineMutation): string | null {
 export function sendTextDiffers(standing: EngineMutation, pressed: EngineMutation): boolean {
   if (standing.kind !== "mail_send" || pressed.kind !== "mail_send") return false;
   const a = standing, b = pressed;
+  const threaded = Boolean(b.forwardOf || b.inReplyTo);
   const stated: Array<[unknown, unknown]> = [
     [b.body, a.body], [b.html, a.html], [b.subject, a.subject],
-    [b.to, a.to], [b.cc, a.cc], [b.bcc, a.bcc],
+    [b.to, a.to], [b.cc, threaded ? a.cc ?? [] : a.cc], [b.bcc, threaded ? a.bcc ?? [] : a.bcc],
+    [b.mailboxId, a.mailboxId],
   ];
   return stated.some(([pressedValue, standingValue]) =>
     pressedValue !== undefined && JSON.stringify(pressedValue) !== JSON.stringify(standingValue));
@@ -3530,15 +3520,17 @@ function sendAgainRefusalOf(code: string | undefined): DraftSendAgainOutcome {
  * `messageId` is the parent of a reply or forward (`null` for a new mail); the envelope of a reply
  * is derived here as the send derives it. `files` counts attachments a draft row cannot hold.
  */
-export interface DraftKeep {
+export interface DraftKeep extends ReplyEdits {
   mode: "reply" | "replyAll" | "forward" | "new";
   messageId: string | null;
   mailboxId: string | null;
   to: EmailAddress[];
-  /** A new mail's copies; absent is none. */
+  /** A new mail or forward's copies; absent is none. */
   cc?: EmailAddress[];
   bcc?: EmailAddress[];
   subject: string;
+  /** The forward composer's fixed subject as displayed, including an empty one from a draft. */
+  forwardSubject?: string;
   body: string;
   html?: string | null;
   /** Files kept with the draft on this phone (a draft row holds no bytes). */
@@ -3575,8 +3567,14 @@ export interface ForwardFilesRead {
   parts: Array<{ id: string; filename: string; sizeBytes: number; inline: boolean }>;
 }
 
-/** What a forward press says beyond its words: the original's files it keeps (`compose/forward-files.ts`). */
-export interface ForwardOpts { forwardParts?: string[] }
+/** The visible envelope and selected parts of a forward. */
+export interface ForwardOpts {
+  mailboxId?: string | null;
+  subject?: string;
+  cc?: EmailAddress[];
+  bcc?: EmailAddress[];
+  forwardParts?: string[];
+}
 
 /** What a kept reply or forward is addressed to and called, kept so it outlives its original. */
 export interface KeptEnvelope { to: EmailAddress[]; cc: EmailAddress[]; subject: string }
@@ -3717,6 +3715,8 @@ export interface LiveDeps {
    * retires the sender.
    */
   forgetWaiting?: (decided: { address: string; scope: Scope }) => void;
+  /** The provider still displays this decision's queue, relay and toast state. */
+  screenerOutcomeCurrent?: () => boolean;
   /**
    * WILL A SCREEN-OUT HERE ALSO SEND THE ONE-CLICK UNSUBSCRIBE — the account's switch on a door
    * that sends it (`net/consent.ts#FoldersConsent.autoUnsubscribe`), false on the standalone door,
@@ -3761,6 +3761,7 @@ export interface LiveDeps {
    drawn from and hands it back through {@link LiveDeps.presented}, so it has to name it. */
 export type { AbandonedMutation, EntityReader, MutationResult, QueuedChange, WaitingSend } from "@ohmail/client-engine";
 export { NO_WAITING } from "@ohmail/client-engine";
+export { forwardSubject, replySubject };
 /* The sheet's step reads the press's forecast and the rules in play by this door too. */
 export type { RuleEntity as WorldRule } from "@ohmail/wire";
 export type {
@@ -3970,6 +3971,10 @@ export interface LiveWorldActions {
     /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
     waited?: readonly string[],
     html?: string | null,
+    signatureHtml?: string,
+    /** The composer's chosen From when it differs from the original's mailbox. */
+    fromMailboxId?: string,
+    edits?: ReplyEdits,
   ): Promise<SendResult>;
   /**
    * IS THE SECOND SEND ACTION OFFERED for a reply or forward of this message? The engine's one
@@ -3992,6 +3997,7 @@ export interface LiveWorldActions {
     /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
     waited?: readonly string[],
     html?: string | null,
+    signatureHtml?: string,
   ): Promise<SendResult>;
   /**
    * A MAIL THAT ANSWERS NOTHING — the same `mail_send` with no parent: `inReplyTo` null,
@@ -4015,6 +4021,7 @@ export interface LiveWorldActions {
     /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
     waited?: readonly string[],
     html?: string | null,
+    signatureHtml?: string,
   ): Promise<SendResult>;
   /**
    * WITHDRAW A QUEUED SEND — Cancel, on the intent. `withdrawn` is the cancellation;
@@ -4747,6 +4754,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     row: ScreenerRow, dest: Destination, read: boolean, pressed: Scope, peers: readonly ScreenerRow[] = [],
     unsubscribeIds: readonly string[] = [],
   ): Promise<boolean> => {
+    if (deps.screenerOutcomeCurrent?.() === false) return false;
     const scope: Scope = domainScopeOffered(row.address) ? pressed : "sender";
     const decision = decisionOf(dest as ScreenDest);
     const target = scope === "domain" ? `@${domainOf(row.address)}` : row.address;
@@ -4769,6 +4777,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // The read batch stays unwatched, as it always was: only the decision's own writes answer.
       const own = a.mutations.flatMap((m, i) => (m.kind === "mark_seen" || m.kind === "move" ? [] : [a.answers[i] ?? null]));
       const v = oneVerdict(own.map((r) => (r ? pressVerdict(r) : PRESS_THREW)));
+      if (deps.screenerOutcomeCurrent?.() === false) return;
       if (v.kind === "applied") deps.forgetWaiting?.({ address: row.address, scope });
       hold?.();
       // A newer press about this sender replaced the decision: it owns the sentence.
@@ -4789,14 +4798,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // Sent by the window itself (its record refused): the answer above speaks for the press.
     if (opened.sent) return true;
     if (!opened.held) { hold?.(); return decideNow(row, dest, read, scope, also); }
+    if (deps.screenerOutcomeCurrent?.() === false) return true;
     spoke = true;
     const subject = routingSubject(intent);
     toast(pressSaid, {
       holdMs: UNDO_MS,
       /* ONE CLOCK: the pill's hold starts at its first layout, and so does the window's. */
-      shown: () => { restartRouting(subject); },
+      shown: () => { if (deps.screenerOutcomeCurrent?.() !== false) restartRouting(subject); },
       undo: () => {
         // Nothing held is not an undo: past the close the decision has gone and has no inverse.
+        if (deps.screenerOutcomeCurrent?.() === false) return;
         if (!undoRouting(subject)) { toast(refuse("liveDecideUndoLate")); return; }
         hold?.();
         toast(refuse("toastUndone"));
@@ -4882,6 +4893,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const v = await landed;
     // The card's moves follow the decision's answer: refused or replaced, no letter moves by id.
     if (v.kind === "applied" || v.kind === "queued") for (const mv of cardMoves) void engine.mutate(mv);
+    if (deps.screenerOutcomeCurrent?.() === false) return v.kind === "applied";
     /* ══ AND THE SHELF FOLLOWS THE DECIDE, NOT THE NEXT DRAIN ══════════════════════════════
        Confirmed only — a queued press has not occurred and a refused one changed nothing, and
        retiring a row for either would be the same false state pointing the other way. Before
@@ -5132,8 +5144,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // A pile press takes the message's pile row, or the Ohbox row it stands in, my reply too (`pileSubjectIds`).
     const row = pileSubjectIds(presentedReader(), messageId, engine.openRowHeld());
     const own = row.length > 1;
-    const targets = membersOf(messageId, own ? row : members, { own }).filter((id) => messageOf(id) !== undefined);
-    if (targets.length === 0) return false;
+    const selected = membersOf(messageId, own ? row : members, { own });
+    const targets = selected.filter((id) => messageOf(id) !== undefined);
+    if (targets.length === 0 || targets.some((id) => awaitsReplyCopy(engine.store, id))) return false;
     const holds = (id: string) => triageStateOf(reader, messageOf(id)!) === state;
     const off = targets.every(holds);
     const changed = off ? targets : targets.filter((id) => !holds(id));
@@ -5754,7 +5767,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * whole defect. Standing means queued OR on the wire: a send in the air resumes its key too, the
    * queue read first because a queued twin holds the newest words. Nothing standing ⇒ `mutate` mints.
    */
-  const dispatchSend = (m: EngineMutation, andDone: SendAndDonePlan | null = null): Promise<MutationResult> => {
+  const dispatchSend = (m: EngineMutation, andDone: SendAndDonePlan | null = null, comparison = m): Promise<MutationResult> => {
     const intent = sendIntentOf(m);
     // Queued or on the wire, and not a send already confirmed and kept for its echo.
     const standingSends = intent === null ? [] : [...engine.pendingMutations(), ...engine.inFlightMutations()]
@@ -5764,12 +5777,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        resume under it stays marked. */
     const left = sendsLeftOf(engine);
     for (const p of standingSends) if ("restored" in p && p.restored === true) left.add(p.key);
-    const standing = standingSends.find((p) => !left.has(p.key) || !sendWireDiffers(p.mutation, m));
+    const standing = standingSends.find((p) => !left.has(p.key) || !sendWireDiffers(p.mutation, comparison));
     /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS. A second row under
        the key would be replayed on the return after the first had gone, and each replay writes a
        draft of its own (`send-waits.ts`). Other words or files, or Send + Done pressed over a plain
        Send (or back), take the resume below: the latest press decides, under the same key. */
-    if (standing !== undefined && networkNow() === "offline" && !sendWireDiffers(standing.mutation, m)
+    if (standing !== undefined && networkNow() === "offline" && !sendWireDiffers(standing.mutation, comparison)
       && sameIntent(standing.andDone ?? null, andDone)) {
       const joined: MutationResult = { id: standing.id, key: standing.key, status: "queued", seq: null };
       resumedAnswers.add(joined);
@@ -5847,6 +5860,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return { said: answer, kept: null };
   };
 
+  const defaultReply = (parent: EngineMessage, all: boolean) =>
+    replyEnvelopePlan(parent, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES, all, null);
   const sendReply = async (
     messageId: string,
     body: string,
@@ -5859,6 +5874,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     base: string | null = null,
     waited: readonly string[] = [],
     html?: string | null,
+    signatureHtml?: string,
+    fromMailboxId?: string,
+    edits: ReplyEdits = {},
   ): Promise<SendResult> => {
     const elsewhere = sentElsewhere(draftId);
     if (elsewhere) return elsewhere;
@@ -5877,11 +5895,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("composeNeedContent"));
       return { outcome: "failed" };
     }
-    // A plain reply leaves the envelope to `Engine.enrich` (to = the sender, the parent's
-    // mailbox, thread and subject); reply-all carries the SAME envelope the sheet offered.
-    /* THE SAME ADDRESSES THE SHEET WAS DRAWN FROM. Read through the getter at SEND time, not at
-       construction — see {@link LiveDeps.ownAddresses}. */
-    const env = all ? replyAllRecipients(m, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES) : null;
+    if (edits.replyEnvelope?.to.length === 0) {
+      toast(refuse("composeNeedRecipient"));
+      return { outcome: "failed" };
+    }
+    const mailboxId = fromMailboxId ?? m.mailboxId;
+    // The default matches the folded audience. The engine fills fields it still owns.
+    const audience = edits.replyEnvelope ?? replyEnvelopeOnWire(defaultReply(m, all));
+    const changedSubject = edits.replySubject?.trim();
+    const effective = {
+      to: audience.to ?? [m.from], cc: audience.cc ?? [], bcc: audience.bcc ?? [],
+      subject: changedSubject ?? replySubject(m.subject),
+    };
     /* SEND + DONE, read BEFORE the dispatch — the plan the release inverts is the state the
        reader is looking at, not the state the send leaves behind. An appointment finishes
        nothing: `sendAt` is a message still on the account, and filing its source would say it
@@ -5890,9 +5915,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const signed = withSignature({
         kind: "mail_send" as const,
         inReplyTo: messageId,
+        mailboxId,
         body: text,
         ...(html === undefined ? {} : { html }),
-        ...(env ? { to: env.to, cc: env.cc } : {}),
+        ...audience,
+        ...(changedSubject === undefined ? {} : { subject: changedSubject }),
         // Present ⇒ an appointment, absent ⇒ a delivery. Spread rather than written as
         // `sendAt: sendAt ?? undefined` so an ordinary reply's mutation is byte-identical to
         // the one this arm built before Send later existed. Attachments spread for the same
@@ -5903,11 +5930,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(draftId ? { draftId } : {}),
         // The version the words are based on: a row moved elsewhere refuses the send.
         ...(draftId && base ? { ifContentRevision: base } : {}),
-      }, sig);
+      }, sig, signatureHtml);
     if (draftOverCeiling(signed.body, signed.html)) return tooLongSend();
     const sentSay = sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.replySent;
     return sent(
-      dispatchSend(signed, plan),
+      dispatchSend(signed, plan, { ...signed, ...effective }),
       // THE CONFIRMED SENTENCE IS THE WHOLE DIFFERENCE, and it is honest rather than
       // convenient: nothing was sent, an appointment was made, and "Reply sent." over a
       // message still sitting on the account is exactly the false claim the four-outcome
@@ -5922,8 +5949,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // A scheduled reply answered from the reservation keeps its appointment sentence.
       sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : undefined,
       draftId === null ? undefined : keepChangedWords(draftId, {
-        mailboxId: m.mailboxId, inReplyToMessageId: messageId, threadId: m.threadId ?? null,
-        subject: replySubject(m.subject), body: text, ...(html === undefined ? {} : { html }), to: env ? env.to : [m.from], cc: env ? env.cc : [], bcc: [],
+        mailboxId, inReplyToMessageId: messageId, threadId: m.threadId ?? null,
+        ...effective, body: text, ...(html === undefined ? {} : { html }),
       }, waited),
     );
   };
@@ -6122,15 +6149,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const parent = messageId === null ? undefined : messageOf(messageId);
     if (!parent || mode === "new") return null;
     if (mode === "forward") return { to: [], cc: [], subject: forwardSubject(parent.subject) };
-    const env = mode === "replyAll" ? replyAllRecipients(parent, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES) : null;
-    return { to: env ? env.to : [parent.from], cc: env ? env.cc : [], subject: replySubject(parent.subject) };
+    const plan = defaultReply(parent, mode === "replyAll");
+    return { to: plan.to ?? [parent.from], cc: plan.cc ?? [], subject: replySubject(parent.subject) };
   };
 
   const keptReply = (messageId: string): KeptReply => {
     const parent = messageOf(messageId);
     if (!parent) return { kind: "none" };
     const envelopes = [keepEnvelope("reply", messageId), keepEnvelope("replyAll", messageId)].filter((e): e is KeptEnvelope => e !== null);
-    return keptReplyOf(engine.read(), parent, engine.waitingSends(), envelopes, now());
+    return keptReplyOf(engine.read(), parent, engine.waitingSends(), envelopes, now(), deps.mailboxes?.());
   };
 
   /** The newest row the engine kept a refused waiting edit of `from` in, as a new draft: one of this composer's own (`waited`). */
@@ -6162,13 +6189,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // The server's 413 judges the same bytes: asked here, nothing goes on the wire.
     if (draftOverCeiling(k.body, k.html)) return "tooLong";
     const reply = k.mode === "reply" || k.mode === "replyAll";
-    const env = k.mode === "replyAll" && parent
-      ? replyAllRecipients(parent, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES)
-      : null;
-    const to = reply && parent ? (env ? env.to : [parent.from]) : k.to;
+    const env = reply && parent ? defaultReply(parent, k.mode === "replyAll") : null;
+    const editedReply = reply ? k.replyEnvelope : undefined;
+    const to = reply && parent ? editedReply?.to ?? env?.to ?? [parent.from] : k.to;
     const subject = reply && parent
-      ? replySubject(parent.subject)
-      : k.mode === "forward" && parent ? forwardSubject(parent.subject) : k.subject.trim();
+      ? k.replySubject?.trim() ?? replySubject(parent.subject)
+      : k.mode === "forward" && parent ? (k.forwardSubject ?? forwardSubject(parent.subject)).trim() : k.subject.trim();
     /* ONE LETTER, ONE ROW. A composer bound to the row its refused send left keeps INTO that row;
        the row is a moment old, so a mirror that has not drained it yet is asked to first — an
        update names a target the engine must already hold. */
@@ -6182,8 +6208,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(reply && parent ? { inReplyToMessageId: parent.id, threadId: parent.threadId ?? null } : {}),
         ...(k.mode === "forward" && parent ? { forwardOfMessageId: parent.id } : {}),
         ...(k.mode === "forward" && parent && k.forwardParts ? { forwardParts: [...k.forwardParts] } : {}),
-        // A reply's copies are its envelope's, never the ones a resumed row seeded the sheet with.
-        subject, body: k.body, ...(k.html === undefined ? {} : { html: k.html }), to, cc: env ? env.cc : reply && parent ? [] : (k.cc ?? []), bcc: reply && parent ? [] : (k.bcc ?? []),
+        subject, body: k.body, ...(k.html === undefined ? {} : { html: k.html }), to,
+        cc: reply ? editedReply?.cc ?? env?.cc ?? [] : k.cc ?? [],
+        bcc: reply ? editedReply?.bcc ?? [] : k.bcc ?? [],
       })
       .then((res) => res, () => null);
     /* A ROW ANOTHER DEVICE SENT OR DELETED TAKES NO NEW WORDS (`draft_sent`, 404). What is on
@@ -6236,6 +6263,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     andDone = false, confirmed = false, draftId: string | null = null, opts: ForwardOpts = {},
     base: string | null = null, waited: readonly string[] = [],
     html?: string | null,
+    signatureHtml?: string,
   ): Promise<SendResult> => {
     const elsewhere = sentElsewhere(draftId);
     if (elsewhere) return elsewhere;
@@ -6250,6 +6278,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
     /* SEND + DONE — read before the dispatch, for the reply arm's reason. */
     const plan = donePlan(messageId, andDone);
+    const mailboxId = opts.mailboxId ?? m.mailboxId;
+    const subject = opts.subject ?? forwardSubject(m.subject);
+    const cc = opts.cc ?? [];
+    const bcc = opts.bcc ?? [];
     const signed = withSignature({
         kind: "mail_send" as const,
         inReplyTo: null,
@@ -6259,18 +6291,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(opts.forwardParts !== undefined ? { forwardParts: opts.forwardParts } : {}),
         // The quoted header names the original's date on this phone's clock and in its language.
         forwardClock: { zone: readerZone(), locale: activeLocale() },
-        subject: forwardSubject(m.subject),
-        // The mailbox the original arrived in — the same sender a reply gets from `enrich`.
-        // A forward has no parent-derived From of its own, and the send refuses without one.
-        mailboxId: m.mailboxId,
+        subject,
+        mailboxId,
         body,
         ...(html === undefined ? {} : { html }),
         to,
+        cc,
+        bcc,
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(draftId ? { draftId } : {}),
         // The version the words are based on: a row moved elsewhere refuses the send.
         ...(draftId && base ? { ifContentRevision: base } : {}),
-      }, sig);
+      }, sig, signatureHtml);
     if (draftOverCeiling(signed.body, signed.html)) return tooLongSend();
     const r = await sent(
       dispatchSend(signed, plan),
@@ -6279,7 +6311,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       true,
       undefined,
       draftId === null ? undefined : keepChangedWords(draftId, {
-        mailboxId: m.mailboxId, forwardOfMessageId: messageId, subject: forwardSubject(m.subject), body, ...(html === undefined ? {} : { html }), to, cc: [], bcc: [],
+        mailboxId, forwardOfMessageId: messageId, subject, body, ...(html === undefined ? {} : { html }), to, cc, bcc,
         ...(opts.forwardParts !== undefined ? { forwardParts: [...opts.forwardParts] } : {}),
       }, waited),
     );
@@ -6301,6 +6333,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     base: string | null = null,
     waited: readonly string[] = [],
     html?: string | null,
+    signatureHtml?: string,
   ): Promise<SendResult> => {
     const elsewhere = sentElsewhere(draftId);
     if (elsewhere) return elsewhere;
@@ -6336,7 +6369,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(draftId ? { draftId } : {}),
         // The version the words are based on: a row moved elsewhere refuses the send.
         ...(draftId && base ? { ifContentRevision: base } : {}),
-      }, sig);
+      }, sig, signatureHtml);
     if (draftOverCeiling(signed.body, signed.html)) return tooLongSend();
     const sentSay = sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.composeSent;
     return sent(
@@ -7334,8 +7367,8 @@ export function setTimeLabel(iso: string, now: Date, zone: string, locale = "en"
 }
 
 /** The send-later appointment — {@link setTimeLabel}, under the name its callers already use. */
-export function scheduleLabel(iso: string, now: Date, zone: string): string {
-  return setTimeLabel(iso, now, zone);
+export function scheduleLabel(iso: string, now: Date, zone: string, locale = "en"): string {
+  return setTimeLabel(iso, now, zone, locale);
 }
 
 /**
@@ -7696,7 +7729,7 @@ export function firstSyncContinuesSaid(
  * SERVER's own rules, shared through the engine) ride through on the same terms. */
 /* `sendingMailboxId` passes through UNCHANGED: the compose-from fallback is the engine's,
    and a second derivation here would be a second answer to one question. */
-export { destDone, isPlace, SIG_FOLLOWING, effectiveSignature, folderNameError, sendingMailboxId };
+export { destDone, isPlace, SIG_FOLLOWING, effectiveSignature, effectiveSignatureHtml, folderNameError, sendingMailboxId };
 export type {
   AddressDirection, Destination, FolderEntity, FolderNameError, Held, Mail, PileItem, PileKind,
   Place, Scope, SignatureState,
@@ -7716,13 +7749,14 @@ export type { EngineDraft };
  */
 export function liveBody(
   engine: OhmailEngine, id: string,
-): Pick<WorldMail, "body" | "bodyState" | "bodyWithheld" | "mailboxId"> | null {
+): Pick<WorldMail, "body" | "bodyState" | "bodyWithheld" | "html" | "inlineImages" | "mailboxId"> | null {
   const reader = engine.read();
   const m = reader.get<EngineMessage>("message", id);
   if (m === undefined) return null;
   const b = bodyOf(reader, m);
   return {
     body: b.text, bodyState: b.state, mailboxId: m.mailboxId,
+    ...(b.html ? { html: b.html, inlineImages: engine.inlineImagesOf(id) } : {}),
     ...(b.state === "withheld" && b.withheld ? { bodyWithheld: b.withheld } : {}),
   };
 }

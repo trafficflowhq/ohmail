@@ -19,7 +19,8 @@ import { useRowSwipe } from "../touch/index.js";
 import type { OhboxBeside } from "./beside.js";
 import { OhboxRowMenu } from "./OhboxRowMenu.js";
 import { ohboxRowSides } from "./row-sides.js";
-import { peopleOf, spokenOf, whoOf, type RowWho } from "./row-words.js";
+import { peopleOf, spokenOf } from "./row-words.js";
+import { whoOf, type RowWho } from "@ohmail/app-logic/ohbox/people";
 import { useSquaresRun } from "./squares-run.js";
 
 export interface OhboxGroupProps {

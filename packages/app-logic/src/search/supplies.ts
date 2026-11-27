@@ -1,4 +1,5 @@
-import type { SearchBy } from "./question.js";
+/** Whether this server takes the person filters, or words and facets only. */
+export type SearchBy = "people" | "words";
 
 /** Old servers keep word search even when they ignore unrecognized filters. */
 export async function readSearchBy(read: (path: string) => Promise<Response>): Promise<SearchBy> {

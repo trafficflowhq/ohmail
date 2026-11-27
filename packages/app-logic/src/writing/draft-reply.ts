@@ -150,11 +150,11 @@ export function useDraftReply(opts: {
     id: string, of: string, buy: (key: string, onPreview: DraftPreview) => ReturnType<DraftReplyWire["create"]>, typed: RichValue | null,
     lands: "reply" | "letter",
   ) => {
-    if (wire === "none" || io.current.busy) return;
+    if (wire === "none" || io.current.busy) return false;
     if (!wire.configured()) {
       // No route is available. Saying so beats a spinner that never resolves.
       setNotice(t("draftReply.unavailable"));
-      return;
+      return false;
     }
     if (io.current.of !== of) io.current.key = null;
     io.current.of = of;
@@ -246,6 +246,7 @@ export function useDraftReply(opts: {
               : t(`aiRefusal.${key}`));
       }
     })();
+    return true;
   }, [onDraft, t, wire]);
 
   const confirm = useCallback(() => {
@@ -254,33 +255,33 @@ export function useDraftReply(opts: {
   }, [messageId, phase, spend, wire]);
 
   const press = useCallback((id: string, typed: RichValue, fullConversation = false) => {
-    if (wire === "none" || phase === "running" || io.current.busy) return;
+    if (wire === "none" || phase === "running" || io.current.busy) return false;
     setMessageId(id);
-    spend(id, fullConversation ? `${id}\nfull` : id, (key, progress) => fullConversation
+    return spend(id, fullConversation ? `${id}\nfull` : id, (key, progress) => fullConversation
       ? wire.create(id, key, progress, true) : wire.create(id, key, progress), typed, "reply");
   }, [phase, spend, wire]);
 
   /* The door for a draft made of the person's own words: the host's, or `none` (also where the host has no drafter). */
   const textWire = wire === "none" ? "none" : wire.fromText;
   const pressText = useCallback((id: string, text: string, typed: RichValue, fullConversation = false) => {
-    if (textWire === "none" || io.current.busy) return;
+    if (textWire === "none" || io.current.busy) return false;
     setMessageId(id);
     const body = { text, inReplyToMessageId: id, ...(fullConversation ? { fullConversation: true } : {}) };
-    spend(id, JSON.stringify(body), (key, progress) => textWire(body, key, progress), typed, "reply");
+    return spend(id, JSON.stringify(body), (key, progress) => textWire(body, key, progress), typed, "reply");
   }, [spend, textWire]);
 
   const pressLetter = useCallback((
     words: { text: string; mailboxId: string | null; subject: string }, typed: RichValue,
   ) => {
     const id = NEW_LETTER;
-    if (textWire === "none" || io.current.busy) return;
+    if (textWire === "none" || io.current.busy) return false;
     setMessageId(id);
     const body = {
       text: words.text,
       ...(words.mailboxId !== null ? { mailboxId: words.mailboxId } : {}),
       ...(words.subject.trim() !== "" ? { subject: words.subject } : {}),
     };
-    spend(id, `${id}\n${words.mailboxId ?? ""}\n${words.subject}\n${words.text}`, (key, progress) => textWire(body, key, progress), typed, "letter");
+    return spend(id, `${id}\n${words.mailboxId ?? ""}\n${words.subject}\n${words.text}`, (key, progress) => textWire(body, key, progress), typed, "letter");
   }, [spend, textWire]);
 
   const keep = useCallback((o: OwnText) => setOwn((all) => withEntry(all, o)), []);

@@ -1,18 +1,19 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PullContext, type PullBinding } from "@ohmail/app-logic/session/pull-new-mail";
+import { PULL_HOLD, PULL_HOLD_CAP_MS } from "@ohmail/app-logic/touch";
+import frameEn from "../../messages/frame.en.json" with { type: "json" };
 import { Frame } from "../../src/frame/Frame.js";
 import type { PaneProps, PlaceEntry } from "../../src/frame/contract.js";
 import { ListColumn } from "../../src/place-list/index.js";
 import { TextProvider } from "../../src/text/index.js";
-import { PULL_HOLD, PULL_HOLD_CAP_MS } from "../../src/touch/ListTouch.js";
 import { wideWindow } from "../ohbox/setup.js";
 import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
 import { fakeWindow, ROOMS } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
-import { pullDown } from "./touch-world.js";
+import { pullDown, pulledDistance } from "./touch-world.js";
 
 /*
  * EVERY MAIL LIST PULLS, NOT ONLY THE OHBOX: a list place's column pulled down at its top presses the mail ground's
@@ -30,7 +31,7 @@ interface Ground {
   pulls: number;
   /** The pull pressed elsewhere (the rail's foot, `p`): it runs without a finger. */
   start(): void;
-  finish(): void;
+  finish(result?: PullBinding["result"]): void;
 }
 
 function listWorld(
@@ -45,14 +46,22 @@ function listWorld(
   const ground: Ground = { pulls: 0, start: () => {}, finish: () => {} };
   function Pane({ plan }: PaneProps) {
     const [pulling, setPulling] = useState(false);
-    ground.start = () => setPulling(true);
-    ground.finish = () => setPulling(false);
+    const [result, setResult] = useState<PullBinding["result"]>();
+    ground.start = () => {
+      setResult(undefined);
+      setPulling(true);
+    };
+    ground.finish = (outcome) => {
+      setResult(outcome);
+      setPulling(false);
+    };
     const binding: PullBinding = {
       available: true,
       pulling,
+      result,
       pull: () => {
         ground.pulls += 1;
-        if (!instant) setPulling(true);
+        if (!instant) ground.start();
       },
     };
     return (
@@ -61,6 +70,7 @@ function listWorld(
           <div role="option" aria-selected="false" data-id="r1">
             Invoice
           </div>
+          <button type="button">List control</button>
         </ListColumn>
       </PullContext.Provider>
     );
@@ -80,7 +90,7 @@ function listWorld(
     window: fakeWindow(room),
   }).host;
   const view = render(
-    <TextProvider locale="en" messages={{ ...FRAME_WORDS.en }} timeZone="UTC">
+    <TextProvider locale="en" messages={{ ...FRAME_WORDS.en, sync: frameEn.sync }} timeZone="UTC">
       <Frame host={host} />
     </TextProvider>,
   );
@@ -93,29 +103,57 @@ function listWorld(
 }
 
 const room = () => document.querySelector<HTMLElement>(".tc-pull");
-const mark = () => document.querySelector(".tc-pull .oh-spin");
+const mark = () => room()?.firstElementChild ?? null;
 
 describe("a pull at a list place's top", () => {
   it("presses the ground's pull once, and holds the waiting mark until that pull is over", () => {
     const world = listWorld();
-    expect(room()!.style.height).toBe("0px");
+    expect(pulledDistance(world.scroller())).toBe(0);
     expect(mark()).toBeNull();
     pullDown(world.row(), 150);
     expect(world.ground.pulls).toBe(1);
     act(() => {});
-    expect(room()!.style.height, "the room holds while the pull runs").toBe(`${PULL_HOLD}px`);
+    expect(pulledDistance(world.scroller()), "the room holds while the pull runs").toBe(PULL_HOLD);
     expect(mark(), "the waiting mark stands in the room").not.toBeNull();
+    expect(mark()?.children).toHaveLength(3);
     act(() => world.ground.finish());
-    expect(room()!.style.height, "the pull is over: the room closes").toBe("0px");
+    expect(pulledDistance(world.scroller()), "the pull is over: the room closes").toBe(0);
     expect(mark()).toBeNull();
   });
 
   it("shows the mark under the finger before letting go", () => {
     const world = listWorld();
     const letGo = pullDown(world.row(), 150, { hold: true });
-    expect(room()!.style.height).not.toBe("0px");
+    expect(pulledDistance(world.scroller())).toBe(75.9);
     expect(mark()).not.toBeNull();
     letGo();
+  });
+
+  it("announces that mail is up to date without adding a button above the rows", () => {
+    const world = listWorld();
+    pullDown(world.row(), 150);
+    act(() => world.ground.finish({ key: "pullCurrent" }));
+    const list = within(world.scroller());
+    expect(list.getByRole("status").textContent).toBe("Up to date");
+    expect(list.queryByRole("button", { name: "Up to date" })).toBeNull();
+    expect(pulledDistance(world.scroller())).toBe(0);
+  });
+
+  it.each([
+    [{ key: "pullPaused" }, "Not now, checking resumes by itself"],
+    [{ key: "pullPending" }, "Checking continues"],
+    [{ key: "pullMailboxFailed", mailboxId: "mailbox" }, "Couldn’t check · Open Mailboxes"],
+  ] as const)("keeps an action for an incomplete check", (result, name) => {
+    const world = listWorld();
+    pullDown(world.row(), 150);
+    act(() => world.ground.finish(result));
+    const button = within(world.scroller()).getByRole("button", { name });
+    expect(button).toBeTruthy();
+    if (result.key !== "pullMailboxFailed") {
+      fireEvent.pointerDown(button);
+      fireEvent.click(button);
+      expect(world.ground.pulls).toBe(2);
+    }
   });
 
   it("starts no second pull while the first runs, and keeps holding for the one that runs", () => {
@@ -125,9 +163,9 @@ describe("a pull at a list place's top", () => {
     pullDown(world.row(), 150);
     act(() => {});
     expect(world.ground.pulls).toBe(1);
-    expect(room()!.style.height).toBe(`${PULL_HOLD}px`);
+    expect(pulledDistance(world.scroller())).toBe(PULL_HOLD);
     act(() => world.ground.finish());
-    expect(room()!.style.height).toBe("0px");
+    expect(pulledDistance(world.scroller())).toBe(0);
     pullDown(world.row(), 150);
     expect(world.ground.pulls).toBe(2);
   });
@@ -135,13 +173,13 @@ describe("a pull at a list place's top", () => {
   it("a release while a pull pressed elsewhere runs starts nothing, and holds the mark for that pull", () => {
     const world = listWorld();
     act(() => world.ground.start());
-    expect(room()!.style.height, "a pull from the rail opens no room by itself").toBe("0px");
+    expect(pulledDistance(world.scroller()), "a pull from the rail opens no room by itself").toBe(0);
     pullDown(world.row(), 150);
     act(() => {});
     expect(world.ground.pulls).toBe(0);
-    expect(room()!.style.height).toBe(`${PULL_HOLD}px`);
+    expect(pulledDistance(world.scroller())).toBe(PULL_HOLD);
     act(() => world.ground.finish());
-    expect(room()!.style.height).toBe("0px");
+    expect(pulledDistance(world.scroller())).toBe(0);
   });
 
   it("holds nothing for a release whose pull was over at once, nor for a later pull from elsewhere", () => {
@@ -149,9 +187,9 @@ describe("a pull at a list place's top", () => {
     pullDown(world.row(), 150);
     act(() => {});
     expect(world.ground.pulls).toBe(1);
-    expect(room()!.style.height).toBe("0px");
+    expect(pulledDistance(world.scroller())).toBe(0);
     act(() => world.ground.start());
-    expect(room()!.style.height).toBe("0px");
+    expect(pulledDistance(world.scroller())).toBe(0);
   });
 
   it("never holds longer than the cap, though the pull still runs", () => {
@@ -161,11 +199,11 @@ describe("a pull at a list place's top", () => {
     act(() => {
       vi.advanceTimersByTime(1);
     });
-    expect(room()!.style.height).toBe(`${PULL_HOLD}px`);
+    expect(pulledDistance(world.scroller())).toBe(PULL_HOLD);
     act(() => {
       vi.advanceTimersByTime(PULL_HOLD_CAP_MS);
     });
-    expect(room()!.style.height).toBe("0px");
+    expect(pulledDistance(world.scroller())).toBe(0);
     expect(world.ground.pulls).toBe(1);
   });
 
@@ -173,6 +211,29 @@ describe("a pull at a list place's top", () => {
     const world = listWorld();
     pullDown(world.row(), 120);
     Object.defineProperty(world.scroller(), "scrollTop", { value: 10, configurable: true });
+    pullDown(world.row(), 150);
+    expect(world.ground.pulls).toBe(0);
+  });
+
+  it("leaves a list control's gesture alone", () => {
+    const world = listWorld();
+    pullDown(document.querySelector(".pl-scroll button")!, 150);
+    expect(world.ground.pulls).toBe(0);
+  });
+
+  it("follows a finger that retreats to the top and releases without refreshing", () => {
+    const world = listWorld();
+    const release = pullDown(world.row(), 150, { hold: true });
+    fireEvent.touchMove(world.row(), { touches: [{ clientX: 100, clientY: 192, identifier: 1 }] });
+    expect(pulledDistance(world.scroller())).toBe(0);
+    expect(world.scroller().hasAttribute("data-pull-direct")).toBe(true);
+    release();
+    expect(world.ground.pulls).toBe(0);
+  });
+
+  it("does not pull in a two-column touch layout", () => {
+    const world = listWorld("fold");
+    expect(room()).toBeNull();
     pullDown(world.row(), 150);
     expect(world.ground.pulls).toBe(0);
   });

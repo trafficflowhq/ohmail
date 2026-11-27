@@ -1,20 +1,9 @@
 import "./delivery-label.css";
 
-export function DeliveryLabel({
-  title,
-  place,
-  children,
-}: {
-  title: string;
-  place?: boolean;
-  children: string;
-}) {
+export function DeliveryLabel({ title, children }: { title: string; children: string }) {
   return (
-    <span
-      className={place ? "delivery-label badge oh-badge place" : "delivery-label badge oh-badge"}
-      title={title}
-    >
-      {children}
+    <span className="delivery-label badge oh-badge" role="note" aria-label={title} title={title}>
+      <span aria-hidden="true">{children}</span>
     </span>
   );
 }

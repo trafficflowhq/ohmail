@@ -203,7 +203,7 @@ describe.skipIf(!AVAILABLE)("the erasure/backfill lock cycle", () => {
     // source rather than running it: this property is about the SHAPE of the program, and it
     // must fail the instant either call is deleted or reordered, independent of any runtime
     // race actually firing on this particular run.
-    const erasureSrc = readFileSync(`${ROOT}/../../packages/services/src/account-deletion-service.ts`, "utf8");
+    const erasureSrc = readFileSync(`${ROOT}/../../packages/db/src/account-deletion-service.ts`, "utf8");
     const fnStart = erasureSrc.indexOf("export async function deleteAccount");
     // The ACTUAL CALL, not a mention — the constant's name also appears in this file's import
     // statement, which sits before `fnStart` but proves nothing about what the function does.

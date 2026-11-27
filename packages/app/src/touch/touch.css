@@ -8,19 +8,90 @@
   -webkit-touch-callout: none;
 }
 
-.tc-pull {
+.tc-pull,
+.tc-pull-notice {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
 }
-/* Let go: the room settles to its hold, or closes, at the kit's pace; under the finger it follows at once. */
-.tc-pull:not([data-finger]) {
-  transition: height var(--d-move) var(--e-move);
+:root [data-pull-list] {
+  position: relative;
+  overscroll-behavior-y: none;
 }
-.tc-pull-mark {
+[data-pull-at-top] {
+  touch-action: pan-x pan-down;
+}
+[data-touch-list][data-pull-at-top] {
+  touch-action: pan-down;
+}
+/* The pull is painted over the list's scroll origin. Only the content's transform follows the finger. */
+.tc-pull {
+  position: absolute;
+  inset: 0 0 auto;
+  block-size: var(--s7);
+  overflow: visible;
+  pointer-events: none;
+}
+.tc-pull-drag {
+  align-self: flex-start;
+}
+[data-pull-list] > :not(.tc-pull) {
+  translate: var(--pull-offset, none);
+}
+[data-pull-list]:not([data-pull-direct]) > :not(.tc-pull) {
+  transition: translate var(--d-move) var(--e-move);
+}
+.tc-pull-beats {
+  position: absolute;
+  inset-block-start: 0;
+  left: 50%;
   display: flex;
+  gap: var(--sq-gap);
+}
+.tc-pull-beat {
+  --pull-beat-delay: calc(var(--d-pull) * var(--pull-beat) / 3);
+  inline-size: var(--sq);
+  block-size: var(--sq);
+  border-radius: var(--r-sq);
+  background: var(--sq-read);
+  opacity: var(--pull-rest-opacity);
+  scale: var(--pull-rest-scale);
+  animation: tc-pull-beat var(--d-pull) linear infinite;
+  animation-delay: var(--pull-beat-delay);
+}
+.tc-pull-beat:last-child {
+  border-radius: var(--dot-r);
+  background: var(--hot);
+}
+@keyframes tc-pull-beat {
+  0%,
+  33.333%,
+  100% {
+    opacity: var(--pull-rest-opacity);
+    scale: var(--pull-rest-scale);
+  }
+  16.667% {
+    opacity: 1;
+    scale: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tc-pull-beat {
+    animation: none;
+  }
+  .tc-pull-beat:last-child {
+    opacity: 1;
+    scale: 1;
+  }
+}
+[data-rm="1"] .tc-pull-beat {
+  animation: none;
+}
+[data-rm="1"] .tc-pull-beat:last-child {
+  opacity: 1;
+  scale: 1;
 }
 
 /* The end of a list's run: as much room as the glass's inset, so the last row comes clear of the system's bar. On a

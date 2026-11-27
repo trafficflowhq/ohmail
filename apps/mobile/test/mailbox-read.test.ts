@@ -212,6 +212,22 @@ describe("readMailboxes — the wire, and what it refuses to guess", () => {
     ]);
   });
 
+  it("retains the organizer's literal ability to take requests and its takeover and release stamps", async () => {
+    const takeover = "2026-09-23T02:15:07.000Z";
+    const release = "2026-09-24T05:30:20.000Z";
+    const out = await readMailboxes(session(ok([
+      { id: "yes", address: "y@example.test", organizerAcceptsRequests: true, takeoverAuthorizedAt: null, organizerReleasedAt: release },
+      { id: "no", address: "n@example.test", organizerAcceptsRequests: false, takeoverAuthorizedAt: takeover, organizerReleasedAt: null },
+      { id: "unknown", address: "u@example.test", organizerAcceptsRequests: "true", takeoverAuthorizedAt: "", organizerReleasedAt: 7 },
+    ])));
+    const capabilities = out!.map((m) => [
+      Reflect.get(m, "organizerAcceptsRequests"),
+      Reflect.get(m, "takeoverAuthorizedAt"),
+      Reflect.get(m, "organizerReleasedAt"),
+    ]);
+    expect(capabilities).toEqual([[true, null, release], [false, takeover, null], [undefined, undefined, undefined]]);
+  });
+
   it("reads the recorded Sent folder as the path, untouched, or `null` (mail 0132)", async () => {
     const out = await readMailboxes(session(ok([
       { id: "m1", address: "a@b.test", sentFolder: "INBOX.Verzonden" },
@@ -406,7 +422,7 @@ describe("the world layer's shape — asserted over source, and said to be", () 
     expect(world).toMatch(/const boxRead = freshestRead<readonly PhoneMailbox\[\]>/);
     expect(world).toMatch(/\(\) => void boxRead\(async \(\) => \{\s*const ans = await readMailboxes\(session\);/);
     // …and every accepted answer, an unchanged one too, stamps when the facts were read.
-    expect(world).toContain("if (ans !== null && current.current === m) mailboxesReadAt.current = Date.now();");
+    expect(world).toContain("if (ans !== null && current.current === m) mailboxesReadAt.current = { session, at: Date.now() };");
     // …as one of the drain read's facts, asked with the consent answer when the mirror moved (`drain-reads.test.ts`).
     expect(world).toContain("read: factsDueNow.current = drainReads<FoldersConsent>({");
     expect(world).toContain("stamp: () => session.store.version(),");
@@ -415,8 +431,9 @@ describe("the world layer's shape — asserted over source, and said to be", () 
   it("a superseded session's late answer applies NOTHING", () => {
     // Account A's addresses must not make account B's reader recognisable, and A's holder must
     // not name a banner over B's mail.
-    expect(world).toContain("if (current.current === m) setMailboxes(ans);");
-    expect(world).toContain("setMailboxes(null);");
+    expect(world).toContain("if (current.current === m) setMailboxRead({ session, rows: ans });");
+    expect(world).toContain("const mailboxes = mailboxRead && mailboxRead.session === session ? mailboxRead.rows : null;");
+    expect(world).toContain("return read && read.session === session ? read.at : null;");
   });
 
   it("the actions facade reads the addresses through a GETTER, keeping one identity", () => {

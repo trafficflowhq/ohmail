@@ -1,6 +1,7 @@
 import { and, asc, isNotNull, or, sql, type SQL } from "drizzle-orm";
 import { accounts, readDrainCursor, writeDrainCursor, type ReleaseOutcome, type Tx } from "@trafficflow/db";
-import { releaseAcceptedErasure, resumeAccountErasure, type ServiceContext, type ThrottleKeys } from "@trafficflow/services";
+import { releaseAcceptedErasure, resumeAccountErasure } from "@trafficflow/db/account-erasure";
+import type { ThrottleKeys } from "@trafficflow/db/auth-throttle-keys";
 import type { Logger } from "@trafficflow/core/mail";
 
 const ACCOUNTS_PER_TICK = 10;
@@ -35,10 +36,7 @@ export async function accountErasurePass(db: Tx, log: Logger, opts: {
     )).orderBy(asc(accounts.erasedAt), asc(accounts.id)).limit(ACCOUNTS_PER_TICK);
   for (const { id, at, dataDue, billingDue } of owed) {
     if (Date.now() >= deadline) return;
-    const ctx: ServiceContext = {
-      accountId: id, db: opts.forAccount(id) as unknown as ServiceContext["db"],
-      userId: null, now: opts.now, requestId: "",
-    };
+    const ctx = { accountId: id, db: opts.forAccount(id), now: opts.now };
     if (dataDue) {
       try {
         const receipt = await resumeAccountErasure(ctx, opts.throttleKeys ? { throttleKeys: opts.throttleKeys } : {});

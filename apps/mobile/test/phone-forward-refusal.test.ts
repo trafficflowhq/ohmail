@@ -127,6 +127,18 @@ async function listed(live: Awaited<ReturnType<typeof scene>>, o: { kept?: strin
 const optsOf = (wire: string[] | undefined) => (wire !== undefined ? { forwardParts: wire } : {});
 
 describe("Forward lists the letter's files and sends only those kept", () => {
+  it("delivers to the visible copies from the chosen mailbox while keeping the original attached", async () => {
+    const live = await scene();
+    live.fake.addMessage({ ...dto("m2"), mailboxId: "mb-2" });
+    await live.engine.syncOnce();
+    const cc = [{ name: null, address: "copy@fake.test" }];
+    const bcc = [{ name: null, address: "blind@fake.test" }];
+    const options = { mailboxId: "mb-2", cc, bcc, forwardParts: [] };
+    expect((await live.actions.sendForward("m1", peer, "For review.", null, [], false, false, null, options)).outcome).toBe("sent");
+    const saved = JSON.parse(posts(live.fake).find((r) => r.url === "/drafts")!.body);
+    expect(saved).toMatchObject({ mailboxId: "mb-2", forwardOfMessageId: "m1", subject: "Fwd: Scan", to: peer, cc, bcc });
+  }, 30_000);
+
   it("a row trimmed on the web opens here listing only the kept files, and sends only those", async () => {
     const live = await scene();
     live.fake.setFiles("m1", FILES);

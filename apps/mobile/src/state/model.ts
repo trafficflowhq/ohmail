@@ -95,8 +95,11 @@ export interface Mail {
   body: string;
   snippet?: string;
   hasAttachments?: boolean;
-  toYou?: true;
   imagesBlocked?: true;
+  /** The lead and secondary people on a grouped Ohbox row. */
+  rowPeople?: readonly Address[];
+  /** The voices named by an Ohbox row and the address it can show for one voice. */
+  rowByline?: { name: string; address: string | undefined; spokenName: string };
   additionalPeople?: number;
   /** The delivery mailbox's label, shown when the account has more than one mailbox. */
   mailboxLabel?: string;

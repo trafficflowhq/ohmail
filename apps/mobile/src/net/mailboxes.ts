@@ -11,8 +11,8 @@ import { requestBase } from "./request-base";
  * The mailbox facts over the paired server — `GET /mailboxes`, the phone's first read of it.
  * The route is `cost: "read"` with no step-up and mounted on `localRoutes`, which all three
  * door tables spread, so one path serves ohmail Cloud, an operator's server and a desktop
- * host. `?counts=1` is deliberately not sent: it costs an aggregate over the whole `messages`
- * table, and the phone's own mirror answers every number it shows. Transport: `session.fetch`
+ * host. Routine reads skip the message aggregate. Search requests counts explicitly when it
+ * shows the total across the account. Transport: `session.fetch`
  * only, bound to one origin — this file holds no origin of its own. `null` means "could not
  * ask", never "no mailboxes": an empty list is a real answer, and a caller reading them alike
  * would blank the banner and un-recognise the reader on every flaky request.
@@ -105,6 +105,10 @@ export interface PhoneMailbox {
    * own row and every reader's row before its first cycle.
    */
   organizerState: "held" | "stopped" | null;
+  /** The server's proof that the holder can accept decisions from this reader. */
+  organizerAcceptsRequests?: boolean;
+  takeoverAuthorizedAt?: string | null;
+  organizerReleasedAt?: string | null;
   /**
    * The mailbox's lifecycle status, raw. Read by {@link junkFolderSaid}: `"disabled"` is another
    * install's mailbox, and this app must not speak for it; and by `compose-sender.ts`, since the
@@ -162,6 +166,7 @@ export interface PhoneMailbox {
    */
   lastSyncAt?: string | null;
   syncBlockedSince?: string | null;
+  syncBlockedReason?: string;
   /** Cloud's own scan, from a Cloud-paired desktop host only; forwarded only when the row has the key. */
   hostedLastSyncAt?: string | null;
   /**
@@ -322,6 +327,13 @@ export async function readMailboxes(session: MailboxSession, counts = false): Pr
            that predates the field, is "not the answering install's", the safe direction. */
         organizedByThisInstall: r.organizedByThisInstall === true,
         organizerState: stateOf(r.organizerState),
+        ...(typeof r.organizerAcceptsRequests === "boolean" ? { organizerAcceptsRequests: r.organizerAcceptsRequests } : {}),
+        ...(r.takeoverAuthorizedAt === null ||
+            (typeof r.takeoverAuthorizedAt === "string" && r.takeoverAuthorizedAt !== "")
+          ? { takeoverAuthorizedAt: r.takeoverAuthorizedAt } : {}),
+        ...(r.organizerReleasedAt === null ||
+            (typeof r.organizerReleasedAt === "string" && r.organizerReleasedAt !== "")
+          ? { organizerReleasedAt: r.organizerReleasedAt } : {}),
         status: typeof r.status === "string" && r.status !== "" ? r.status : null,
         /* An empty string is not a folder name. A server that predates the field sends nothing
            here, which lands as `null` — the same instruction as "no Junk folder": say nothing. */
@@ -352,6 +364,7 @@ export async function readMailboxes(session: MailboxSession, counts = false): Pr
         ...("failedAt" in r ? { failedAt: instantOf(r.failedAt) } : {}),
         ...("unreachableSince" in r ? { unreachableSince: instantOf(r.unreachableSince) } : {}),
         ...("syncBlockedSince" in r ? { syncBlockedSince: instantOf(r.syncBlockedSince) } : {}),
+        ...(typeof r.syncBlockedReason === "string" ? { syncBlockedReason: r.syncBlockedReason } : {}),
         ...("hostedLastSyncAt" in r ? { hostedLastSyncAt: instantOf(r.hostedLastSyncAt) } : {}),
         ...(filingOf(r.filing) === undefined ? {} : { filing: filingOf(r.filing)! }),
         ...(typeof r.provider === "string" ? { provider: r.provider } : {}),

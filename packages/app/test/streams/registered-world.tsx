@@ -108,10 +108,20 @@ export function mountStreamFrame(o: {
   sync?: SyncStatus;
   rows?: Readonly<Record<string, unknown>>;
   mirror?: EntityReader;
+  onPull?: () => void;
 }) {
   const freshMail = (letters: readonly EngineMessage[] = o.letters ?? [...NEWS, ...RECEIPTS]) =>
     fakeMail(letters, [], o.bodies, { ...RULES, ...o.rows });
   const mail = freshMail();
+  if (o.onPull) {
+    const { onPull } = o;
+    mail.engine.pullAvailable = () => true;
+    mail.engine.syncOnce = async () => undefined;
+    mail.engine.requestPull = async () => {
+      onPull();
+      return null;
+    };
+  }
   const { mirror } = o;
   if (mirror) {
     mail.engine.read = () => mirror;

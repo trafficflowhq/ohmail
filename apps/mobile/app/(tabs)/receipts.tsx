@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { AppState, View } from "react-native";
 import { useSeenRun } from "../../src/ui/stream-seen";
+import { useStreamPreview } from "../../src/ui/stream-preview";
 import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
@@ -26,7 +27,8 @@ import { Empty, Screen, Tail, ViewHead, Waterline, useListInsets } from "../../s
 import { TopBar } from "../../src/ui/chrome";
 import { MailList, type ListGroup, type RowFrame } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
-import { StreamMailMenu } from "../../src/ui/StreamMailMenu";
+import { StreamCardHead, StreamListTools, paperStreamCardStyle } from "../../src/ui/StreamMailFacts";
+import { StreamCardBody } from "../../src/ui/StreamCardBody";
 import { MailCalendarSwitch } from "../../src/ui/MailCalendarSwitch";
 import { MailListMenu } from "../../src/ui/MailListMenu";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
@@ -66,6 +68,7 @@ function ReceiptsBody() {
   const actions = w.actions;
   // Unknown ≠ empty — see `state/surface.ts`.
   const surface = listSurface({ settled: w.boot.settled, count: total });
+  const onViewableItemsChanged = useStreamPreview(Boolean(t.mail) && surface === "content");
 
   const ledger = useRef(new GroupedSweepLedger()).current;
   /* Which day a row belongs to, for the ledger — the cell reports a frame, not a group. */
@@ -146,42 +149,42 @@ function ReceiptsBody() {
         jumpToTop
         groups={dayGroups}
         rowKey={(m) => m.id}
-        renderRow={(m) => (
-          <>
-            {/* The line stands ABOVE the newest receipt already seen at the last
-                visit — this stream's own anchor, independent of Reads'. */}
-            {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
-            <View style={{ marginBottom: 12 }}>
-              <MailRow m={m} onPress={() => openRow(m.id)} swipe receipt
-                receiptDetail={t.mail ? <ReceiptEvents m={m} /> : null} />
-              {t.mail ? <StreamMailMenu onRead={() => openRow(m.id)} /> : null}
-            </View>
-          </>
-        )}
+        renderRow={(m) => {
+          const read = () => openRow(m.id);
+          return (
+            <>
+              {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
+              <View style={t.mail ? paperStreamCardStyle : { marginBottom: 12 }}>
+                {t.mail ? <ReceiptPreview m={m} onRead={read} /> : <MailRow m={m} onPress={read} swipe receipt />}
+              </View>
+            </>
+          );
+        }}
         surface={false}
         onRowFrame={onRowFrame}
         onRowGone={onRowGone}
+        onViewableItemsChanged={onViewableItemsChanged}
         {...gestures}
         scrollEventThrottle={64}
         refresh={pull}
         head={
           <ViewHead
-            style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}
+            style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: t.mail ? 10 : 14 }}
             title={Copy.receipts}
             attention={newCount > 0}
-            meta={metaWhen(surface, meta) ?? " "}
+            meta={t.mail ? undefined : metaWhen(surface, meta) ?? " "}
             /* Reads' press: flip the stream's unread and commit its line above the newest receipt. */
             leading={t.mail ? <MailCalendarSwitch /> : null}
             right={t.mail ? (
-              <MailListMenu unread={unreadIds.length} fresh={newCount} onMarkAll={markStream} />
+              <StreamListTools settled={surface === "content"} fresh={newCount}>
+                <MailListMenu unread={unreadIds.length} fresh={newCount} onMarkAll={markStream} />
+              </StreamListTools>
             ) : (
               <MarkAllRead unreadCount={unreadIds.length} freshCount={newCount} onPress={markStream} />
             )}
           >
             {/* Letters here from senders nobody let in, and the press — the web's note. */}
-            <View style={{ marginTop: 12 }}>
-              <PileNote pile="receipts" />
-            </View>
+            <PileNote pile="receipts" />
           </ViewHead>
         }
         empty={
@@ -193,7 +196,7 @@ function ReceiptsBody() {
             <Empty title={t.mail ? Copy.mailEmptyTitle : Copy.receiptsEmptyTitle} hint={t.mail ? undefined : Copy.receiptsEmptyHint} />
           ) : null
         }
-        foot={total > 0 ? <Tail>{Copy.receiptsTail(total)}</Tail> : null}
+        foot={!t.mail && total > 0 ? <Tail>{Copy.receiptsTail(total)}</Tail> : null}
       />
     </Screen>
   );
@@ -209,12 +212,24 @@ function ReceiptsBody() {
   );
 }
 
-function ReceiptEvents({ m }: { m: WorldMail }) {
+function ReceiptPreview({ m, onRead }: { m: WorldMail; onRead: () => void }) {
   const world = useWorld();
   useFilesStamp([m.id]);
   const found = useMailFoundEvents(m);
-  return <>
-    <EventCards events={world.eventsOf(m.id)} style={{ marginBottom: 0 }} />
-    <MailFoundEvents found={found} />
-  </>;
+  return (
+    <MailRow
+      m={m}
+      onPress={onRead}
+      swipe
+      receipt
+      receiptHead={<StreamCardHead m={m} onRead={onRead} receipt />}
+      receiptBody={<StreamCardBody m={m} onRead={onRead} showFilePrompt={(found?.rows.length ?? 0) > 0} />}
+      receiptDetail={
+        <>
+          <EventCards events={world.eventsOf(m.id)} style={{ marginBottom: 0 }} />
+          <MailFoundEvents found={found} />
+        </>
+      }
+    />
+  );
 }
