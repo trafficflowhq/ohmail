@@ -1235,6 +1235,16 @@ export class HttpAdapter implements EngineAdapter {
    * throws through `rejectionOf` so "the server said no" cannot be mistaken for "the draft is
    * empty". A body the server omits is `null` — the one answer that means "no text of record".
    */
+  async draftFromCreate(key: string): Promise<CreatedDraftRow | null | undefined> {
+    const res = await this.call("GET /drafts/:id", { params: { id: key }, query: "by=create-key" });
+    if (res.status === 404) return (await this.rejectionOf(res, "read")).code === "draft_create_missing" ? null : undefined;
+    if (!res.ok) throw await this.rejectionOf(res);
+    const row = await this.readUntrusted<"GET /drafts/:id">(res);
+    return typeof row?.id === "string" && typeof row.createdRevision === "string"
+      ? { id: row.id, revision: row.createdRevision }
+      : undefined;
+  }
+
   async fetchDraftBody(draftId: string): Promise<DraftBodyRead | null> {
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
       const res = await this.call("GET /drafts/:id", { params: { id: draftId }, signal });
@@ -1246,6 +1256,7 @@ export class HttpAdapter implements EngineAdapter {
         body: wire.body,
         html: typeof wire.html === "string" ? wire.html : null,
         ...(rationale === null || typeof rationale === "string" ? { rationale } : {}),
+        ...(typeof wire.contentRevision === "string" ? { contentRevision: wire.contentRevision } : {}),
       };
     });
   }

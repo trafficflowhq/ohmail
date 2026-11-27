@@ -149,6 +149,7 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext) {
     composeElsewhere: compose.composeElsewhere,
     composeSaveRefused: compose.composeSaveRefused,
     composeResumed: compose.composeResumed,
+    restoreClosedCompose: compose.restoreClosedCompose,
     composeWaitNote: compose.composeWaitNote,
     composeCloseRefusal: compose.composeCloseRefusal,
     composeForwardFiles: compose.composeForwardFiles,

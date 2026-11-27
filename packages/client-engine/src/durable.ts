@@ -12,6 +12,14 @@
 /** Did the value reach the jar. */
 export type DurableWrite = "stored" | "lost";
 
+/** Notify a browser storage consumer when another window changes a key. */
+export function onLocalStorageChanged(changed: (key: string | null) => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const onChange = ({ key }: StorageEvent): void => changed(key);
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+}
+
 export const DURABILITY_LOST_EVENT = "ohmail:durability-lost";
 
 /** Which store lost the write. For a log line, never for the sentence — see the notice's copy. */

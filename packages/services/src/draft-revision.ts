@@ -1,4 +1,4 @@
-import type { EmailAddress } from "@ohmail/wire";
+import { draftRevisionInput } from "@trafficflow/core/outbound-text";
 import { createHash } from "node:crypto";
 
 /**
@@ -7,38 +7,10 @@ import { createHash } from "node:crypto";
  *
  * Derived, not stored: `updated_at` moves when an identical buffer is written back, which is what
  * two windows autosaving one draft do all day, and refusing there is a false alarm about a message
- * nobody changed. Server-minted and opaque — a client carries back what the DTO gave it, so no
- * second implementation can drift into refusing every send. `threadId` is out (a merge repoints
+ * nobody changed. A client carries back what the DTO gave it as a write precondition. Recovery
+ * can also match that same revision to a saved copy. `threadId` is out (a merge repoints
  * the row under the author); `rationale` and the schedule are out, being undelivered.
  */
-export function draftContentRevision(row: {
-  mailboxId: string;
-  inReplyToMessageId: string | null;
-  forwardOfMessageId?: string | null;
-  forwardParts?: readonly string[] | null;
-  subject: string;
-  body: string;
-  html: string | null;
-  to: unknown;
-  cc: unknown;
-  bcc: unknown;
-}): string {
-  // ADDRESSES AS TUPLES, never the stored object: jsonb does not preserve key order, so
-  // stringifying the column would make the digest a fact about the storage engine.
-  const addrs = (xs: unknown): Array<[string, string | null]> =>
-    (Array.isArray(xs) ? (xs as EmailAddress[]) : [])
-      .map((a) => [a?.address ?? "", a?.name ?? null] as [string, string | null]);
-  const canonical = JSON.stringify([
-    row.mailboxId,
-    row.inReplyToMessageId ?? null,
-    row.subject,
-    row.body,
-    row.html ?? null,
-    addrs(row.to), addrs(row.cc), addrs(row.bcc),
-    // Only when set, so a row that forwards nothing keeps the revision it had.
-    ...(row.forwardOfMessageId ? [["forwardOf", row.forwardOfMessageId]] : []),
-    // The kept files, only beside a forward, so a row that kept every file keeps its revision.
-    ...(row.forwardOfMessageId && row.forwardParts ? [["forwardParts", [...new Set(row.forwardParts)].sort()]] : []),
-  ]);
-  return createHash("sha256").update(canonical, "utf8").digest("hex");
+export function draftContentRevision(row: Parameters<typeof draftRevisionInput>[0]): string {
+  return createHash("sha256").update(draftRevisionInput(row), "utf8").digest("hex");
 }

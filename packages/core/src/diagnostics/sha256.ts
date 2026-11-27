@@ -1,7 +1,7 @@
 /**
  * SHA-256 over a string, synchronous and dependency-free. The bundle is built on the desktop's
  * webview and on the phone's Hermes, and `crypto.subtle` is absent on one of them; a pure hash is
- * the same answer on both. Only ever fed ids, never mail. Held to `node:crypto` by the tests.
+ * the same answer on both. Held to `node:crypto` by the tests.
  */
 
 const K = new Uint32Array([

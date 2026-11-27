@@ -18,7 +18,7 @@ export type ServiceErrorCode =
   | "approval_expired" | "approval_used" | "attachment_part_mismatch" | "auto_suggest_required"
   | "body_too_large" | "conflict" | "credential_needed" | "credential_refused"
   | "cross_site_denied" | "csrf_failed" | "cursor_expired" | "db_busy"
-  | "discover_unconfigured" | "draft_changed" | "draft_sent" | "draft_too_large"
+  | "discover_unconfigured" | "draft_changed" | "draft_create_missing" | "draft_sent" | "draft_too_large"
   | "drafter_unconfigured" | "duplicate_send" | "email_taken" | "email_unverified"
   | "enrollment_incomplete" | "erase_not_confirmed" | "erased" | "erasure_contended"
   | "erasure_failed" | "erasure_unconfirmed" | "folders_disabled" | "forbidden" | "forward_mismatch"

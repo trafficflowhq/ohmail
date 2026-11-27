@@ -62,6 +62,7 @@ const entries: Array<[string, Control]> = [
   c("list-triage", "listbox", "triage.title", { within: "content" }),
   c("list-history", "listbox", "history.title", { within: "content" }),
   c("list-drafts", "listbox", "drafts.title", { within: "content" }),
+  c("list-scheduled", "listbox", "drafts.scheduledTitle", { within: "content" }),
   c("trash-region", "region", "frame.landmark.list", { within: "content" }),
   c("list-trash", "listbox", "trash.title", { within: "trash-region" }),
   c("trash-letter", "option", null, { within: "list-trash", nameFrom: "visible" }),
@@ -88,13 +89,18 @@ const entries: Array<[string, Control]> = [
   c("reply-body", "textbox", "write.reply.text", { within: "reader" }),
 
   // Compose.
+  c("compose-letter", "region", "write.letter"),
   // Write's letter: its people and its subject as the kit's Write names them (`write.to`, `write.subject`).
   c("compose-to", "combobox", "write.to", { within: "content" }),
   c("compose-subject", "textbox", "write.subject", { within: "content" }),
   // Write's letter names its text as the kit's Write draws it (`write.text`).
   c("compose-body", "textbox", "write.text", { within: "content" }),
   c("compose-send", "button", "write.send", { within: "content" }),
-  c("compose-cancel", "button", "write.discard", { within: "content" }),
+  c("compose-later", "button", "write.later.verb", { within: "content" }),
+  c("compose-later-menu", "dialog", "write.later.title"),
+  c("compose-restore", "button", "compose.restoreDraft"),
+  c("reload-update", "button", "update.lineReloadAction"),
+  c("compose-cancel", "button", "write.discard", { within: "compose-letter" }),
   c("compose-bold", "button", "write.marks.bold", { within: "content" }),
 
   // Search.

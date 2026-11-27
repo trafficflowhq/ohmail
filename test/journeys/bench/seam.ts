@@ -42,7 +42,7 @@ export interface Found { named?: string; sender?: string; args?: Record<string, 
 /** What a control says of itself to a screen reader. */
 export interface Spoken {
   description: string; pressed: string | null; selected: string | null; current: string | null;
-  expanded: string | null; checked: string | null; disabled: boolean;
+  expanded: string | null; checked: string | null; disabled: boolean; editable: boolean;
 }
 
 /** One request the API answered: the route's own pattern, never the address that reached it. */
@@ -52,7 +52,7 @@ export interface Heard { method: string; pattern: string; status: number }
  * What a door does with a request: answer as the route does, refuse it at the wire, or hold it,
  * asked and unanswered, until the bench lets go (`release`).
  */
-export type DoorFault = (method: string, pattern: string) => "refuse" | "hold" | null;
+export type DoorFault = (method: string, pattern: string) => "refuse" | "hold" | "hold-answer" | null;
 
 /** A person's session, as the sign-in ceremony leaves it. */
 export interface Account {
@@ -74,8 +74,13 @@ export interface Person {
   /** Go to the install's front door, as a person who types its name does. */
   front(): Promise<void>;
   reload(): Promise<void>;
+  /** Restart through the app's own notice after the server starts reporting a different build. */
+  restartForNewBuild(): Promise<void>;
+  /** Close this tab and let the browser run pagehide. */
+  closeTab(): Promise<void>;
   /** Take this window offline after its current requests settle. */
   goOffline(): Promise<void>;
+  goOnline(): Promise<void>;
   /** Open Settings with its script response held and return to the previous place offline. */
   goOfflineWhileOpeningSettings(): Promise<void>;
   /** Wait for the language the window declares to its screen reader. */
@@ -121,6 +126,8 @@ export interface Person {
    * matches) its value holds; a value itself is never handed out. The far end of "nothing of A's is kept under B".
    */
   kept(marks: RegExp): Promise<Record<string, string[]>>;
+  storedWriting(words: string, draftSubject?: string): Promise<string[]>;
+  holdMirrorWrites(): Promise<void>;
   /**
    * An entry another tab of this browser left, as it left it (a closed tab's letter, under its own account's key):
    * written from a tab of this browser that is opened on the install's name for it and closed again, so it stands
