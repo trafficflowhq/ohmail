@@ -51,12 +51,41 @@ describe("the tab navigation, migrated onto the glass grammar", () => {
   });
 
   it("opens More over the current compact mail screen and closes it before selecting a place", () => {
-    expect(NAV).toMatch(/if \(id === "more" && onMore\) \{\s*onMore\(\);\s*return;/);
+    expect(NAV).toMatch(/if \(id === "more" && onMore\) \{\s*onMore\(activeId\);\s*return;/);
     expect(NAV).toContain("<MailPlacesDrawer");
     const drawer = read("src/ui/MailPlacesDrawer.tsx");
     expect(drawer).toContain("<GlassSidebar");
     expect(drawer).toContain("onNavigate={onClose}");
     expect(drawer).toContain('"hardwareBackPress"');
+  });
+
+  it("prepares the Screener while idle and uses the same navigator for presses", () => {
+    expect(NAV).toContain("requestIdleCallback(");
+    expect(NAV).toContain('navigation.preload("screener")');
+    expect(NAV).toContain("navigation.navigate(id)");
+  });
+
+  it("pauses updates in inactive phone tabs while retaining their lists", () => {
+    expect(NAV).toMatch(/<Tabs\s+screenOptions=\{\{[^}]*\bfreezeOnBlur:\s*true\b/);
+  });
+
+  it("keeps drawer visibility out of the mounted tab navigator", () => {
+    const shell = NAV.slice(NAV.indexOf("function MailTabs()"), NAV.indexOf("function GlassNav("));
+    expect(shell).toContain("const MailTabNavigator = memo(function MailTabNavigator(");
+    expect(shell).toContain("onActive={onActive} onNavigate={move}");
+    expect(shell).not.toMatch(/<Tabs[\s\S]*?tabBar=\{[^}]*\bdrawer\b/);
+  });
+
+  it("the compact dock paints the press before selection changes", () => {
+    const dock = read("src/ui/glass/GlassDock.tsx");
+    const button = dock.slice(dock.indexOf("function PaperDockButton("));
+    expect(button).toContain("useManualGesture({");
+    expect(button).toContain("enabled: !write");
+    expect(button).toMatch(/onTouchesDown:.*"worklet".*pressed.value = true/);
+    expect(button).toMatch(/onTouchesUp:.*"worklet".*pressed.value = false/);
+    expect(button).toMatch(/onTouchesCancel:.*"worklet".*pressed.value = false/);
+    expect(button).toContain("opacity: pressed.value ? 0.7 : 1");
+    expect(button).toContain("hitSlop={hitSlopFor(size)}");
   });
 
   it("offers the calendar switch at the Ohbox title and in More", () => {
@@ -80,10 +109,16 @@ describe("the tab navigation, migrated onto the glass grammar", () => {
        the screen is one control saying two things. */
     for (const src of [NAV, RAIL]) {
       expect(src).toContain("Copy.search");
-      expect(src).toContain('router.push("/search")');
       expect(src).toContain('router.push("/compose")');
       expect(src).not.toContain("Copy.searchLater");
     }
+    expect(RAIL).toContain('router.push("/search")');
+    expect(NAV).toContain('const search = { label: Copy.search, onPress: () => pushPlace("/search", navigation.getParent()) }');
+    const push = read("src/ui/place-navigation.ts");
+    expect(push).toContain('path === "/search" ? "search"');
+    expect(push).toContain("const stack = navigation.getState()");
+    expect(push).toContain('navigation.dispatch({ type: "PUSH"');
+    expect(push).toContain("router.push(path)");
     // the dock takes the two entries whole; the rail carries them as its own fixed actions
     expect(NAV).toContain("search={search}");
     expect(NAV).toContain("compose={compose}");

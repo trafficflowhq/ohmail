@@ -307,7 +307,7 @@ describe("the screen and the three nav entries, in the structure idiom", () => {
       'unansweredSaid(network, "search", store.cause)',
     ]) expect(screen).toContain(needle);
     expect(screen).not.toContain("Copy.searchScopeDevice");
-    // The index is warmed off the keystroke path the moment the screen opens.
+    // The visit schedules the warmup outside the first paint and keystroke paths.
     expect(screen).toContain("w.search.warm");
   });
 
@@ -321,14 +321,17 @@ describe("the screen and the three nav entries, in the structure idiom", () => {
      */
     expect(screen).toMatch(/const warm = useRef\(w\.search\.warm\);/);
     expect(screen).toMatch(/warm\.current = w\.search\.warm;/);
-    expect(screen).toMatch(/useEffect\(\(\) => \{\s*warm\.current\(\);\s*\}, \[\]\);/);
+    expect(screen).toMatch(/useEffect\(\(\) => \{\s*const idle = requestIdleCallback\(\(\) => warm\.current\(\)\);\s*return \(\) => cancelIdleCallback\(idle\);\s*\}, \[\]\);/);
     // And nothing else on this screen may depend on a value the world rebuilds per render.
     const deps = [...screen.matchAll(/useEffect\([\s\S]*?\}, \[([^\]]*)\]\);/g)].map((m) => m[1]!.trim());
     expect(deps.filter((d) => d !== "")).toEqual([]);
   });
 
   it("every navigation entry opens the one screen — dock/rail, More, the iOS pane foot", () => {
-    expect(nav).toContain('router.push("/search")');
+    expect(nav).toContain('pushPlace("/search", navigation.getParent())');
+    const push = read("src/ui/place-navigation.ts");
+    expect(push).toContain('path === "/search" ? "search"');
+    expect(push).toContain("router.push(path)");
     expect(more).toContain('go("/search")');
     expect(ld).toContain('router.push("/search")');
   });

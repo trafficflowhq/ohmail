@@ -9,11 +9,11 @@
  * once per visit. Every issue the world answers renders; no "and 9 more".
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, View } from "react-native";
+import { AppState, Platform, View, useWindowDimensions } from "react-native";
 import type { SweepFrame } from "../../src/state/sweep";
 import { useSeenRun } from "../../src/ui/stream-seen";
 import { useStreamPreview } from "../../src/ui/stream-preview";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useIsFocused } from "expo-router";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
@@ -40,6 +40,7 @@ import { MailAvatar } from "../../src/ui/MailAvatar";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 import { PileNote } from "../../src/ui/PileNote";
+import { useRetainedList } from "../../src/ui/use-retained-list";
 
 export default function ReadsScreen() {
   return (
@@ -55,6 +56,7 @@ function ReadsBody() {
   useLocale();
   const w = useWorld();
   const t = useTheme();
+  const { height } = useWindowDimensions();
   const pull = usePullToSync();
   /* Two panes: an issue OPENS BESIDE the stream instead of unclamping in place — list-detail
      with the selection in the route's `open` param; the compact stream is untouched. */
@@ -117,6 +119,7 @@ function ReadsBody() {
       <TopBar />
       <MailList
         jumpToTop
+        initialNumToRender={Platform.OS === "android" && t.mail && height <= 850 ? 7 : undefined}
         groups={[{ key: "issues", rows: items }]}
         rowKey={(m) => m.id}
         renderRow={(m) => (
@@ -184,12 +187,14 @@ function ReadsBody() {
     </Screen>
   );
 
+  const focused = useIsFocused();
+  const shownList = useRetainedList(list, focused, w.worldKey);
   return (
     <ListDetail
       open={open}
       onClose={close}
       toRoute={(id) => `/message/${id}`}
-      list={list}
+      list={shownList}
       renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
     />
   );

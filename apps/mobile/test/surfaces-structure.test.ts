@@ -125,4 +125,11 @@ describe("the drawer, the pane search and the empty pane", () => {
     const sidebar = read("../src/ui/glass/GlassSidebar.tsx");
     expect(sidebar).toContain("if (!open) return null;");
   });
+  it("opens the compact Android drawer in place and keeps its exit animation", () => {
+    const sidebar = read("../src/ui/glass/GlassSidebar.tsx");
+    expect(sidebar).toContain('const animateEntry = !compactPlaces || Platform.OS !== "android";');
+    expect(sidebar).toContain("entering={animateEntry ? FadeIn.duration(ms) : undefined}");
+    expect(sidebar).toContain("entering={animateEntry ? slideIn : undefined}");
+    expect(sidebar).toContain("exiting={slideOut}");
+  });
 });
