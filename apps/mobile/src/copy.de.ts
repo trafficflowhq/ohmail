@@ -1384,6 +1384,7 @@ export const DE: Deck = {
   helpRow: "Hilfe & Kontakt",
   helpRowSub: "support@ohmail.app · ein Mensch antwortet per Mail",
   helpSubject: "Hilfe zu ohmail",
+  settingsHelpSummary: "Schreib uns · Diagnose",
   helpDiag: "Diagnose",
   helpDiagWhat:
     "Dieser Block enthält die App-Version und den Build, die Plattform, deine Account-ID, welche Art "

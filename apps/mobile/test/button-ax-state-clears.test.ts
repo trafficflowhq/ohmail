@@ -68,9 +68,9 @@ describe("a control's accessibility state clears when the control enables", () =
 
   it("GlassIconButton: a tab says selected true and false, a plain button still names its state", () => {
     const tab = (on: boolean) => pressableOf(GlassIconButton({ glyph: "x", label: "Inbox", role: "tab", on }));
-    expect(tab(true).props.accessibilityState).toStrictEqual({ selected: true });
-    expect(tab(false).props.accessibilityState).toStrictEqual({ selected: false });
+    expect(tab(true).props.accessibilityState).toStrictEqual({ selected: true, disabled: false });
+    expect(tab(false).props.accessibilityState).toStrictEqual({ selected: false, disabled: false });
     const plain = pressableOf(GlassIconButton({ glyph: "x", label: "More", on: true }));
-    expect(plain.props.accessibilityState).toStrictEqual({ selected: false });
+    expect(plain.props.accessibilityState).toStrictEqual({ selected: false, disabled: false });
   });
 });

@@ -41,7 +41,7 @@ export function ComposeSignature({ text, html, disabled, editor, onRemove }: {
             <Tap
               onPress={onRemove}
               disabled={disabled}
-              accessibilityState={{ disabled }}
+              accessibilityState={{ disabled: disabled === true }}
               accessibilityRole="button"
               accessibilityLabel={Copy.sigRemove}
               style={{ padding: 8 }}

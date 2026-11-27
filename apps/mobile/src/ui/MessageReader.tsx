@@ -1309,7 +1309,7 @@ function ReaderRail({ items, here, over, onJump, marks, horizontal }: {
 /** A message's ⋯, beside its stamp. */
 function MoreDots({ expanded, onPress }: { expanded: boolean; onPress: () => void }) {
   return (
-    <Tap accessibilityRole="button" accessibilityLabel={Copy.readerMessageActions} accessibilityState={{ expanded }}
+    <Tap accessibilityRole="button" accessibilityLabel={Copy.readerMessageActions} accessibilityState={{ expanded: expanded === true }}
       onPress={onPress} style={{ paddingHorizontal: 4 }}>
       <Txt variant="caption" tone="ink3">⋯</Txt>
     </Tap>
