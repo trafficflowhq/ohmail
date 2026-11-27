@@ -21,6 +21,12 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.11] — 2026-11-27
+
+### Calendar date picking and event drag previews
+
+The event editor’s date picker opens beside its date field. As you move or resize an event, the calendar previews where it will land and shows the new date and time. Escape cancels the drag.
+
 ## [2.0.10] — 2026-11-27
 
 ### Steadier calendar refresh and clearer keyboard hints
@@ -19522,7 +19528,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.10...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.11...HEAD
+[2.0.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.11
 [2.0.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.10
 [2.0.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.9
 [2.0.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.8

@@ -18,6 +18,7 @@ export function canvasClickHandler(
     suppress(event);
     if (event.defaultPrevented || !open) return;
     const target = event.target as Element;
+    if (!event.currentTarget.contains(target)) return;
     if (target.closest(".oh-ecard, .oh-over, .cal-event-panel, button, a, input, select, textarea")) return;
     event.stopPropagation();
     close();

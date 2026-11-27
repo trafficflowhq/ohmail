@@ -212,7 +212,7 @@ export function Nav({
       onPress={onPress}
       disabled={disabled}
       selected={t.mail ? undefined : selected}
-      accessibilityState={{ selected: selected === true, disabled }}
+      accessibilityState={{ selected: selected === true, disabled: disabled === true }}
       accessibilityRole="link"
       accessibilityLabel={
         disabled ? Copy.ariaLabelDetail(label, Copy.trashUnavailable)

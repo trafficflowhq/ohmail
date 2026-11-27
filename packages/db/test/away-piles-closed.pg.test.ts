@@ -236,12 +236,9 @@ describe.skipIf(!PG_UP)("mail 0096/0101 — the away responder's pile scope, enf
          is HEAD's: drizzle's insert names every column of the table it is given, filling the ones
          the caller omitted with the `default` keyword, so a column added to `away_responders` by
          any later migration makes the statement 42703 against this stage — the head schema cannot
-         describe an old database. Naming the five columns 0100 has keeps this case about 0101's
-         backfill instead of about whatever landed after it. `accounts` stays on the builder: the
-         stage under test is `away_responders`, and a table this journal segment does not move can
-         be written the ordinary way. */
+         describe an old database. Both inserts name only the columns present at this stage. */
       for (const [acct, audience] of [[wide, "everyone"], [narrow, "screened_in"]] as const) {
-        await db2.insert(accounts).values({ id: acct, name: audience });
+        await db2.execute(sql`INSERT INTO "accounts" ("id", "name") VALUES (${acct}::uuid, ${audience})`);
         await db2.execute(sql`
           INSERT INTO "away_responders" ("account_id", "enabled", "body", "audience", "piles")
           VALUES (${acct}::uuid, true, 'Back Monday.', ${audience}, ARRAY['INBOX']::text[])`);

@@ -119,7 +119,8 @@ describe("a draft open in the phone's composer that another device sends", () =>
     expect(SHEET).toContain("const left = draftId !== null && phase === \"idle\" ? w.actions.draftLeft(draftId) : null;");
     expect(SHEET).toContain("{gone.why === \"sent\" ? Copy.composeSentElsewhere : Copy.composeDeletedElsewhere}");
     expect(SHEET).toContain("rebind: setDraftId");
-    expect(SHEET).toContain("onPress={() => { sendAsNew.current = true; void send(); }}");
-    expect(SHEET).toContain("if (goneNote !== null && !sendAsNew.current) { setFailNote(goneNote); return; }");
+    expect(SHEET).toContain("onPress={() => { void send(null, false, true); }}");
+    expect(SHEET).toContain("if (goneNote !== null && !asNew) { setFailNote(goneNote); return; }");
+    expect(SHEET).toContain("const target = asNew && draftId !== null && w.actions.draftLeft(draftId) !== null ? null : draftId;");
   });
 });

@@ -21,10 +21,12 @@ import { fakeAddress, type FakeAddress } from "../support/fake-window.js";
 let table: string[] = [];
 /** The key table's rows as the `?` sheet is drawn from them: chord, label, and whether the binding runs now. */
 let rows: string[] = [];
+let helpOnly: string[] = [];
 /** A wide pane with a field in it, which also says what the key table holds. */
 function Pane({ name }: { readonly name: string }) {
   const bindings = useKeymap().bindings;
   table = bindings.map((b) => b.chord);
+  helpOnly = bindings.filter((b) => b.helpOnly).map((b) => b.chord);
   rows = bindings.map((b) => `${b.chord}|${b.label}|${b.disabled ? "off" : "on"}`);
   return (
     <div>
@@ -83,6 +85,7 @@ const press = (key: string, on: Element = document.body) => fireEvent.keyDown(on
 
 beforeEach(() => {
   table = [];
+  helpOnly = [];
   localStorage.clear();
   Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
 });
@@ -143,10 +146,14 @@ describe("the mail's own keys on the ground", () => {
     expect(screen.getByText("the week")).toBeTruthy();
     press("c");
     expect(address.read()).toBe("#/cal/week");
-    expect(rows.some((row) => row.includes(searchEn.shortcuts.sendReplyAndDone))).toBe(false);
+    expect(rows.filter((row) => row.includes(searchEn.shortcuts.sendReplyAndDone))).toEqual([
+      `mod+shift+Enter|${searchEn.shortcuts.sendReplyAndDone}|off`,
+    ]);
+    expect(helpOnly).toContain("mod+shift+Enter");
     press("g");
     press("m");
     expect(address.read()).toBe("#/ohbox");
+    expect(helpOnly).not.toContain("mod+shift+Enter");
     press("c");
     expect(address.read()).toBe("#/compose");
   });

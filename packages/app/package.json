@@ -104,6 +104,8 @@
     "./screener-labels.de.json": "./messages/screener.de.json",
     "./settings/labels.en.json": "./messages/settings.en.json",
     "./settings/labels.de.json": "./messages/settings.de.json",
+    "./settings/appearance.en.json": "./messages/settings-general.en.json",
+    "./settings/appearance.de.json": "./messages/settings-general.de.json",
     "./settings/contract": {
       "types": "./src/settings/contract.ts",
       "ohmail-source": "./src/settings/contract.ts",

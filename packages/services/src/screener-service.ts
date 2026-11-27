@@ -1003,7 +1003,7 @@ export class ScreenerReadService {
       ...this.waitingFilters(ctx, held, cutline, gone, sets !== undefined),
       sql`not ${this.decisionInFlightSql(ctx, d, sql`lower(${reps.fromAddress})`)}`,
     ));
-    const [[total = 0] = []] = await this.readWaiting(ctx, sets, (db) => d.exec(db, sql`${withSets} ${counts}`));
+    const [[total = 0] = []] = await this.readWaiting(ctx, sets, (db) => d.exec(db, sql`${withSets} ${counts.getSQL()}`));
     return { senders: Number(total) };
   }
 

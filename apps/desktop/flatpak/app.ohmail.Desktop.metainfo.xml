@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.11" date="2026-11-27">
+      <description>
+        <ul>
+          <li>Calendar date picking and event drag previews</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.10" date="2026-11-27">
       <description>
         <ul>
@@ -152,17 +159,6 @@
           <li>Signup shows the plan or trial you chose</li>
           <li>News and Receipts scroll behind the action pill</li>
           <li>Subscription shows the billing interval and one-time history suggestions</li>
-        </ul>
-      </description>
-    </release>
-    <release version="2.0.6" date="2026-11-25">
-      <description>
-        <ul>
-          <li>Keep sign-in credentials out of AI requests</li>
-          <li>Cloud calendars appear while desktop mail catches up</li>
-          <li>Sync details in desktop Mailboxes settings</li>
-          <li>Move to Trash asks once per account</li>
-          <li>Faster returns to News and Receipts</li>
         </ul>
       </description>
     </release>

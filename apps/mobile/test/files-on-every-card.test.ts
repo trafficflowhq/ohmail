@@ -174,7 +174,8 @@ describe("the phone's Screener: every held message shows its files", () => {
 describe("the phone's News: an open card shows its issue's files", () => {
   it("the open is the ask and the close lets it go; a closed card draws and asks nothing", () => {
     expect(READS).toMatch(/if \(!open\) return;\s*holdFiles\(\[m\.id\]\);\s*return \(\) => releaseFiles\(\[m\.id\]\);/);
-    const drawn = READS.slice(READS.indexOf("{open ? ("), READS.indexOf("</Panel>"));
+    const expandable = READS.slice(READS.indexOf("function ExpandableStreamCard("));
+    const drawn = expandable.slice(expandable.indexOf("{open ? ("), expandable.indexOf("</Panel>"));
     expect(drawn, "the open card draws no tiles").toContain("<AttachmentTiles m={{ id: m.id, attachments: w.filesOf(m.id) }} />");
   });
 });

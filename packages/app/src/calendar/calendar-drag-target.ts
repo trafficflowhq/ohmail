@@ -1,3 +1,6 @@
+import { cssRect } from "@ohmail/ui/viewport";
+import type { CSSProperties } from "react";
+
 export const DROP = "[data-cal-drop-day]";
 
 export function dayTarget(view: HTMLElement, point: PointerEvent, kind?: string) {
@@ -25,6 +28,46 @@ export function dayDelta(from: string, to: string): number {
 
 export function dragScrollArea(view: HTMLElement, kind: string) {
   return view.querySelector<HTMLElement>(kind === "time" ? "[data-today-scroll]" : ".oh-mo-weeks");
+}
+
+export function rangeBoxes(
+  view: HTMLElement,
+  kind: "month" | "all-day",
+  days: { first: string; last: string },
+  rowOffset: number,
+  height: number,
+): (CSSProperties & { top: number })[] {
+  const month = kind === "month";
+  const origin = cssRect(view);
+  const scroller = month && dragScrollArea(view, kind);
+  const viewport = scroller ? cssRect(scroller) : origin;
+  const rows = new Map<number, { left: number; right: number; top: number; height: number }>();
+  for (const cell of view.querySelectorAll<HTMLElement>(DROP)) {
+    const day = cell.dataset.calDropDay;
+    if (!day || day < days.first || day > days.last || cell.dataset.calDropKind !== kind) continue;
+    const rect = cssRect(cell);
+    const top = Math.max(rect.top, viewport.top);
+    const bottom = Math.min(rect.bottom, viewport.bottom);
+    if (!rect.width || top >= bottom) continue;
+
+    const rowTop = month && cell.parentElement ? cssRect(cell.parentElement).top : origin.top;
+    const preferred = rowTop + rowOffset;
+    const copyHeight = month ? Math.min(height, bottom - top) : height;
+    const row = rows.get(rowTop);
+    rows.set(rowTop, {
+      left: Math.min(row?.left ?? rect.left, rect.left),
+      right: Math.max(row?.right ?? rect.right, rect.right),
+      top: month ? Math.max(top, Math.min(preferred, bottom - copyHeight)) : preferred,
+      height: copyHeight,
+    });
+  }
+  return [...rows.values()].map((row) => ({
+    left: row.left - origin.left,
+    top: row.top - origin.top,
+    width: row.right - row.left,
+    height: row.height,
+    overflow: row.height < height ? "hidden" : undefined,
+  }));
 }
 
 export function scrollDrag(

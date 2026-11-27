@@ -56,9 +56,9 @@ const card = (): HTMLElement => {
   return el!;
 };
 const rowBadges = (): string[] =>
-  [...rowButton().querySelectorAll<HTMLElement>(".badge.place")].map((b) => b.textContent ?? "");
+  [...rowButton().querySelectorAll<HTMLElement>(".delivery-label")].map((b) => b.textContent ?? "");
 const cardBadges = (): string[] =>
-  [...card().querySelectorAll<HTMLElement>(".badge.place")].map((b) => b.textContent ?? "");
+  [...card().querySelectorAll<HTMLElement>(".delivery-label")].map((b) => b.textContent ?? "");
 
 /* ══ TWO MAILBOXES — the card names the one that received it ═══════════════════════════ */
 
@@ -72,7 +72,7 @@ describe("a two-mailbox account is told which of its addresses received the mess
     await mountReads(message("mb-work"), TWO);
     expect(cardBadges()).toContain("Work");
     expect(
-      card().querySelector(".oh-messagehead .badge.place"),
+      card().querySelector(".oh-messagehead .delivery-label"),
       "the card's badge is not on the head line",
     ).toBeTruthy();
   });
@@ -105,14 +105,14 @@ describe("a two-mailbox account is told which of its addresses received the mess
     await mountReads(message("mb-work"), TWO, "de");
     expect(rowBadges()).toEqual([]);
     expect(rowButton().getAttribute("aria-description") ?? "").not.toContain("Zugestellt an Work");
-    expect(card().querySelector<HTMLElement>(".oh-messagehead .badge.place")!.getAttribute("title"))
+    expect(card().querySelector<HTMLElement>(".oh-messagehead .delivery-label")!.getAttribute("title"))
       .toBe("Zugestellt an Work");
   });
 
   it("the card badge carries the whole phrase as its title", async () => {
     await mountReads(message("mb-work"), TWO);
     expect(rowBadges()).toEqual([]);
-    const titles = [...card().querySelectorAll<HTMLElement>(".badge.place")]
+    const titles = [...card().querySelectorAll<HTMLElement>(".delivery-label")]
       .map((b) => b.getAttribute("title"));
     expect(titles).toHaveLength(1);
     for (const t of titles) expect(t).toBe("Delivered to Work");

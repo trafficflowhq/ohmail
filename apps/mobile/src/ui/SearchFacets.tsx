@@ -89,25 +89,37 @@ export function SearchFacets({ filters, order, onFilters, onOrder, locale }: {
   const window = dateWindowOf(fromDay, toDay, new Date());
   const dateDetail = window ? dateWords[window]
     : from && to ? `${from} – ${to}` : from ? Copy.searchDateFrom(from) : to ? Copy.searchDateThrough(to) : undefined;
-  const chip = (label: string, onPress: () => void, active: boolean, menuChip = true, detail?: string, clear?: () => void) => (
-    <Tap
-      accessibilityRole={menuChip ? "button" : "checkbox"}
-      accessibilityLabel={t.mail && detail ? detail : label}
-      accessibilityState={menuChip ? { selected: active, expanded: !active && menu !== null && labels[menu] === label } : { checked: active }}
-      onPress={t.mail && active && clear ? clear : onPress}
-      style={{ flexDirection: "row", alignItems: "center", gap: FILTER_GAP, paddingHorizontal: t.mail ? 12 : 9,
-        minHeight: t.mail ? 36 : 32,
-        maxWidth: t.mail ? undefined : "46%", borderWidth: t.mail ? 0 : 1, borderColor: active ? t.c.accent : t.c.hair,
-        backgroundColor: active ? paper?.pick ?? t.c.tint2 : paper?.soft ?? t.c.panel, borderRadius: t.radius.pill }}
-    >
-      <Txt variant={t.mail ? "button" : "meta"} tone={active ? "accent" : t.mail ? "ink" : "ink2"} numberOfLines={1}
-        style={{ flexShrink: 1, maxWidth: detail ? 176 : undefined, ...(active && paper ? { color: paper["on-pick"] } : {}) }}>
-        {detail ?? label}
-      </Txt>
-      {paper && active && clear ? <Icon name="x" size={12} color={paper["on-pick"]} />
-        : menuChip ? <View style={t.mail ? { transform: [{ rotate: "90deg" }] } : undefined}><Icon name="chev" size={11} color={t.c.ink3} /></View> : null}
-    </Tap>
-  );
+  const chip = (label: string, onPress: () => void, active: boolean, menuChip = true, detail?: string, clear?: () => void) => {
+    const press = t.mail && active && clear ? clear : onPress;
+    const spoken = t.mail && detail ? detail : label;
+    const style = {
+      flexDirection: "row", alignItems: "center", gap: FILTER_GAP, paddingHorizontal: t.mail ? 12 : 9,
+      minHeight: t.mail ? 36 : 32, maxWidth: t.mail ? undefined : "46%",
+      borderWidth: t.mail ? 0 : 1, borderColor: active ? t.c.accent : t.c.hair,
+      backgroundColor: active ? paper?.pick ?? t.c.tint2 : paper?.soft ?? t.c.panel, borderRadius: t.radius.pill,
+    } as const;
+    const content = (
+      <>
+        <Txt variant={t.mail ? "button" : "meta"} tone={active ? "accent" : t.mail ? "ink" : "ink2"} numberOfLines={1}
+          style={{ flexShrink: 1, maxWidth: detail ? 176 : undefined, ...(active && paper ? { color: paper["on-pick"] } : {}) }}>
+          {detail ?? label}
+        </Txt>
+        {paper && active && clear ? <Icon name="x" size={12} color={paper["on-pick"]} />
+          : menuChip ? <View style={t.mail ? { transform: [{ rotate: "90deg" }] } : undefined}><Icon name="chev" size={11} color={t.c.ink3} /></View> : null}
+      </>
+    );
+    return menuChip ? (
+      <Tap accessibilityRole="button" accessibilityLabel={spoken} onPress={press} style={style}
+        accessibilityState={{ selected: active, expanded: !active && menu !== null && labels[menu] === label }}>
+        {content}
+      </Tap>
+    ) : (
+      <Tap accessibilityRole="checkbox" accessibilityLabel={spoken} onPress={press} style={style}
+        accessibilityState={{ checked: active }}>
+        {content}
+      </Tap>
+    );
+  };
   const peopleChips = <>
     {chip(labels.sender, () => open("sender"), !!filters.sender, true, filters.sender, () => set("sender", undefined))}
     {chip(labels.to, () => open("to"), !!filters.to, true, filters.to, () => set("to", undefined))}

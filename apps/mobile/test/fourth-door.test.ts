@@ -997,7 +997,7 @@ describe("screen 3: the Settings row", () => {
        that names something else. */
     expect(SETTINGS).toContain("key: HERE_CARD,");
     expect(SETTINGS).toContain("claim: claimHere(here, organizerInstruction(), organizerHandedBack()),");
-    expect(SETTINGS).toMatch(/const roster = mailbox && w\.mailboxes\.rows\.some[\s\S]*?: w\.mailboxes\.rows;/);
+    expect(SETTINGS).toMatch(/const roster = mailbox\s*\? w\.mailboxes\.rows\.filter\(\(row\) => row\.id === mailbox\)\s*:\s*w\.mailboxes\.rows;/);
     expect(SETTINGS).toContain("roster.map((row) => ({");
     expect(SETTINGS).toContain("key: row.id,");
   });
@@ -1057,7 +1057,9 @@ describe("screen 3: the Settings row", () => {
     expect(SETTINGS).toContain("standaloneAvailable({ startEngine: phoneEngineStart() })");
     expect(SETTINGS, "the panel still gates on a roster read landing").not.toContain("!w.mailboxes.known");
     expect(SETTINGS, "the panel does not ask the door").toContain("const here = standaloneHereFor({ standalone: w.standalone })");
-    expect(SETTINGS, "the paired arm lost its roster").toMatch(/const roster = mailbox && w\.mailboxes\.rows\.some[\s\S]*?: w\.mailboxes\.rows;/);
+    expect(SETTINGS, "the paired arm lost its roster").toMatch(/const roster = mailbox\s*\? w\.mailboxes\.rows\.filter\(\(row\) => row\.id === mailbox\)\s*:\s*w\.mailboxes\.rows;/);
+    expect(SETTINGS, "an unavailable mailbox must not disclose another mailbox's card")
+      .toContain("if (mailbox && roster.length === 0) return null;");
     expect(SETTINGS, "the paired arm lost its roster").toContain("roster.map((row) => ({");
   });
 
