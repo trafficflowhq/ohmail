@@ -8,12 +8,13 @@
  */
 import type { ComposeAttachment, EmailAddress, EngineDraft, EngineMutation } from "@ohmail/wire";
 import type { SignatureState } from "@ohmail/client-engine";
-import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
+import { fnv1a, sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import { sha256Hex } from "@trafficflow/core/diagnostics";
-import { draftRevisionInput } from "@trafficflow/core/outbound-text";
+import { draftForwardSourceTuples, draftRevisionInput } from "@trafficflow/core/outbound-text";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet, localStorageDoor, onLocalStorageChanged } from "../storage/durable.js";
 import { isDemoOwned, retiredSignOutStorageHeld } from "../storage/storage-owner.js";
 import { scopeSuffix, type StorageScope } from "../storage/scope.js";
+import { forwardSourcesForSave, sourcesFromDraft, type ForwardSource } from "./forward-selection.js";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {
@@ -74,6 +75,8 @@ export interface ComposeFields {
    * as a draft with no files.
    */
   attachments?: ComposeAttachment[];
+  /** The forwarded originals still on this draft, in message-date order. Their bytes stay in memory. */
+  forwardSources?: ForwardSource[];
   /**
    * The message this compose is forwarding — an id, and nothing else. A forward is written on the ordinary compose
    * form; this one field turns it into a forward on the wire, and it deliberately carries no copy of the original —
@@ -231,14 +234,15 @@ function holdsMessage(unit: readonly (string | null)[]): boolean {
   return unit[1] !== null || unit[2] !== null;
 }
 
-/** Recipients, subject or body make a compose worth keeping. */
+/** Recipients, subject, body or forwarded originals make a compose worth keeping. */
 export function worthSaving(f: ComposeFields): boolean {
   return (
     f.to.trim() !== "" ||
     (f.cc ?? "").trim() !== "" ||
     (f.bcc ?? "").trim() !== "" ||
     f.subject.trim() !== "" ||
-    f.body.trim() !== ""
+    f.body.trim() !== "" ||
+    (f.forwardSources?.length ?? 0) > 0
   );
 }
 
@@ -688,6 +692,7 @@ export function readComposeDraft(scope: StorageScope): ComposeFields {
 function decodeComposeDraft(raw: string | null | undefined): ComposeFields {
   if (!raw) return EMPTY_COMPOSE;
   const parsed = JSON.parse(raw) as Partial<ComposeFields>;
+  const forwardSources = sourcesFromDraft(parsed.forwardSources);
   return {
     to: typeof parsed.to === "string" ? parsed.to : "",
     // Guarded field-wise like every other line here, so a buffer written before Cc/Bcc existed
@@ -710,6 +715,7 @@ function decodeComposeDraft(raw: string | null | undefined): ComposeFields {
     // NEVER restored — bytes are transient and are stripped on write. A restored draft starts
     // with no files, and a file the user had picked before reloading is re-picked.
     attachments: [],
+    ...(forwardSources ? { forwardSources } : {}),
     // RESTORED, because it is an id rather than bytes and losing it would turn a half-written
     // forward back into an empty message titled "Fwd: …". Guarded field-wise like
     // `fromMailboxId`: a buffer written before this field existed reads back as a plain compose.
@@ -750,7 +756,7 @@ export function writeComposeDraft(f: ComposeFields, scope: StorageScope): void {
    * every visit to Compose leave a stored buffer behind. `body` is the editor's plain rendering and is `""` for that
    * document, which is why it is the field that decides. Same rule as `isRichEmpty`.
    */
-  if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === "") {
+  if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === "" && f.forwardSources === undefined) {
     removeComposeBuffer(scope);
     return;
   }
@@ -1044,7 +1050,13 @@ export function signatureOf(f: ComposeFields): string {
     f.to, f.cc ?? "", f.bcc ?? "", f.subject, f.body, f.html ?? "", f.forwardOf ?? "",
     // The kept files only when there is a list, so every older buffer keeps its signature.
     ...(f.forwardOf && f.forwardParts ? [[...f.forwardParts].sort()] : []),
+    ...(f.forwardSources !== undefined ? [forwardSourceShape(f.forwardSources)] : []),
   ]);
+}
+
+/** The forwarding fields covered by existing compose storage markers. */
+export function forwardSourceShape(sources: readonly ForwardSource[] | undefined): string[][] | undefined {
+  return sources?.map(({ id, filename, sha256 }) => [id, filename, sha256 ?? ""]);
 }
 
 /** {@link signatureOf} hashed, for the marker the buffer carries — the body is not stored twice. */
@@ -1084,6 +1096,7 @@ function matchesDraftRevision(fields: ComposeFields, mailboxId: string, revision
     mailboxId, inReplyToMessageId: null, subject: fields.subject, body: fields.body, html: fields.html || null,
     to: to.addresses, cc: cc.addresses, bcc: bcc.addresses,
     forwardOfMessageId: fields.forwardOf, forwardParts: fields.forwardParts,
+    forwardSources: forwardSourcesForSave(fields.forwardSources),
   })) === revision;
 }
 
@@ -1100,8 +1113,11 @@ function matchesSavedMarker(
 }
 
 export function composeWordsFingerprint(fields: ComposeFields): string | null {
-  if ([fields.to, fields.subject, fields.body].every((text) => text.trim() === "")) return null;
-  return sendFingerprint(composePlan(fields, fields.fromMailboxId).mutation as unknown as MailSend);
+  if (!fields.forwardSources?.length && [fields.to, fields.subject, fields.body].every((text) => text.trim() === "")) return null;
+  const fingerprint = sendFingerprint(composePlan(fields, fields.fromMailboxId).mutation as unknown as MailSend);
+  return fields.forwardSources?.length
+    ? fnv1a(JSON.stringify([fingerprint, draftForwardSourceTuples(fields.forwardSources)]))
+    : fingerprint;
 }
 
 /** Check both the recorded revision and the words still present in this recovery copy. */
@@ -1112,7 +1128,9 @@ export function composeBufferMatchesRevision(
   if (fields.subject !== row.subject || fields.body !== row.body || (fields.html || null) !== (row.html ?? null)
     || (fields.fromMailboxId !== null && fields.fromMailboxId !== row.mailboxId)
     || (fields.forwardOf ?? null) !== (row.forwardOfMessageId ?? null)
-    || JSON.stringify(fields.forwardParts ?? null) !== JSON.stringify(row.forwardParts ?? null)) return false;
+    || JSON.stringify(fields.forwardParts ?? null) !== JSON.stringify(row.forwardParts ?? null)
+    || JSON.stringify(draftForwardSourceTuples(fields.forwardSources ?? []))
+      !== JSON.stringify(draftForwardSourceTuples(row.forwardSources ?? []))) return false;
   return (["to", "cc", "bcc"] as const).every((line) => {
     const parsed = parseRecipients(fields[line]);
     return parsed.invalid.length === 0 && sameRecipientList(parsed.addresses, row[line]);
@@ -1385,6 +1403,7 @@ export function composePlan(
       ...(fields.forwardOf ? { forwardOf: fields.forwardOf } : {}),
       // The kept files ride only a forward that has a list: absent, the server sends every one.
       ...(fields.forwardOf && fields.forwardParts ? { forwardParts: [...fields.forwardParts] } : {}),
+      ...(fields.forwardSources !== undefined ? { forwardSources: forwardSourcesForSave(fields.forwardSources) } : {}),
       ...(mailboxId ? { mailboxId } : {}),
       ...(draftId ? { draftId } : {}),
       threadId: null,

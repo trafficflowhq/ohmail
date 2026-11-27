@@ -2,7 +2,7 @@ import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { answer } from "../responses.js";
 import type { Route } from "../router.js";
-import { decodeSendAttachments, readStagedIds } from "./drafts.js";
+import { decodeSendAttachments, readContentRevision, readStagedIds } from "./drafts.js";
 import { readBody, schedules } from "./shared.js";
 import type { RequestOf } from "@ohmail/wire";
 
@@ -46,6 +46,7 @@ export const scheduleFilesRoutes: Route[] = [
           surfaceMaxTotalBytes: deps.services?.sendSurfaceMaxTotalBytes,
           keeping,
         },
+        readContentRevision(body.ifContentRevision),
       );
       return answer<"POST /drafts/:id/schedule-with-files">()(draft, { status: 200, seq });
     },

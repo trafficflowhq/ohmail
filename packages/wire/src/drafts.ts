@@ -6,6 +6,15 @@ import type { EmailAddress, ISODateTime } from "./base.js";
 
 export type DraftStatus = "draft" | "scheduled" | "sending" | "sent" | "unverified";
 
+/** An original attached as a message. The draft stores its identity and label, and Send checks its bytes. */
+export interface DraftForwardSource {
+  id: string;
+  filename: string;
+  sender: string;
+  subject: string;
+  sha256: string;
+}
+
 export interface DraftDTO {
   id: string;
   mailboxId: string;
@@ -18,6 +27,8 @@ export interface DraftDTO {
    * `null`: nothing was removed, every part goes. Absent from a server that predates it.
    */
   forwardParts: string[] | null;
+  /** The remaining message attachments, in their order on the draft. */
+  forwardSources?: DraftForwardSource[];
   subject: string;
   /**
    * The text/plain body, authoritative for a plain draft.
@@ -112,6 +123,7 @@ export interface EngineDraft {
   forwardOfMessageId?: string | null;
   /** The original's files the person kept, beside a forward; `null` or absent: every file. */
   forwardParts?: string[] | null;
+  forwardSources?: DraftForwardSource[];
   subject: string;
   /**
    * The draft's plain text, or `null` when THIS MIRROR DOES NOT HOLD IT.

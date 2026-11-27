@@ -1634,6 +1634,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
       ...(words.threadId === undefined && was?.threadId ? { threadId: was.threadId } : {}),
       ...(words.inReplyToMessageId === undefined && was?.inReplyToMessageId ? { inReplyToMessageId: was.inReplyToMessageId } : {}),
       ...(words.forwardOfMessageId === undefined && was?.forwardOfMessageId ? { forwardOfMessageId: was.forwardOfMessageId } : {}),
+      ...(words.forwardSources === undefined && was?.forwardSources ? { forwardSources: was.forwardSources } : {}),
     });
     const q: PendingMutation = {
       id: this.uuid(), key: this.uuid(), mutation: create, at: p.at, n: p.n, restored: true,

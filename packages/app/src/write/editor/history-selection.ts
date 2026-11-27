@@ -1,6 +1,7 @@
 import { Extension } from "@tiptap/react";
 import { Fragment, Slice, type Node } from "@tiptap/pm/model";
 import { Plugin, Selection, TextSelection, type EditorState } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { historyIn } from "./quoted-history.js";
 
 function authoredSelection(state: EditorState): Selection | null {
@@ -64,6 +65,16 @@ export const HistorySelection = Extension.create<{ visible: () => boolean }>({
           return selection && !selection.eq(state.selection) ? state.tr.setSelection(selection) : null;
         },
         props: {
+          decorations: (state) => {
+            const history = folded() ? historyIn(state.doc) : undefined;
+            return history
+              ? DecorationSet.create(state.doc, [
+                  Decoration.node(history.pos, history.pos + history.node.nodeSize, {
+                    contenteditable: "false",
+                  }),
+                ])
+              : null;
+          },
           transformCopied: (slice, view) => {
             if (folded() && startsInHistory(view.state)) return Slice.empty;
             return transferable(slice, folded());

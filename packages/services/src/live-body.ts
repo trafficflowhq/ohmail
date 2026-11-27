@@ -55,24 +55,24 @@ export interface LiveBody {
 
 const notFound = (): ServiceError => new ServiceError("not_found", 404, "message not found");
 
-export async function liveBody(ctx: ServiceContext, messageId: string, ports: LiveBodyPorts): Promise<LiveBody> {
+async function ownedMessage(ctx: ServiceContext, messageId: string) {
   if (!isUuid(messageId)) throw notFound();
   const [row] = await ctx.db.select({
     mailboxId: messages.mailboxId, dedupKey: messages.dedupKey, messageIdHeader: messages.messageIdHeader,
-    withheld: messageBodies.withheldReason,
+    withheld: messageBodies.withheldReason, noForward: messages.noForward,
   }).from(messages)
     .innerJoin(mailboxes, and(eq(mailboxes.id, messages.mailboxId), eq(mailboxes.accountId, ctx.accountId)))
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
     .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId), isNull(messages.deletedAt)))
     .limit(1);
   if (!row) throw notFound();
-  if (row.withheld !== "storage_cap") {
-    throw new ServiceError("text_kept", 409, "this letter's text was not emptied for space, so there is nothing to load");
-  }
-  if (ports.admit && !(await ports.admit(ctx))) {
-    throw new ServiceError("rate_limited", 429, "too many letters loaded from the mail server this hour; try again later",
-      { retryAfter: 600 }, true);
-  }
+  return row;
+}
+
+async function readOriginal(
+  ctx: ServiceContext, messageId: string, row: Awaited<ReturnType<typeof ownedMessage>>,
+  read: LiveBodyPorts["read"], maxBytes: number,
+) {
   const places = await ctx.db.select({
     folder: messageInstances.folder, uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
   }).from(messageInstances)
@@ -82,7 +82,7 @@ export async function liveBody(ctx: ServiceContext, messageId: string, ports: Li
   const gone = (): ServiceError =>
     new ServiceError("letter_gone", 410, "the mail server no longer holds this letter where ohmail last saw it");
   if (places.length === 0) throw gone();
-  const found = await ports.read(row.mailboxId, places, LIVE_BODY_MAX_BYTES);
+  const found = await read(row.mailboxId, places, maxBytes);
   if ("gone" in found) throw gone();
   if ("oversize" in found) {
     throw new ServiceError("letter_too_large", 413, "this letter is too large to load here; it is complete on your mail server");
@@ -97,5 +97,29 @@ export async function liveBody(ctx: ServiceContext, messageId: string, ports: Li
   if (!isHuskSameMessage({ id: messageId, dedupKey: row.dedupKey, messageIdHeader: row.messageIdHeader }, fresh)) {
     throw new ServiceError("letter_mismatch", 409, "the mail server holds a different letter at this place, so nothing was shown");
   }
+  return { raw: found.raw, fresh };
+}
+
+/** Read the complete original for a message attachment, using the same ownership and identity checks. */
+export async function forwardSource(
+  ctx: ServiceContext, messageId: string, read: LiveBodyPorts["read"], maxBytes: number,
+): Promise<Uint8Array> {
+  const row = await ownedMessage(ctx, messageId);
+  if (row.noForward) {
+    throw new ServiceError("forbidden", 403, "Sensitive messages must be forwarded individually.");
+  }
+  return (await readOriginal(ctx, messageId, row, read, maxBytes)).raw;
+}
+
+export async function liveBody(ctx: ServiceContext, messageId: string, ports: LiveBodyPorts): Promise<LiveBody> {
+  const row = await ownedMessage(ctx, messageId);
+  if (row.withheld !== "storage_cap") {
+    throw new ServiceError("text_kept", 409, "this letter's text was not emptied for space, so there is nothing to load");
+  }
+  if (ports.admit && !(await ports.admit(ctx))) {
+    throw new ServiceError("rate_limited", 429, "too many letters loaded from the mail server this hour; try again later",
+      { retryAfter: 600 }, true);
+  }
+  const { fresh } = await readOriginal(ctx, messageId, row, ports.read, LIVE_BODY_MAX_BYTES);
   return { text: fresh.textBody, html: prepareHtmlForStorage(fresh.htmlBody) };
 }

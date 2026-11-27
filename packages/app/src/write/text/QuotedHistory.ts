@@ -13,6 +13,7 @@ export function useQuotedHistory(
     load: () => loadQuotedHistory(messageId, forward),
     show: t("history.show"),
     hide: t("history.hide"),
+    edit: t("history.edit"),
     restore: t("history.restore"),
     unavailable: t("history.unavailable"),
   };

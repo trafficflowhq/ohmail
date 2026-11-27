@@ -7,10 +7,13 @@ import type { ComposeAttachment } from "@ohmail/wire";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MailRowMenu, type MenuTarget } from "../../place-list/MailRowMenu.js";
 import { Attach, AttachRoom, Files, FileTile, SendStatus, type ComposerProps } from "@ohmail/ui/mail";
+import { Button } from "@ohmail/ui/base";
 import { base64Bytes, useLetterFiles, type LetterCap, type LetterFiles } from "@ohmail/app-logic/write/files";
+import { forwardSourceOf } from "@ohmail/app-logic/writing";
 import { fileLookOf } from "@ohmail/app-logic/reader";
 import { FilePreview, PdfLookContext } from "../../reader/look/FilePreview.js";
 import { useText } from "../../text/index.js";
+import type { Writing } from "../ports.js";
 import { useWriteBeside } from "../above.js";
 import { kindOf } from "./kind.js";
 import { Quality } from "./Quality.js";
@@ -36,6 +39,7 @@ interface UseFilesOptions {
   locked: boolean;
   /** A forward: the ceiling names the person's own files. */
   forward: boolean;
+  messageSelection?: Writing["composeForwardSelection"];
   letterEpochNow?: () => number;
   focusEditor?: () => void;
 }
@@ -46,6 +50,7 @@ export function useFiles({
   cap,
   locked,
   forward,
+  messageSelection,
   letterEpochNow,
   focusEditor,
 }: UseFilesOptions): FilesView {
@@ -57,10 +62,11 @@ export function useFiles({
   const { active, setPicked, restore, close } = usePickedFile(list);
   const model = useLetterFiles({ list, onList, cap: cap.bytes, pictures: beside.pictures, letterEpochNow });
   const total = beside.size(cap.bytes);
-  const { notes } = model;
   const said = fileNotes(model, (bytes) => beside.size(bytes), t);
+  const hasPending = Boolean(messageSelection?.pending.length);
+  const pickingLocked = locked || hasPending;
   const pick = (files: readonly File[]): void => {
-    if (!locked && active === null) void model.add(files);
+    if (!pickingLocked && active === null) void model.add(files);
   };
   return {
     model,
@@ -69,14 +75,15 @@ export function useFiles({
       <Attach
         key={letterEpochNow?.()}
         label={forward ? t("files.attachForward", { size: total }) : t("files.attach", { size: total })}
-        disabled={locked}
+        disabled={pickingLocked}
         onFiles={pick}
       />
     ),
     files:
-      list.length === 0 ? undefined : (
+      list.length === 0 && !hasPending ? undefined : (
         <>
           <Files>
+            {messageSelection ? <PendingOriginals selection={messageSelection} locked={locked} /> : null}
             {list.map((file, at) => (
               <DraftTile
                 key={`${at}:${file.filename}`}
@@ -123,24 +130,20 @@ export function useFiles({
               }
             />
           ) : null}
-          <AttachRoom
-            used={t("files.used", { used: beside.size(model.used), total })}
-            weight={
-              notes.saved === null
-                ? undefined
-                : t("files.saved", { from: beside.size(notes.saved.from), to: beside.size(notes.saved.to) })
-            }
-          >
-            {model.level === "none" ? null : (
-              <Quality level={model.level} locked={locked} onLevel={model.setLevel} />
-            )}
-          </AttachRoom>
+          {messageSelection?.retry && !locked ? (
+            <Button kind="quiet" size="s" onPress={messageSelection.retry}>
+              {t("forwardSelection.retry")}
+            </Button>
+          ) : null}
+          {list.length > 0 ? (
+            <AttachmentUsage list={list} model={model} total={total} locked={locked} />
+          ) : null}
         </>
       ),
     note: said.length > 0 ? said.join(" ") : null,
-    onFiles: locked ? undefined : (files) => pick(files),
+    onFiles: pickingLocked ? undefined : (files) => pick(files),
     heldDrop:
-      locked || active !== null || pickFile === undefined || pickFile === "none"
+      pickingLocked || active !== null || pickFile === undefined || pickFile === "none"
         ? undefined
         : {
             looksLikeDrag: pickFile.looksLikeDrag,
@@ -150,6 +153,61 @@ export function useFiles({
             },
           },
   };
+}
+
+function PendingOriginals({
+  selection,
+  locked,
+}: {
+  selection: NonNullable<Writing["composeForwardSelection"]>;
+  locked: boolean;
+}) {
+  const t = useText("write");
+  return selection.pending.map((source) => (
+    <FileTile
+      key={source.id}
+      kind="EML"
+      name={source.subject}
+      size={source.sender}
+      wrapName
+      off={
+        locked
+          ? undefined
+          : {
+              label: t("files.remove", { filename: source.filename }),
+              onPress: () => selection.remove(source.id),
+            }
+      }
+    />
+  ));
+}
+
+function AttachmentUsage({
+  list,
+  model,
+  total,
+  locked,
+}: {
+  list: readonly ComposeAttachment[];
+  model: LetterFiles;
+  total: string;
+  locked: boolean;
+}) {
+  const t = useText("write");
+  const { size } = useWriteBeside();
+  const saved = model.notes.saved;
+  const hasOriginals = list.some(forwardSourceOf);
+  const hasPicture = list.some((file) => fileLookOf(file.contentType) === "image");
+  return (
+    <AttachRoom
+      used={t("files.used", { used: size(model.used), total })}
+      weight={saved === null ? undefined : t("files.saved", { from: size(saved.from), to: size(saved.to) })}
+    >
+      {model.level === "none" || (hasOriginals && !hasPicture) ? null : (
+        <Quality level={model.level} locked={locked} onLevel={model.setLevel} />
+      )}
+    </AttachRoom>
+  );
 }
 
 function attachmentBlob(file: ComposeAttachment): Blob | undefined {
@@ -186,6 +244,7 @@ function DraftTile({
   const t = useText("attachments");
   const [menu, setMenu] = useState<MenuTarget | null>(null);
   const preview = t("preview", { name: file.filename });
+  const source = forwardSourceOf(file);
   const image = fileLookOf(file.contentType) === "image";
   const blob = useMemo(() => (image ? attachmentBlob(file) : undefined), [file, image]);
   const src = useFileImage(blob, image);
@@ -193,8 +252,9 @@ function DraftTile({
     <>
       <FileTile
         kind={kindOf(file.filename, file.contentType)}
-        name={file.filename}
-        size={size}
+        name={source?.subject ?? file.filename}
+        size={source ? `${source.sender} · ${size}` : size}
+        wrapName={source !== undefined}
         look={src ? <img src={src} alt="" /> : undefined}
         main={{
           label: preview,

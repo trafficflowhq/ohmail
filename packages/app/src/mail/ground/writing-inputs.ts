@@ -55,7 +55,7 @@ import {
 } from "../../frame/index.js";
 import { NONE, type LinkedDraft } from "../../host/index.js";
 import { useTextLookup } from "../../text/index.js";
-import { COMPOSER_WORDS } from "./writing-words.js";
+import { COMPOSER_WORDS, fileSize } from "./writing-words.js";
 
 /** The composer's three places, as the frame names them. */
 const PLACE_OF: Readonly<Record<ComposerPlace, PlaceId>> = {
@@ -257,6 +257,7 @@ export function useWritingInputs(): WritingInputs {
     reader,
     t,
     words: COMPOSER_WORDS,
+    attachmentLimit: { surface: host.capabilities.sendCeiling, size: fileSize },
     toast: press.undoToast,
     /* As the host says it, `none` included. The one cast: the contract names the wire's answers opaquely, and their
        one declaration is the drafter's own. */

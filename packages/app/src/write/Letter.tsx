@@ -48,7 +48,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
   const [laterAnchor, setLaterAnchor] = useState<HTMLElement | null>(null);
   const laterOpen = laterAnchor !== null;
   const { mayGo, long, empty, went, pressable, signature, then } = useLetterSend(
-    files.model.attaching.length > 0,
+    files.model.attaching.length > 0 || Boolean(w.composeForwardSelection),
   );
   const [handle, setHandle] = useState<EditorHandle | null>(null);
   const marks = useMarks(handle, !locked, plan.pointer !== "coarse");
@@ -117,7 +117,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
             long.line ?? empty.line,
             draft?.notice ?? null,
             forwarded.refusal,
-            files.note ?? notKept,
+            w.composeForwardSelection?.note ?? files.note ?? notKept,
             went,
           )}
           onFiles={files.onFiles}
@@ -236,6 +236,7 @@ function useLetterFiles(locked: boolean) {
     cap: letterCap(w.composeFrom.maxMessageBytes, beside.surface),
     locked,
     forward: Boolean(compose.forwardOf),
+    messageSelection: w.composeForwardSelection,
     letterEpochNow: w.composeEpochNow,
   });
   const forwarded = useForwarded(w.composeForwardFiles, locked);

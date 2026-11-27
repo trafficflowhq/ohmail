@@ -127,6 +127,7 @@ export function draftRowToDTO(d: typeof drafts.$inferSelect): DraftDTO {
     inReplyToMessageId: d.inReplyToMessageId ?? null,
     forwardOfMessageId: d.forwardOfMessageId ?? null,
     forwardParts: d.forwardOfMessageId ? d.forwardParts ?? null : null,
+    ...(d.forwardSources != null ? { forwardSources: d.forwardSources } : {}),
     subject: d.subject,
     body: d.body,
     html: d.html ?? null,
