@@ -1,11 +1,9 @@
 import {
   pruneChangeLogForAccount, retentionAccountsAfter, pruneAuditLog, pruneAuthEvents, pruneConnectAttempts, pruneSignInRecords,
   SIGN_IN_RETENTION_DEADLINE_MS, RETENTION_ACCOUNTS_PER_TICK, RETENTION_DELETE_BATCH, RETENTION_BATCHES_PER_ACCOUNT, SIGN_IN_RECORD_RETENTION_MS,
-  emptySignInRetention, type SignInRetentionOptions, type SignInRetentionResult,
+  emptySignInRetention, expiredFingerprintAccounts, pruneSendFingerprints, type SignInRetentionOptions, type SignInRetentionResult,
 } from "@trafficflow/db/cloud";
-import {
-  expiredFingerprintAccounts, pruneSendFingerprints, readDrainCursor, writeDrainCursor, type Tx,
-} from "@trafficflow/db";
+import { readDrainCursor, writeDrainCursor, type Tx } from "@trafficflow/db";
 import type { SQL } from "drizzle-orm";
 import type { Logger } from "@trafficflow/core/mail";
 

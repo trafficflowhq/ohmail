@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, lt, sql, type SQL } from "drizzle-orm";
-/* The mail half directly — see the note in `change-log.ts`. This is a mail table. */
+/* Hosted maintenance for the send claim tables. The send path itself uses the mail schema. */
 import { outboundSendFingerprints, outboundSends } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 import { rowsAffected } from "./rows-affected.js";

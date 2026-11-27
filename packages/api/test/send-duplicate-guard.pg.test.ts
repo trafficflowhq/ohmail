@@ -4,9 +4,8 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import {
   accounts, users, sessions, mailboxes, drafts, outboundSends, outboundSendFingerprints,
-  pruneSendFingerprints, SEND_FINGERPRINT_RETENTION_MS,
 } from "@trafficflow/db";
-import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
+import { makeOwnedDb, pruneSendFingerprints, SEND_FINGERPRINT_RETENTION_MS, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";

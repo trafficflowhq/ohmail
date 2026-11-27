@@ -125,40 +125,7 @@ interface ThreadFacts extends ConversationJoinFacts {
 /** One duplicate-name group of the page: its size, and its thread ids when within the bound. */
 interface Group { account_id: string; subject: string; n: number; ids: string[]; threadId?: string }
 
-/**
- * On Postgres, walk a bounded slice of index entries and probe the same index for each seed's full
- * subject. Only the lowest id can nominate the group, even when its other threads lie in another
- * slice. The probe stops as soon as the group is too large to repair.
- */
-async function pgThreadGroups(
-  db: Tx, accountId: string | undefined, cursor: ThreadJoinHealCursor | null,
-): Promise<{ groups: Group[]; end: ThreadJoinHealCursor | null }> {
-  const own = accountId === undefined ? sql`true` : sql`account_id = ${accountId}`;
-  const after = cursor === null ? sql`true` : sql`
-    (account_id, left(subject, 64), md5(subject), id) >
-    (${cursor.accountId}::uuid, left(${cursor.subject}, 64), md5(${cursor.subject}),
-      ${cursor.threadId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}::uuid)`;
-  const rows = await dialect(db).exec(db, sql`
-    with seeds as (
-      select account_id, subject, id, left(subject, 64) as prefix, md5(subject) as digest,
-        row_number() over (order by account_id, left(subject, 64), md5(subject), id) as position
-      from ${threads}
-      where ${own} and ${after}
-      order by account_id, left(subject, 64), md5(subject), id
-      limit ${THREAD_JOIN_HEAL_MAX_SEEDS}
-    )
-    select s.account_id, s.subject, s.id, s.position, g.ids
-    from seeds s
-    cross join lateral (
-      select array(select t.id from ${threads} t
-        where t.account_id = s.account_id and left(t.subject, 64) = s.prefix
-          and md5(t.subject) = s.digest and t.subject = s.subject
-        order by t.id
-        limit ${THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP + 1}) as ids
-      offset 0
-    ) g
-    where (cardinality(g.ids) > 1 and g.ids[1] = s.id) or s.position = ${THREAD_JOIN_HEAL_MAX_SEEDS}
-  `);
+function decodeThreadSeeds(rows: unknown[][]): { groups: Group[]; end: ThreadJoinHealCursor | null } {
   const groups: Array<{ position: number; group: Group }> = [];
   let end: ThreadJoinHealCursor | null = null;
   for (const [account, subject, id, position, threadIds] of rows) {
@@ -231,10 +198,14 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
     // the conversation from messages, and a thread renamed by the user leaves its old group.
     const d = dialect(db);
     const limit = Math.min(50, maxGroups - result.groupsScanned);
-    const page: { groups: Group[]; end: ThreadJoinHealCursor | null } = d.name === "pg"
-      ? await pgThreadGroups(db, deps.accountId, cursor)
-      : { groups: await deviceThreadGroups(db, deps.accountId, cursor, limit), end: null };
-    const groups = d.name === "pg" ? page.groups.slice(0, maxGroups - result.groupsScanned) : page.groups;
+    const seeds = await d.threadJoinSeeds(db, {
+      table: sql`${threads}`, accountId: deps.accountId, cursor,
+      seedLimit: THREAD_JOIN_HEAL_MAX_SEEDS, threadLimit: THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP + 1,
+    });
+    const page = seeds === null
+      ? { groups: await deviceThreadGroups(db, deps.accountId, cursor, limit), end: null }
+      : decodeThreadSeeds(seeds);
+    const groups = seeds === null ? page.groups : page.groups.slice(0, maxGroups - result.groupsScanned);
 
     for (const group of groups) {
       if (outOfTime()) break walk;
@@ -547,7 +518,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
 
       if (result.groupsScanned >= maxGroups) break;
     }
-    if (d.name === "pg") {
+    if (seeds !== null) {
       if (page.end !== null && result.groupsScanned < maxGroups) {
         result.cursor = page.end;
         result.capped = true;

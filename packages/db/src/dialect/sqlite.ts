@@ -660,6 +660,9 @@ export function sqliteDialect(): Dialect {
     // The instant is milliseconds here.
     monthBucket: (instant: SQL): SQL => sql`strftime('%Y-%m', ${instant} / 1000, 'unixepoch')`,
 
+    disableLocalJit: async () => {},
+    threadJoinSeeds: async () => null,
+
     lockedMonths: async () => null,
 
     // Epoch milliseconds here, so the tolerance is 48 h in ms and the undated floor is 0.
