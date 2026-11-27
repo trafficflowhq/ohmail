@@ -231,6 +231,22 @@ function holdsMessage(unit: readonly (string | null)[]): boolean {
   return unit[1] !== null || unit[2] !== null;
 }
 
+/** Recipients, subject or body make a compose worth keeping. */
+export function worthSaving(f: ComposeFields): boolean {
+  return (
+    f.to.trim() !== "" ||
+    (f.cc ?? "").trim() !== "" ||
+    (f.bcc ?? "").trim() !== "" ||
+    f.subject.trim() !== "" ||
+    f.body.trim() !== ""
+  );
+}
+
+function hasRecoveryContent(raw: string | null | undefined): boolean {
+  try { return worthSaving(decodeComposeDraft(raw)); }
+  catch { return false; }
+}
+
 function decodeUnit(raw: string | null): (string | null)[] | null {
   if (raw === null) return null;
   try {
@@ -331,16 +347,20 @@ function adoptClosedComposer(
     if (source !== composerId() && live?.has(composerLockName(source))) continue;
     const raw = window.localStorage.getItem(key);
     const unit = decodeUnit(raw);
-    if (unit === null || !holdsMessage(unit)) continue;
+    if (unit === null) continue;
+    if (!hasRecoveryContent(unit[2])) {
+      if (handoffs.get(key) === raw) handoffs.remove(key);
+      continue;
+    }
     if (offer && source !== composerId()) {
       offer(() => {
         const current = handoffs.get(key);
         const left = decodeUnit(current);
-        if (holdsMessage(readUnit(own)) || left === null || left[0] !== unit[0] || !holdsMessage(left)) return false;
+        if (holdsMessage(readUnit(own)) || left === null || left[0] !== unit[0] || !hasRecoveryContent(left[2])) return false;
         return acceptUnit(own, left, () => handoffs.get(key) === current && handoffs.remove(key) === "stored");
       }, () => {
         const left = decodeUnit(handoffs.get(key));
-        return left !== null && left[0] === unit[0] && holdsMessage(left);
+        return left !== null && left[0] === unit[0] && hasRecoveryContent(left[2]);
       });
       return true;
     }
@@ -350,7 +370,9 @@ function adoptClosedComposer(
   }
   const legacy = unitKeys(owner);
   const unit = readUnit(legacy);
-  return holdsMessage(unit) && moveUnit(legacy, own, unit);
+  if (hasRecoveryContent(unit[2])) return moveUnit(legacy, own, unit);
+  if (holdsMessage(unit)) removeUnit(legacy, unit);
+  return false;
 }
 
 function adoptHandoff(owner: StorageScope): void {
@@ -542,18 +564,23 @@ function recoverOrphan(locks: ComposerLocks, owner: string, offer?: OfferCompose
         if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || id === mine || live.has(composerLockName(id))) continue;
         if (!writtenUnderLock(window.localStorage.getItem(k))) continue;
         const from = unitKeys(`${owner}.${id}`);
+        const unit = readUnit(from);
+        if (!hasRecoveryContent(unit[2])) {
+          removeUnit(from, unit);
+          continue;
+        }
         if (offer) {
-          const [session] = readUnit(from);
+          const [session] = unit;
           offer(() => {
             const left = readUnit(from);
-            return !holdsMessage(readUnit(own)) && left[0] === session && holdsMessage(left) && moveUnit(from, own, left);
+            return !holdsMessage(readUnit(own)) && left[0] === session && hasRecoveryContent(left[2]) && moveUnit(from, own, left);
           }, () => {
             const left = readUnit(from);
-            return left[0] === session && holdsMessage(left);
+            return left[0] === session && hasRecoveryContent(left[2]);
           });
           return false;
         }
-        return moveUnit(from, own);
+        return moveUnit(from, own, unit);
       }
     } catch { /* a refused jar or manager: nothing is recovered */ }
     return false;
@@ -1123,11 +1150,13 @@ function reconcileComposeCopies(owner: StorageScope, ended: (held: ComposeHeld) 
     const ending = ended({ session: session ?? null, draftId: draftId ?? null });
     if (ending === undefined) return false;
     if (ending.session && session === ending.session) return true;
-    if (!draftId || !raw || (ending.observed === undefined && ending.saved?.id !== draftId)) return false;
+    if (!draftId || (ending.observed === undefined && ending.saved?.id !== draftId)) return false;
+    if (!raw) return ending.observed !== undefined;
     try {
       const marker = (JSON.parse(raw) as { holds?: Partial<ComposeRowHolds> }).holds;
       const fields = decodeComposeDraft(raw);
       const observed = ending.observed;
+      if (observed !== undefined && !worthSaving(fields)) return true;
       if (observed?.fingerprint !== undefined && observed.fingerprint === composeWordsFingerprint(fields)) return true;
       const saved = ending.saved;
       if (saved && "body" in saved) return composeBufferMatchesRevision(fields, marker, saved);
@@ -1141,6 +1170,7 @@ function clearComposeCopies(owner: StorageScope, matches: (unit: readonly (strin
   const prefix = handoffPrefix(scope);
   const own = composerId();
   const scratch = `${COMPOSE_DRAFT_PREFIX}${scope}.`;
+  const rows = `${COMPOSE_ROW_PREFIX}${scope}.`;
   try {
     const sweep = (keys: readonly string[]): void => {
       const unit = readUnit(keys);
@@ -1151,8 +1181,10 @@ function clearComposeCopies(owner: StorageScope, matches: (unit: readonly (strin
         const raw = handoffs.get(key);
         const unit = decodeUnit(raw);
         if (unit !== null && matches(unit) && handoffs.get(key) === raw) handoffs.remove(key);
-      } else if (key.startsWith(scratch)) {
-        const id = key.slice(scratch.length);
+      } else {
+        const unitPrefix = key.startsWith(scratch) ? scratch : key.startsWith(rows) ? rows : undefined;
+        if (unitPrefix === undefined) continue;
+        const id = key.slice(unitPrefix.length);
         if ((id !== own || includeCurrent) && /^[A-Za-z0-9_-]{1,64}$/.test(id)) sweep(unitKeys(`${scope}.${id}`));
       }
     }

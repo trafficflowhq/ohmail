@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { fireEvent, screen, within } from "@testing-library/react";
 import type { Editor } from "@tiptap/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -351,4 +351,45 @@ describe("recovering and ending a draft", () => {
       expect(server.rows.has(earlier.id)).toBe(true);
     }
   }, 30_000);
+
+  it.each([
+    { name: "an empty handoff", body: "", offered: false },
+    { name: "a handoff holding only whitespace", body: "  ", offered: false },
+    { name: "a handoff with words", body: words, offered: true },
+  ])("updates the open composer when sync deletes the draft behind $name", async ({ body, offered }) => {
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: async (_name: string, _options: unknown, run: (lock: object) => unknown) => run({}),
+        query: async () => ({ held: [], pending: [] }),
+      },
+    });
+    onTestFinished(() => { Reflect.deleteProperty(navigator, "locks"); });
+    const draftId = "saved-draft";
+    const offer = () => screen.queryByRole("button", { name: "Restore draft" });
+    const hasRecovery = () => Object.values(window.localStorage).some((value) => value.includes(draftId));
+    const server = new DraftServer([{ ...letter(draftId, "", body), to: [], html: null }]);
+    const fields = { ...EMPTY_COMPOSE, body };
+    window.sessionStorage.setItem(COMPOSER_KEY, "leaving-tab");
+    composeSessionId(owner);
+    writeComposeDraft(fields, owner);
+    writeComposeRow(draftId, owner);
+    markComposeRowHolds({ row: draftId, sig: holdsSig(fields), rev: server.rows.get(draftId)!.contentRevision }, owner);
+    handOffComposer();
+    expect(hasRecovery()).toBe(true);
+
+    resetComposerForTest();
+    window.sessionStorage.setItem(COMPOSER_KEY, "next-tab");
+    const { engine } = await mountWithDraftServer("#/compose", [], [], { server });
+    expect.soft(offer() !== null, "Restore before sync").toBe(offered);
+    expect.soft(hasRecovery(), "recovery storage before sync").toBe(offered);
+    expect(engine.confirmedDraft(draftId)?.status).toBe("draft");
+
+    server.answer({ kind: "draft_discard", draftId });
+    await act(async () => { await engine.syncOnce(); });
+
+    expect(engine.confirmedDraft(draftId)).toBeUndefined();
+    expect.soft(offer()).toBeNull();
+    expect(hasRecovery()).toBe(false);
+  });
 });
