@@ -18,6 +18,7 @@ export const APPEARANCE_KEY = "ohmail.appearance";
 export interface StoredAppearance {
   themePref: ThemePref;
   facePin: FaceName | null;
+  faceOnlyHere?: true;
 }
 
 export const DEFAULT_APPEARANCE: StoredAppearance = { themePref: "system", facePin: null };
@@ -43,6 +44,7 @@ export function decodeAppearance(raw: string | null): StoredAppearance | null {
   return {
     themePref: isPref(row.themePref) ? row.themePref : "system",
     facePin: isFace(row.facePin) ? row.facePin : null,
+    ...(isFace(row.facePin) && row.faceOnlyHere === true ? { faceOnlyHere: true as const } : {}),
   };
 }
 
@@ -52,7 +54,7 @@ export interface AppearanceStore {
   /** Read the stored row and publish it — unless a press got there first. */
   boot: () => Promise<void>;
   setTheme: (pref: ThemePref) => void;
-  setFacePin: (face: FaceName | null) => void;
+  setFacePin: (face: FaceName | null, onlyHere?: boolean) => void;
   /** Stop publishing: a boot read still in flight finishes its keystore work and says nothing. */
   dispose: () => void;
 }
@@ -99,9 +101,9 @@ export function appearanceStore(
       publish({ ...live, themePref: pref });
       persist();
     },
-    setFacePin: (face) => {
+    setFacePin: (face, onlyHere) => {
       chosen = true;
-      publish({ ...live, facePin: face });
+      publish({ themePref: live.themePref, facePin: face, ...(face !== null && onlyHere ? { faceOnlyHere: true } : {}) });
       persist();
     },
     dispose: () => {

@@ -81,6 +81,7 @@ const focus = vi.hoisted(() => ({ cb: null as null | (() => (() => void) | void)
 vi.mock("expo-router", async () => {
   const React = await import("react");
   return {
+    useIsFocused: () => true,
     useFocusEffect: (cb: () => (() => void) | void) => {
       focus.cb = cb;
       React.useEffect(() => {
@@ -138,6 +139,7 @@ vi.mock("../src/state/world", () => ({
     actions: st.actions,
     worldKey: "w", mailboxes: { rows: [] }, eventsOf: () => [], filesOf: () => [],
   }),
+  useLiveSession: () => null,
   useMessageBody: () => null,
   useFilesStamp: () => undefined,
 }));
@@ -151,6 +153,8 @@ vi.mock("../src/ui/list-detail", () => ({
 }));
 vi.mock("../src/ui/MailRow", () => ({ MailRow: () => null }));
 vi.mock("../src/ui/MessageReader", () => ({ MessageReader: () => null, AttachmentTiles: () => null }));
+vi.mock("react-native-webview", () => ({ WebView: () => null }));
+vi.mock("../src/mail/frame-ceiling-native", () => ({ phoneFrameCeiling: () => 2_000_000 }));
 vi.mock("../src/ui/EventCard", () => ({ EventCards: () => null }));
 vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));
 vi.mock("../src/ui/MarkAllRead", () => ({ MarkAllRead: (p: any) => { st.markAll = p; return null; }, VIEW_HEAD_ROW: {} }));

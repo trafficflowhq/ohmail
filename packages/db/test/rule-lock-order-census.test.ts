@@ -701,9 +701,9 @@ const KNOWN_READINGS: ReadonlySet<string> = new Set<string>([
   // A one-time repair of an inferred press's provenance, no rule-key lock (BACKLOG-WALKS-SKIP-THE-RULE-KEY-LOCK).
   "packages/db/src/inferred-press-repair.ts#applyInferredPressRepair: a rules write (.update(rules)) before the rule-key lock",
   // Account erasure: it holds the account row first and empties every table in its own order.
-  "packages/services/src/account-deletion-service.ts#deleteAccount: a rules write (.delete(rules)) before the rule-key lock",
-  "packages/services/src/account-deletion-service.ts#deleteAccount: contacts (.delete(contacts)) taken after held folder_state rows",
-  "packages/services/src/account-deletion-service.ts#deleteAccount: the change-log counter (.delete(accountSyncState)) taken after the graduation row",
+  "packages/db/src/account-deletion-service.ts#deleteAccount: a rules write (.delete(rules)) before the rule-key lock",
+  "packages/db/src/account-deletion-service.ts#deleteAccount: contacts (.delete(contacts)) taken after held folder_state rows",
+  "packages/db/src/account-deletion-service.ts#deleteAccount: the change-log counter (.delete(accountSyncState)) taken after the graduation row",
   // Mailbox erasure: the same, for one mailbox.
   "packages/db/src/mailbox-erasure.ts#eraseOwedMailbox: held folder_state rows (.delete(folderState)) taken after the change-log counter",
   // The sent letter's doorbell takes its mailbox row SKIP LOCKED after contacts: it never waits.
@@ -951,7 +951,7 @@ const RULES_WRITES_OUTSIDE: Readonly<Record<string, string>> = {
   "packages/services/src/rules-service.ts#remove": "the person's removal of every row under the key",
   "packages/services/src/consent-seed.ts#confirmSeed": "People you write to, inserted after the key check under the lock",
   "packages/services/src/held-release-service.ts#releaseHeld": "the held-release stamp on the pressed rule",
-  "packages/services/src/account-deletion-service.ts#deleteAccount": "account erasure",
+  "packages/db/src/account-deletion-service.ts#deleteAccount": "account erasure",
   "packages/services/src/consent-reset.ts#resetScreeningState": "resetting screening removes the account's rules",
   "packages/services/src/hey-migration.ts#undoMigration": "the import's undo of the rows it still owns",
   "packages/api/src/junk-window.ts#allowSender": "the spam rules a Not junk press switches off",
@@ -966,7 +966,7 @@ const RULES_WRITES_OUTSIDE: Readonly<Record<string, string>> = {
 };
 /** Graduation statements outside `learning-signal.ts`: erasure's delete, and no read at all. */
 const GRADUATIONS_OUTSIDE: Readonly<Record<string, string>> = {
-  "packages/services/src/account-deletion-service.ts#deleteAccount": "account erasure deletes the account's counters",
+  "packages/db/src/account-deletion-service.ts#deleteAccount": "account erasure deletes the account's counters",
 };
 
 /** Every `rules`/`graduations` statement outside the door files, as `file#fn` with its verb. */

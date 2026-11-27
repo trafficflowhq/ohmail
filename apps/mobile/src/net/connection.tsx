@@ -196,11 +196,9 @@ export interface Connection {
   disconnect(): Promise<void>;
   /**
    * The sync doorbell — the wake channel, the Servers screen and pull-to-refresh all ring
-   * this one. Resolves when the sync round actually settles (a round already in flight is
-   * JOINED, not doubled — the engine's own poll/wake doctrine), which is what lets a pull
-   * spinner end honestly; a failure resolves too, with the sentence in `syncError`. `heard` is
-   * handed the ring's own answer the moment it lands, ahead of the round: a pull says at once when
-   * the server answers that it is not fetching new mail.
+   * this one. The round settles quietly, with a failure's sentence in `syncError`.
+   * A caller with a listener hears the server's answer as soon as it arrives and waits for
+   * both the answer and the drain. Concurrent calls on one session share the same request.
    */
   syncNow(heard?: RingHeard): Promise<void>;
 }
@@ -410,6 +408,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       engineLogSink()(drainLine(outcome, door, classifyWindowSyncFailure));
     },
   }));
+  const pullFlights = useRef(new WeakMap<ConnectedSession, {
+    rang: Promise<PullRing | null>;
+    round: Promise<void>;
+    complete: Promise<void>;
+  }>());
   /** The live session's drain cadence and whose it is — stopped by that session's teardown. */
   const cadence = useRef<{ session: ConnectedSession; stop: () => void } | null>(null);
   /** Unsubscribe from the current session's dead signal on teardown. */
@@ -1238,12 +1241,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           setSyncError(null);
         }),
       syncNow: (heard) => {
-        // Not live ⇒ nothing to sync, settled already. Live ⇒ behind the session's identity
-        // clearance (see `clearance` — no drain may move the mirror before the verdict), the
-        // runner joins the round in flight or starts one, and the returned promise IS that
-        // round's completion — the honest settle a pull spinner renders on. A pull landing
-        // mid-probe chains on the verdict: the first drain starts the instant it clears (the
-        // adopt continuation registered first, so this one joins that very round).
+        // Pull behind the same identity verdict as the first drain, and join a pull
+        // the drawer, list or wake already asked this session to run.
         noteActivity();
         const atSync = live.now();
         if (atSync.k !== "live") return Promise.resolve();
@@ -1252,31 +1251,35 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         return gate.then((ok) => {
           const atDrain = live.now();
           if (!ok || atDrain.k !== "live" || atDrain.session !== session) return;
-          // Ring the worker's doorbell, then drain. The drain answers "what does the worker
-          // already have"; the person pulling was usually just told "I sent it", which is mail
-          // the worker has not looked at yet. `requestPull` stamps `sync_requested_at` so the
-          // worker scans now (seconds) instead of at its poll rotation's leisure; it never
-          // throws — an absent doorbell degrades to plain pull-to-refresh. The first drain
-          // almost always finishes before the worker's scan commits anything, so two quiet
-          // follow-up rounds (no spinner, coalesced onto anything in flight) pick up what the
-          // scan wrote — bounded at two per gesture, guarded on the session still being live,
-          // so a held-down refresh cannot stack unbounded rounds.
-          const rang = session.engine.requestPull();
-          const round = runner.request(session.engine);
-          // A button hands its press event in this place: only a function is a listener.
-          if (typeof heard === "function") void rang.then(heard, () => undefined);
-          void rang.then((r) => {
-            if (!r || r.requested === 0) return;
-            for (const delayMs of [4_000, 10_000]) {
-              setTimeout(() => {
-                const atRound = live.now();
-                if (atRound.k === "live" && atRound.session === session) {
-                  void runner.request(session.engine);
-                }
-              }, delayMs);
-            }
-          });
-          return round;
+          const existing = pullFlights.current.get(session);
+          let flight = existing;
+          if (flight === undefined) {
+            const rang = session.engine.requestPull();
+            const round = runner.request(session.engine);
+            const complete = Promise.allSettled([rang, round]).then(() => { pullFlights.current.delete(session); });
+            flight = { rang, round, complete };
+            pullFlights.current.set(session, flight);
+            // Two quiet follow-up rounds pick up what the worker's requested scan writes.
+            void rang.then((r) => {
+              if (!r || r.requested === 0) return;
+              for (const delayMs of [4_000, 10_000]) {
+                setTimeout(() => {
+                  const atRound = live.now();
+                  if (atRound.k === "live" && atRound.session === session) {
+                    void runner.request(session.engine);
+                  }
+                }, delayMs);
+              }
+            }, () => undefined);
+          }
+          // A button can hand its press event in this place. For the pull listener, the
+          // waiting mark stands until both the real request and the joined drain settle.
+          if (typeof heard !== "function") return existing ? runner.request(session.engine) : flight.round;
+          const answered = flight.rang.then((answer) => {
+            const atAnswer = live.now();
+            if (atAnswer.k === "live" && atAnswer.session === session) heard(answer);
+          }).catch(() => undefined);
+          return flight.complete.then(() => answered);
         });
       },
     }),

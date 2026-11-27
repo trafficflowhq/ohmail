@@ -29,6 +29,8 @@ export interface Prefs {
   facePin: FaceName | null;
   /** Pin this device's face, or pass `null` to hand it back to the account. Instant, local. */
   setFacePin: (face: FaceName | null) => void;
+  faceOnlyHere?: true;
+  pinLook: (face: FaceName) => void;
   /** The account's look as last adopted here, kept across launches (`face-scope.ts`). */
   faceMirror: FaceMirror | null;
   setFaceMirror: (mirror: FaceMirror | null) => void;
@@ -75,13 +77,15 @@ export function PrefsProvider({ kv, children }: { kv?: SecureKV; children: React
   /* Stable identity: the face scope machine in the world layer closes over this to drop the pin
      after a confirmed account write, and it is rebuilt per SESSION, not per render. */
   const setFacePin = useCallback((face: FaceName | null) => store.setFacePin(face), [store]);
+  const pinLook = useCallback((face: FaceName) => store.setFacePin(face, true), [store]);
 
   const value = useMemo<Prefs>(
     () => ({
-      themePref: state.themePref, setTheme, facePin: state.facePin, setFacePin, faceMirror, setFaceMirror,
+      themePref: state.themePref, setTheme, facePin: state.facePin, setFacePin, faceOnlyHere: state.faceOnlyHere, pinLook,
+      faceMirror, setFaceMirror,
       pictureQuality, setPictureQuality, impersonationSeen, setImpersonationSeen,
     }),
-    [state, setTheme, setFacePin, faceMirror, setFaceMirror, pictureQuality, setPictureQuality, impersonationSeen, setImpersonationSeen],
+    [state, setTheme, setFacePin, pinLook, faceMirror, setFaceMirror, pictureQuality, setPictureQuality, impersonationSeen, setImpersonationSeen],
   );
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
 }

@@ -25,6 +25,8 @@ import type { ScreeningDest } from "../press/sender-screening.js";
 import type { KeyBinding } from "../keys/index.js";
 import type { Translator } from "../text/translator.js";
 import type { ListVisit } from "../reading/list-meeting.js";
+import type { OhboxPerson } from "./people.js";
+export type { OhboxPerson } from "./people.js";
 
 /**
  * What a selection can be asked to do.
@@ -169,12 +171,6 @@ export interface OhboxStep {
 }
 
 /** The locals the list and its reading column draw, under their names of today. */
-/** One person of a row's conversation: the newest letter they wrote, and whether it is the account's own. */
-export interface OhboxPerson {
-  letter: EngineMessage;
-  you: boolean;
-}
-
 export interface OhboxListModel {
   all: EngineMessage[];
   shown: EngineMessage[];

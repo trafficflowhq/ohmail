@@ -35,6 +35,7 @@ vi.mock("expo-router", () => ({
 vi.mock("../src/ui/MailRow", () => ({
   MailRow: (p: { m: { id: string } }) => createElement("div", { "data-row": p.m.id }),
 }));
+vi.mock("../src/ui/MailPlaceDock", () => ({ MailPlaceDock: ({ children }: { children: ReactNode }) => children }));
 vi.mock("../src/ui/MailList", () => ({
   MailList: (p: {
     groups: { rows: WorldTrashRow[] }[]; renderRow: (r: WorldTrashRow) => ReactNode; empty: ReactNode;

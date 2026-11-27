@@ -55,13 +55,16 @@ function ScheduledBody({ inPane }: { inPane: boolean }) {
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
       {inPane ? <PaneTop /> : <DetailBar />}
-      <Scroller bounded refresh={pull}>
-        <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
-          <Txt variant="h1">{Copy.scheduled}</Txt>
-          <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-            {settled ? `${rows.length}` : " "}
-          </Txt>
-        </View>
+      <Scroller bounded refresh={pull} head={
+        <>
+          <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
+            <Txt variant="h1">{Copy.scheduled}</Txt>
+            <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
+              {settled ? `${rows.length}` : " "}
+            </Txt>
+          </View>
+        </>
+      }>
         {/* THIS PHONE MAKES NO APPOINTMENTS, said where a person comes looking for one. Above the
             list rather than at its foot: rows can still be here (a desktop or ohmail Cloud made
             them before this phone took the mailbox over, and cancel still works on them), so the

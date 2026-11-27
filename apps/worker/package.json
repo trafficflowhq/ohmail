@@ -10,10 +10,10 @@
     "@trafficflow/db": "*",
     "@ohmail/cal-core": "*",
     "@ohmail/cal-providers": "*",
-    "@ohmail/organizer": "*",
-    "@trafficflow/services": "*"
+    "@ohmail/organizer": "*"
   },
   "devDependencies": {
-    "@trafficflow/api": "*"
+    "@trafficflow/api": "*",
+    "@trafficflow/services": "*"
   }
 }

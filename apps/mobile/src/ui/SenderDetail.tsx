@@ -13,6 +13,7 @@ import { ScrollView, View, useWindowDimensions, type LayoutChangeEvent } from "r
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
+import { mailSize } from "../theme/mail";
 import { ringOnLift } from "../theme/lift";
 import {
   DESTINATIONS,
@@ -31,9 +32,13 @@ import { Badge, Button, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { BodyPages } from "./BodyPages";
 import { mailboxStatusOf, withheldNote } from "./body-note";
 import { DetailBar, PaneTop } from "./chrome";
-import { Icon } from "./Icon";
+import { Icon, NavigationIcon } from "./Icon";
+import { GlassPill } from "./glass/GlassPill";
+import { Sheet, SheetRow } from "./Sheet";
+import { useSheetAnchor } from "./sheet-anchor";
 import { AttachmentTiles } from "./MessageReader";
 import { MailAvatar } from "./MailAvatar";
+import { MailboxChip } from "./MailboxChip";
 import { EventCards } from "./EventCard";
 import { Segmented } from "./Segmented";
 import { usePosture } from "./posture";
@@ -59,6 +64,9 @@ export function SenderDetail({
   const w = useWorld();
   const bodies = useBodies();
   const [paneWidth, setPaneWidth] = useState<number | null>(null);
+  const placeMenu = useSheetAnchor();
+  const scopeMenu = useSheetAnchor();
+  const [menu, setMenu] = useState<"place" | "scope" | null>(null);
 
   const rows =
     seg === "waiting" ? w.screener.waiting : seg === "screened" ? w.screener.screened : w.screener.spam;
@@ -112,7 +120,14 @@ export function SenderDetail({
   const unsub = claim === "none" || !unsubscribeIds.length ? null : Copy.decideUnsub(claim, target, row.scope === "domain");
   /* What a press writes, said before it; on a list's claims the store says a screen-out files alone
      (mail 0150), what it files, and no rule for Screen out and Spam. */
-  const { ruleLine, listClaim } = decideLinesOf(row, row.scope, target, seg === "waiting");
+  const { ruleLine, listClaim } = decideLinesOf(row, row.scope, target, seg === "waiting", t.mail);
+  const domainOffered = domainScopeOffered(row.address);
+  const chooseInHeading = t.mail && seg === "waiting";
+  const suggested = row.ai?.dest ?? null;
+  const decide = (dest: Destination, read: boolean) => {
+    w.actions.decide(row, dest, read, w.screener.waiting, unsubscribeIds);
+    onClose?.();
+  };
   /* On a mailbox another install organizes: where a decision goes, and what became of it. */
   const organizer = w.mailboxes.organizer;
   const relay = relayMarkFor(row.address, w.screener.relayed, organizer?.name ?? null);
@@ -122,23 +137,56 @@ export function SenderDetail({
   const sheetLine = seg !== "waiting" ? null
     : nobody && relay === null ? Copy.screeningNoteNobody : senderSheetLine(relay, organizer);
 
+  const heading = chooseInHeading ? (
+    <View style={{ paddingHorizontal: 12 }}>
+      <View accessibilityRole="header" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 6 }}>
+        <Txt variant="h2" numberOfLines={SENDER_TITLE_LINES} style={{ flexShrink: 1 }}>{row.name}</Txt>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, maxWidth: "100%" }}>
+          <Txt variant="h2">{Copy.screenerGoesTo}</Txt>
+          <View ref={placeMenu.anchorRef} collapsable={false} style={{ flexShrink: 1 }}>
+            <DecisionTrigger heading label={Copy.screenerDestinationLabel} expanded={menu === "place"}
+              onPress={() => placeMenu.anchorTo(() => setMenu("place"))}>
+              {suggested === null ? Copy.screenerDestinationPrompt : destDone(suggested)}
+            </DecisionTrigger>
+          </View>
+          <View style={{ width: 8, height: 8, borderRadius: t.radius.pill, backgroundColor: t.c.accent }} />
+        </View>
+      </View>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: mailSize.rowInset, marginTop: mailSize.rowInset }}>
+        <Txt variant="button" numberOfLines={1} style={{ flexShrink: 1 }}>{row.address}</Txt>
+        {domainOffered ? (
+          <View ref={scopeMenu.anchorRef} collapsable={false}>
+            <DecisionTrigger label={Copy.screenerScopeLabel} expanded={menu === "scope"}
+              onPress={() => scopeMenu.anchorTo(() => setMenu("scope"))}>
+              {row.scope === "domain" ? Copy.scopeDomain : Copy.scopeSender}
+            </DecisionTrigger>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  ) : null;
+
   return (
     <Screen>
       {inPane ? <PaneTop /> : <DetailBar title={Copy.screener} backCapsule={t.mail} />}
-      <Scroller contentStyle={{ paddingBottom: 40 }}>
+      <Scroller head={heading} contentStyle={{ paddingBottom: 40 }}>
         <View
           style={{ paddingHorizontal: 12, paddingBottom: 14 }}
           onLayout={(e) => setPaneWidth(Math.round(e.nativeEvent.layout.width))}
         >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            {t.mail ? <MailAvatar person={{ name: row.name, address: row.address }} unread={seg === "waiting"} surface={t.c.canvas} /> : null}
-            <View style={{ flex: 1 }}>
-              <Txt variant={senderTitleVariant(paneWidth)} numberOfLines={SENDER_TITLE_LINES}>
-                {row.name}
-              </Txt>
-              <Txt variant="caption" tone="ink3" style={{ marginTop: t.mail ? 0 : 6 }}>{row.address}</Txt>
+          {!chooseInHeading && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+              {t.mail ? <MailAvatar person={{ name: row.name, address: row.address }} unread={seg === "waiting"} surface={t.c.canvas} /> : null}
+              <View style={{ flex: 1 }}>
+                <Txt variant={senderTitleVariant(paneWidth)} numberOfLines={SENDER_TITLE_LINES}>
+                  {row.name}
+                </Txt>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: mailSize.rowInset, marginTop: t.mail ? 0 : 6 }}>
+                  <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ flexShrink: 1 }}>{row.address}</Txt>
+                </View>
+              </View>
             </View>
-          </View>
+          )}
           {/* THE IDENTITY FACT FIRST, its own line and outside the AI advice: ohmail measured it. */}
           {row.checked ? (
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12, alignItems: "flex-start" }}>
@@ -236,6 +284,19 @@ export function SenderDetail({
               </Txt>
             </View>
           ) : null}
+          {t.mail && seg === "waiting" ? (
+            <View style={{ gap: mailSize.rowInset, marginTop: mailSize.inset }}>
+              {!nobody ? <Txt variant="hint" tone="ink3">{ruleLine}</Txt> : null}
+              {also !== null ? <Txt variant="hint" tone="ink2" testID="decide-domain-also">{also}</Txt> : null}
+              {unsub !== null ? <Txt variant="hint" tone="ink2" testID="decide-unsub">{unsub}</Txt> : null}
+              {listClaim !== null ? <Txt variant="hint" tone="ink2" testID="decide-list-claim">{listClaim}</Txt> : null}
+            </View>
+          ) : null}
+          {row.mailboxLabel ? (
+            <View style={{ alignItems: "flex-start", marginTop: mailSize.rowInset }}>
+              <MailboxChip label={row.mailboxLabel} showDelivery />
+            </View>
+          ) : null}
         </View>
 
         <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
@@ -293,21 +354,50 @@ export function SenderDetail({
         })}
       </Scroller>
 
-      {seg === "waiting" ? (
+      {chooseInHeading ? (
+        <>
+          <Sheet open={menu === "place"} onClose={() => setMenu(null)} label={Copy.screenerDestinationLabel}
+            phoneMenu title={row.name} anchor={placeMenu.anchor}>
+            {DESTINATIONS.map((dest) => (
+              <SheetRow key={dest} label={Copy.decideAria(destLabel(dest), suggested === dest)} onPress={() => {
+                setMenu(null);
+                decide(dest, false);
+              }} />
+            ))}
+            {DESTINATIONS.map((dest) => (
+              <SheetRow key={dest} icon="check" label={Copy.decideReadAria(destDone(dest))} onPress={() => {
+                setMenu(null);
+                decide(dest, true);
+              }} />
+            ))}
+          </Sheet>
+          <Sheet open={menu === "scope" && domainOffered} onClose={() => setMenu(null)}
+            label={Copy.screenerScopeLabel} phoneMenu title={Copy.screenerScopeTitle} anchor={scopeMenu.anchor}>
+            {(["sender", "domain"] as const).map((scope) => (
+              <SheetRow key={scope} label={scope === "sender" ? Copy.screenerScopeSender : Copy.screenerScopeDomain}
+                on={row.scope === scope} onPress={() => {
+                  w.actions.setScope(row, scope);
+                  setMenu(null);
+                }} />
+            ))}
+          </Sheet>
+        </>
+      ) : null}
+
+      {chooseInHeading ? <PaperDecisionPill suggested={suggested} onDecide={decide} /> : null}
+
+      {seg === "waiting" && !chooseInHeading ? (
         <DecisionBar
           scope={row.scope}
-          domainOffered={domainScopeOffered(row.address)}
+          domainOffered={domainOffered}
           nobody={nobody}
           also={also}
           unsub={unsub}
           listClaim={listClaim}
           ruleLine={ruleLine}
-          suggested={row.ai?.dest ?? null}
+          suggested={suggested}
           onScope={(scope) => w.actions.setScope(row, scope)}
-          onDecide={(dest, read) => {
-            w.actions.decide(row, dest, read, w.screener.waiting, unsubscribeIds);
-            onClose?.();
-          }}
+          onDecide={decide}
         />
       ) : null}
 
@@ -326,6 +416,97 @@ export function SenderDetail({
 }
 
 /* ---------------------------------------------------------- decision bar */
+
+function DecisionScope({ scope, onScope }: {
+  scope: "sender" | "domain"; onScope: (scope: "sender" | "domain") => void;
+}) {
+  return (
+    <Segmented
+      fill={false}
+      value={scope}
+      onChange={onScope}
+      segments={[
+        { value: "sender", label: Copy.scopeSender },
+        { value: "domain", label: Copy.scopeDomain },
+      ]}
+    />
+  );
+}
+
+function DecisionTrigger({ children, heading = false, label, expanded, onPress }: {
+  children: string;
+  heading?: boolean;
+  label: string;
+  expanded: boolean;
+  onPress: () => void;
+}) {
+  const t = useTheme();
+  return (
+    <Tap accessibilityRole="button" accessibilityLabel={label} accessibilityHint={children}
+      accessibilityState={{ expanded }} onPress={onPress} hitSlop={6}
+      style={({ pressed }) => ({
+        flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: mailSize.rowInset,
+        borderRadius: t.radius.focus, backgroundColor: pressed ? t.c.tint2 : t.c.hairSoft,
+      })}>
+      <Txt variant={heading ? "h2" : "button"} numberOfLines={1} style={{ flexShrink: 1 }}>{children}</Txt>
+      <Icon name="down" size={heading ? 14 : 12} color={t.c.ink2} />
+    </Tap>
+  );
+}
+
+const PRIMARY_DESTINATIONS = ["ohbox", "reads", "receipts"] as const;
+const OVERFLOW_DESTINATIONS = ["screened", "spam"] as const;
+
+function PaperDecisionPill({ suggested, onDecide }: {
+  suggested: Destination | null; onDecide: (dest: Destination, read: boolean) => void;
+}) {
+  const t = useTheme();
+  const insets = useSafeAreaInsets();
+  const [more, setMore] = useState(false);
+  const { anchor, anchorRef, anchorTo } = useSheetAnchor();
+  const file = (dest: Destination, read: boolean) => {
+    setMore(false);
+    onDecide(dest, read);
+  };
+  return (
+    <View style={{ alignItems: "center", paddingHorizontal: mailSize.inset, paddingVertical: mailSize.inset,
+      paddingBottom: mailSize.inset + insets.bottom }}>
+      <GlassPill horizontal level="l3" style={{ maxWidth: "100%" }}>
+        {PRIMARY_DESTINATIONS.map((dest) => {
+          const picked = dest === suggested;
+          return (
+            <Tap key={dest} accessibilityRole="button" accessibilityLabel={Copy.decideAria(destDone(dest), picked)}
+              onPress={() => file(dest, false)}
+              style={({ pressed }) => ({
+                flexDirection: "row", alignItems: "center", justifyContent: "center", flexShrink: 1, minWidth: 0,
+                minHeight: mailSize.menuRowHeight, gap: mailSize.rowInset, paddingHorizontal: mailSize.inset,
+                borderRadius: t.radius.pill, backgroundColor: picked ? t.c.accentSoft : pressed ? t.c.tint : "transparent",
+              })}>
+              <NavigationIcon name={dest} size={18} color={picked ? t.c.accentInk : t.c.ink} />
+              <Txt variant="button" tone={picked ? "accent" : "ink"} numberOfLines={1} style={{ flexShrink: 1 }}>{destLabel(dest)}</Txt>
+            </Tap>
+          );
+        })}
+        <View ref={anchorRef} collapsable={false}>
+          <Tap accessibilityRole="button" accessibilityLabel={Copy.actionMore}
+            accessibilityState={{ expanded: more }} onPress={() => anchorTo(() => setMore(true))}
+            style={{ minWidth: mailSize.menuRowHeight, minHeight: mailSize.menuRowHeight, alignItems: "center", justifyContent: "center" }}>
+            <NavigationIcon name="more" size={18} color={t.c.ink} />
+          </Tap>
+        </View>
+      </GlassPill>
+      <Sheet open={more} onClose={() => setMore(false)} label={Copy.actionMore} phoneMenu
+        anchor={anchor} anchorAlign="end" anchorSide="above">
+        {OVERFLOW_DESTINATIONS.map((dest) => (
+          <SheetRow key={dest} label={Copy.decideAria(destLabel(dest), suggested === dest)} onPress={() => file(dest, false)} />
+        ))}
+        {PRIMARY_DESTINATIONS.map((dest) => (
+          <SheetRow key={dest} icon="check" label={Copy.decideReadAria(destDone(dest))} onPress={() => file(dest, true)} />
+        ))}
+      </Sheet>
+    </View>
+  );
+}
 
 export function DecisionBar({
   scope,
@@ -403,15 +584,7 @@ export function DecisionBar({
       onLayout={(e) => measure("scope", e.nativeEvent.layout.width)}
       style={scopeInRow ? { alignSelf: "center" } : { alignSelf: "flex-start", marginTop: shape.row === "scroll" ? 8 : 12, marginLeft: shape.row === "scroll" ? DECISION_ROW_PAD : 0 }}
     >
-      <Segmented
-        fill={false}
-        value={scope}
-        onChange={onScope}
-        segments={[
-          { value: "sender", label: Copy.scopeSender },
-          { value: "domain", label: Copy.scopeDomain },
-        ]}
-      />
+      <DecisionScope scope={scope} onScope={onScope} />
     </View>
   );
   return (

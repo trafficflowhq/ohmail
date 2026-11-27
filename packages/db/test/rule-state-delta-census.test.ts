@@ -61,7 +61,7 @@ const INVISIBLE_COLUMNS = new Set(["retroCursor", "retroMoved", "updatedAt", "se
  * nothing is a hole that reads as a decision.
  */
 const EXEMPT_WRITE_SITES: Record<string, string> = {
-  "packages/services/src/account-deletion-service.ts#deleteAccount":
+  "packages/db/src/account-deletion-service.ts#deleteAccount":
     "account erasure. The account's whole change_log goes with it, so a delta would name a rule "
     + "for a client that no longer exists.",
   "packages/organizer/src/rule-retro.ts#ruleRetroPass":

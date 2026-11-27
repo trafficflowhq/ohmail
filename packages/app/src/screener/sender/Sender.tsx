@@ -22,17 +22,6 @@ import { Panel } from "./Panel.js";
 import { PlaceMenu } from "./PlaceMenu.js";
 import { DecisionLines, Sentence, whoOf } from "./Sentence.js";
 
-/**
- * Which of the account's addresses this sender wrote to, where it has several: a decision writes a rule over the whole
- * account, and this is the evidence for it. Nothing where there is one mailbox.
- */
-function DeliveredTo({ mailboxId }: { mailboxId: string | undefined }) {
-  const t = useText("screener");
-  const { mailboxWord } = useScreenerBeside();
-  const label = mailboxId ? mailboxWord(mailboxId) : null;
-  return label ? <p className="oh-text">{t("place.deliveredTo", { label })}</p> : null;
-}
-
 export interface SenderWindow {
   key: string;
   from: number;
@@ -131,9 +120,6 @@ export function Sender({
       head={waiting ? <DecisionLines sender={sender} /> : undefined}
       foot={waiting ? <Panel view={view} /> : <KeptPanel view={view} />}
     >
-      <Sheet kind="plain">
-        <DeliveredTo mailboxId={sender.mailboxId} />
-      </Sheet>
       <div className="sc-held-letters" role="feed" aria-label={whoOf(sender)} aria-busy={busy}>
         {shown.map((letter, index) => (
           <HeldLetter

@@ -30,6 +30,7 @@ export function useFocusKeeper(
   afterRefocus: (field: Focusable) => void = () => undefined,
 ): {
   bind(field: RefObject<Focusable | null>): { onFocus(): void; onBlur(): void };
+  capture(): (() => void) | null;
   onShow(): void;
 } {
   const last = useRef<FocusMemory | null>(null);
@@ -39,6 +40,17 @@ export function useFocusKeeper(
       onFocus: () => { last.current = { field, blurredAt: null }; },
       onBlur: () => { if (last.current?.field === field) last.current.blurredAt = now(); },
     }),
+    // A foreground picker may blur this field but still return to the same mounted editor.
+    capture: () => {
+      const memory = last.current;
+      const field = memory?.field.current;
+      if (!memory || !field || memory.blurredAt !== null) return null;
+      return () => {
+        if (memory.field.current !== field) return;
+        field.focus();
+        afterRefocus(field);
+      };
+    },
     onShow: () => {
       shows.current += 1;
       const field = last.current?.field.current ?? null;

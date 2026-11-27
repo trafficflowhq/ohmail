@@ -165,7 +165,7 @@ const lineOf = (src: string, at: number): number => src.slice(0, at).split("\n")
 
 const read = (f: string): string => readAsUnit(path.join(ROOT, f));
 
-const SWEEP = "packages/services/src/account-deletion-service.ts";
+const SWEEP = "packages/db/src/account-deletion-service.ts";
 const DOOR = "packages/services/src/context.ts";
 /** The seam itself — one helper, in the db package, so the worker can reach it too. */
 const SEAM_FILE = "packages/db/src/erasure-fence.ts";

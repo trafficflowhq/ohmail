@@ -11,6 +11,7 @@
  * rather than inventing a state, and the caller draws nothing.
  */
 
+import { aiCreditsOf, type AiCredits } from "@ohmail/app/settings/ai/budget";
 import type { ConnectedSession } from "./pairing.js";
 import { requestBase } from "./request-base";
 import {
@@ -34,6 +35,8 @@ export interface AccountAccess {
   exportPath?: string;
   /** The one-time catch-up after a reopening, keyed by `since` for its dismissal. */
   caughtUp?: { since: string };
+  mailboxLimit?: number;
+  aiCredits?: AiCredits;
   /** Stored letter text against the plan's cap: a metered account with a cap, on a server that says. */
   storage?: StorageFacts;
 }
@@ -210,6 +213,9 @@ export function accessOf(body: unknown): AccountAccess | null {
      older API's count is dropped (mail 0135) — it counted the closure's mail, not the catch-up. */
   const caughtUp = c && typeof c.since === "string" && c.since.length > 0 ? { since: c.since } : undefined;
   const storage = storageOf(raw.storage);
+  const mailboxLimit = typeof raw.mailboxes === "number" && Number.isSafeInteger(raw.mailboxes) && raw.mailboxes >= 0
+    ? raw.mailboxes : undefined;
+  const aiCredits = raw.access === "open" ? aiCreditsOf(raw.aiCredits, raw.lifecycle) : null;
   return {
     metered: true,
     ...(raw.access === "open" || raw.access === "refused" ? { access: raw.access } : {}),
@@ -217,6 +223,8 @@ export function accessOf(body: unknown): AccountAccess | null {
     ...(manageUrl ? { manageUrl } : {}),
     ...(exportPath ? { exportPath } : {}),
     ...(caughtUp ? { caughtUp } : {}),
+    ...(mailboxLimit !== undefined ? { mailboxLimit } : {}),
+    ...(aiCredits ? { aiCredits } : {}),
     ...(storage ? { storage } : {}),
   };
 }

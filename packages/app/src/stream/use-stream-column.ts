@@ -111,7 +111,21 @@ export function useStreamViewport(model: StreamModel) {
       observer.disconnect();
     };
   }, [model.scroller, model.place, armed, onApproach, prefetch, engine, mountedKey]);
-  return { attach, column, width, ids, start, end, padTopPx, padBottomPx, ensure, near, armed, restores };
+  return {
+    attach,
+    root,
+    column,
+    width,
+    ids,
+    start,
+    end,
+    padTopPx,
+    padBottomPx,
+    ensure,
+    near,
+    armed,
+    restores,
+  };
 }
 
 type Viewport = Pick<ReturnType<typeof useStreamViewport>, "ids" | "start" | "end" | "ensure" | "armed">;

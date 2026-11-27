@@ -1,3 +1,4 @@
+import { pullMark, pullMarkStyle } from "../../base/tokens.js";
 import "./pull-mark.css";
 
 export interface PullMarkProps {
@@ -5,12 +6,10 @@ export interface PullMarkProps {
   pulled: number;
   /** Letting go now pulls new mail: the mark is whole. */
   armed: boolean;
+  /** The rendered pull distance at which the mark is whole. */
+  fullAt?: number;
 }
 
-/* The mark is there once the room is a little open, and at its own size once letting go will pull. */
-const SEEN = 20;
-const WHOLE = 64;
-const SMALL = 0.35;
 const round = (n: number) => Math.round(n * 1000) / 1000;
 
 /**
@@ -18,17 +17,19 @@ const round = (n: number) => Math.round(n * 1000) / 1000;
  * middle, a ring until letting go will pull, then whole. For the eye alone: what the pull did is said elsewhere.
  * It stands at the top of the room that holds it, which is as high as `pulled`.
  */
-export function PullMark({ pulled, armed }: PullMarkProps) {
-  const open = Math.max(0, pulled);
-  const grown = Math.min(1, open / WHOLE);
+export function PullMark({ pulled, armed, fullAt }: PullMarkProps) {
+  const { center, opacity, scale } = pullMarkStyle(pulled, fullAt);
   return (
     <i
       className="oh-pullmark"
       aria-hidden="true"
       data-armed={armed ? "" : undefined}
       style={{
-        opacity: round(Math.min(1, open / SEEN)),
-        transform: `translateY(calc(${round(open / 2)}px - 50%)) scale(${round(SMALL + (1 - SMALL) * grown)})`,
+        width: pullMark.dragSize,
+        height: pullMark.dragSize,
+        boxShadow: `inset 0 0 0 ${pullMark.dragStroke}px var(--hot)`,
+        opacity: round(opacity),
+        transform: `translateY(calc(${round(center)}px - 50%)) scale(${round(scale)})`,
       }}
     />
   );

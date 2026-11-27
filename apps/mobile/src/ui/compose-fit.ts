@@ -16,6 +16,12 @@ export function composeBodyMin(laterOpen: boolean, heightClass: SizeClass): numb
   return heightClass === "compact" ? COMPOSE_BODY_MIN_COMPACT : COMPOSE_BODY_MIN;
 }
 
+/** The paper editor starts with room for a line and scrolls after a few lines of text. */
+export function composeBodyHeight(measured: number, laterOpen: boolean, heightClass: SizeClass): number {
+  const max = composeBodyMin(laterOpen, heightClass);
+  return Math.min(max, Math.max(COMPOSE_BODY_MIN_LATER, Math.ceil(measured)));
+}
+
 /** The pinned sentences' bound, dp: a fifth of the window, never more than 96 (about four caption lines). */
 export const PINNED_NOTES_CEILING = 96;
 

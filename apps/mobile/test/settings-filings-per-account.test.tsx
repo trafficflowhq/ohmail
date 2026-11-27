@@ -7,17 +7,24 @@
  * with no Try again and no Leave.
  */
 import { createElement as h, type ReactNode } from "react";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mount } from "./_rendered-dom";
-import { MANAGED_ORIGIN } from "../src/net/pairing";
+import { mount, styleOf } from "./_rendered-dom";
+import { MANAGED_ORIGIN, type ConnectedSession } from "../src/net/pairing";
 import type { PhoneMailbox } from "../src/net/mailboxes";
+import { readAccess, resetAccessFeedForTests } from "../src/net/account";
 
 const scene = vi.hoisted(() => ({
   world: null as unknown,
   session: null as unknown,
   opened: [] as string[],
   settingsPane: null as string | null,
+  mailbox: null as string | null,
+  returnTo: undefined as "settings" | "mailboxes" | undefined,
+  pinnedLook: null as "paper" | "ohmarchy" | null,
+  localeControls: null as import("../src/i18n/LocaleProvider").LocaleControls | null,
+  setTheme: vi.fn(),
+  pinLook: vi.fn(),
 }));
 
 vi.mock("react-native", async () => ({
@@ -25,15 +32,28 @@ vi.mock("react-native", async () => ({
   Linking: { openURL: async (url: string) => { scene.opened.push(url); } },
 }));
 vi.mock("expo-constants", () => ({ default: { expoConfig: {} } }));
-vi.mock("expo-router", () => ({ router: { push: (route: { params?: { pane?: string } }) => {
-  scene.settingsPane = route.params?.pane ?? null;
-} }, useLocalSearchParams: () => ({ pane: scene.settingsPane ?? undefined }) }));
+vi.mock("expo-router", () => ({
+  router: {
+    push: (route: { params?: { pane?: string; mailbox?: string; returnTo?: "settings" | "mailboxes" } }) => {
+      scene.settingsPane = route.params?.pane ?? null;
+      scene.mailbox = route.params?.mailbox ?? null;
+      scene.returnTo = route.params?.returnTo;
+    },
+    replace: () => { scene.settingsPane = null; scene.mailbox = null; },
+    dismissTo: () => { scene.settingsPane = "mailboxes"; scene.mailbox = null; },
+  },
+  useLocalSearchParams: () => ({ pane: scene.settingsPane ?? undefined, mailbox: scene.mailbox ?? undefined, returnTo: scene.returnTo }),
+  useFocusEffect: (effect: () => (() => void) | void) => useEffect(effect, [effect]),
+}));
 vi.mock("../src/theme", async () => {
   const { accountGovernsFace, accountWideOffered } = await import("../src/theme/face");
-  return { accountGovernsFace, accountWideOffered, useTheme: () => ({ mail: true }) };
+  return { accountGovernsFace, accountWideOffered, useTheme: () => ({
+    mail: true, face: "paper", scheme: "light", type: { h1: { fontSize: 30 }, sectionLabel: { fontSize: 18 } },
+    c: { ink: "ink", ink2: "ink2", accent: "accent", tint2: "tint2" }, radius: { pill: 999 },
+  }) };
 });
 vi.mock("../src/state/store", () => ({
-  usePrefs: () => ({ themePref: "system", setTheme: () => undefined, facePin: null, setFacePin: () => undefined,
+  usePrefs: () => ({ themePref: "system", setTheme: scene.setTheme, facePin: scene.pinnedLook, setFacePin: () => undefined, pinLook: scene.pinLook,
     pictureQuality: "medium", setPictureQuality: () => undefined }),
 }));
 vi.mock("../src/state/world", () => ({ useWorld: () => scene.world }));
@@ -45,14 +65,22 @@ vi.mock("../src/ui/base", async () => {
   return {
     Button: (p: { label: string; disabled?: boolean; onPress?: () => void }) =>
       h("button", { "data-button": p.label, disabled: p.disabled, onClick: p.onPress }, p.label),
-    Txt: (p: { children?: ReactNode }) => h("span", null, p.children),
-    Chip: div, Panel: div, Rule: () => null, Screen: div, Scroller: div, Section: div, TapRow: div,
+    Txt: (p: { children?: ReactNode; accessibilityRole?: string; accessibilityLabel?: string }) =>
+      h("span", { "data-role": p.accessibilityRole, "data-label": p.accessibilityLabel }, p.children),
+    ViewHead: (p: { title: string; leading?: ReactNode }) => h("h1", null, p.leading, p.title),
+    Chip: div, Panel: div, Rule: () => null, Screen: div, Scroller: div, Section: div,
+    TapRow: (p: { children?: ReactNode; accessibilityLabel?: string; onPress?: () => void }) =>
+      h("button", { "aria-label": p.accessibilityLabel, onClick: p.onPress }, p.children),
+    Tap: (p: { children?: ReactNode; accessibilityLabel?: string; accessibilityHint?: string; accessibilityState?: { selected?: boolean }; onPress?: () => void }) =>
+      h("button", { "aria-label": p.accessibilityLabel, "data-hint": p.accessibilityHint,
+        "aria-pressed": p.accessibilityState?.selected, onClick: p.onPress }, p.children),
   };
 });
 vi.mock("../src/ui/Sheet", () => ({ Sheet: () => null, SheetRow: () => null }));
 vi.mock("../src/ui/MoreNav", () => ({
   Nav: (p: { label: string; sub?: string; onPress: () => void }) => h("button", { "data-nav": p.label, onClick: p.onPress }, p.label, p.sub),
 }));
+vi.mock("../src/ui/Icon", () => ({ Icon: (p: { name: string }) => h("i", { "data-icon": p.name }) }));
 vi.mock("../src/ui/Field", () => ({ Field: () => null }));
 vi.mock("../src/engine/backup-exclusion", () => ({ backupExclusion: () => null, subscribeBackupExclusion: () => () => undefined }));
 vi.mock("../src/engine/engine-artifact", () => ({ phoneEngineStart: () => () => undefined }));
@@ -61,14 +89,34 @@ vi.mock("../src/ui/NotifyPermission", () => ({ NotifyPermission: () => null }));
 vi.mock("../src/ui/useNotifyPermission", () => ({ useNotifyPermission: () => ({ gate: async () => undefined }) }));
 vi.mock("../src/i18n/LocaleProvider", async () => ({
   useLocale: (await import("../src/i18n/locale")).activeLocale,
-  useLocaleControls: () => null,
+  useLocaleControls: () => scene.localeControls,
 }));
-vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null }));
+vi.mock("../src/ui/chrome", () => ({
+  DetailBar: (p: { backLabel?: string; back?: () => void }) => h("button", { "data-back": p.backLabel, onClick: p.back }),
+  PaneTop: () => null,
+}));
+vi.mock("../src/ui/MailCalendarSwitch", () => ({ MailCalendarSwitch: () => h("button", { "aria-label": "ohcal" }) }));
+vi.mock("../src/ui/MailPlaceDock", () => ({
+  MailPlaceDock: (p: { children: ReactNode }) => h("div", { "data-dock": "" }, p.children),
+}));
+vi.mock("../src/ui/UnsavedChanges", () => ({ UnsavedChanges: () => null }));
+vi.mock("../src/ui/posture", () => ({
+  usePosture: () => ({ sizeClass: "compact", heightClass: "full", panes: 1, split: "full", fold: "none", hinge: null }),
+}));
 vi.mock("../src/ui/Gated", () => ({ Gated: (p: { children?: ReactNode }) => p.children }));
 vi.mock("../src/ui/more-move", () => ({ YieldToMore: (p: { children?: ReactNode }) => p.children }));
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: (p: { children?: ReactNode }) => p.children }));
-vi.mock("../src/ui/Segmented", () => ({ Segmented: () => null }));
+vi.mock("../src/ui/Segmented", () => ({
+  Segmented: (p: { segments: { value: string; label: string; hint?: string }[]; value: string; fill?: boolean;
+    accessibilityLabel?: string; accessibilityHint?: string; onChange(value: string): void }) =>
+    h("div", { "data-segments": "", "data-fill": p.fill, "aria-label": p.accessibilityLabel, "data-hint": p.accessibilityHint },
+      p.segments.map((segment) => h("button", {
+        key: segment.value, "aria-pressed": segment.value === p.value, "data-hint": segment.hint,
+        onClick: () => p.onChange(segment.value),
+      }, segment.label))),
+}));
 vi.mock("../src/ui/AutoActPanel", () => ({ AutoActPanel: () => null, readsOnly: () => false }));
+vi.mock("../src/ui/SettingsLookPreview", () => ({ SettingsLookPreview: (p: { face: string }) => h("div", { "data-face-preview": p.face }) }));
 vi.mock("../src/ui/SignaturesPanel", () => ({ SignaturesPanel: () => null }));
 vi.mock("../src/ui/AutoFiledPanel", () => ({ AutoFiledPanel: () => null }));
 vi.mock("../src/ui/ProfileImportCard", () => ({ SavedSettingsPanel: () => null }));
@@ -82,7 +130,7 @@ vi.mock("../src/engine/diagnostics-native", () => ({ nativePhoneDiagnosticDeps: 
 import SettingsScreen from "../app/settings";
 import { Copy } from "../src/copy";
 import { setActiveLocale } from "../src/i18n/locale";
-import { forgetOrganizerSessionForTests, holdStandaloneDoor } from "../src/engine/organizer-session";
+import { forgetOrganizerSessionForTests, holdStandaloneDoor, sayNotificationsOff, sayNotificationsOn } from "../src/engine/organizer-session";
 import type { StandaloneEngine } from "../src/engine/standalone-door";
 
 /** The phone's own engine, still running after the switch: it serves `own@phone.test`, id `m-own`. */
@@ -105,6 +153,7 @@ function ownEngine(): StandaloneEngine {
 const cloudBox: PhoneMailbox = {
   id: "m-cloud", address: "cloud@example.test", organizerRole: "organizer", organizeConsentedAt: null, organizedBy: null,
   organizedByThisInstall: true, organizerState: null, status: "connected", junkFolder: null, sentFolder: null, smtpMaxSizeBytes: null,
+  lastSyncAt: "2026-10-24T09:00:00.000Z",
   firstSyncStopFolder: null,
   filing: { due: 6, deferred: 6, stuck: 6, stuckSince: "2026-10-24T09:00:00.000Z", stuckRefusalClass: "no_such_folder",
     lastRefusalClass: "no_such_folder", nextAttemptAt: "2026-10-24T15:00:00.000Z", asOf: null },
@@ -112,10 +161,12 @@ const cloudBox: PhoneMailbox = {
 
 function cloudAccount(rows: PhoneMailbox[]) {
   scene.settingsPane = null;
+  scene.mailbox = null;
+  scene.returnTo = undefined;
   const asked: { method: string; url: string; body?: string }[] = [];
   scene.session = {
     standalone: false,
-    profile: { origin: "https://cloud.example", apiBase: null },
+    profile: { id: "fixture-profile", origin: "https://cloud.example", apiBase: null },
     async fetch(url: string, init: RequestInit = {}) {
       asked.push({ method: init.method ?? "GET", url, ...(typeof init.body === "string" ? { body: init.body } : {}) });
       if (url.endsWith("/filings/retry")) return Response.json({ reset: 6 });
@@ -131,11 +182,12 @@ function cloudAccount(rows: PhoneMailbox[]) {
   scene.world = {
     standalone: false,
     account: { name: "Cloud", email: "" },
-    boot: { connection: null, firstSync: null, setAside: null },
+    boot: { settled: false, connection: null, firstSync: null, setAside: null },
     face: { account: null, known: false, pending: false, applyAll: () => undefined },
     folders: { storable: false },
     autoAct: null,
     mailboxes: { known: true, rows },
+    screener: { waiting: [], screened: [], spam: [], waitingPending: true },
   };
   return asked;
 }
@@ -143,17 +195,212 @@ function cloudAccount(rows: PhoneMailbox[]) {
 const settle = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
 
 function openSection(view: ReturnType<typeof mount>, title: string) {
-  const entry = Array.from(view.el.querySelectorAll("button")).find((button) => button.textContent === title);
+  const entry = menuEntry(view.el, title);
   expect(entry, title).toBeDefined();
   act(() => entry!.click());
   view.render(h(SettingsScreen));
 }
 
+function menuEntry(root: ParentNode, title: string) {
+  return Array.from(root.querySelectorAll("button")).find((button) =>
+    (button.getAttribute("aria-label") ?? button.getAttribute("data-nav") ?? button.textContent) === title,
+  );
+}
+
 afterEach(() => {
   forgetOrganizerSessionForTests();
+  resetAccessFeedForTests();
   document.body.innerHTML = "";
   scene.opened.length = 0;
   scene.settingsPane = null;
+  scene.mailbox = null;
+  scene.returnTo = undefined;
+  scene.pinnedLook = null;
+  scene.localeControls = null;
+  scene.setTheme.mockClear();
+  scene.pinLook.mockReset();
+});
+
+it.each([
+  { locale: "en", themes: ["Light", "Auto", "Dark"], messages: "Messages" },
+  { locale: "de", themes: ["Hell", "Automatisch", "Dunkel"], messages: "Nachrichten" },
+] as const)("opens compact General controls and writes the picked theme and language in $locale", async ({ locale, themes, messages }) => {
+  cloudAccount([]);
+  const setLocale = vi.fn(async () => undefined);
+  scene.localeControls = { locale, locales: ["en", "de"], chosen: null, setLocale, busy: false };
+  setActiveLocale(locale);
+  const view = mount(h(SettingsScreen));
+  try {
+    openSection(view, Copy.settingsGeneral);
+    expect(view.el.querySelector("[data-back]")?.getAttribute("data-back")).toBe(Copy.settings);
+    expect(view.el.textContent).not.toContain(Copy.languageNote);
+    const [language, theme] = view.el.querySelectorAll("[data-segments]");
+    expect(language?.getAttribute("data-fill")).toBe("false");
+    expect([...language!.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["English", "Deutsch"]);
+    expect(language?.querySelector('[aria-pressed="true"]')?.textContent).toBe(locale === "en" ? "English" : "Deutsch");
+    expect([...theme!.querySelectorAll("button")].map((button) => button.textContent)).toEqual(themes);
+    expect(view.el.textContent).toContain(messages);
+    expect(view.el.textContent).toContain(Copy.pictureQuality);
+    await act(async () => { (language!.querySelector('[aria-pressed="false"]') as HTMLElement).click(); });
+    expect(setLocale).toHaveBeenCalledWith(locale === "en" ? "de" : "en");
+    act(() => theme!.querySelectorAll("button")[2]!.click());
+    expect(scene.setTheme).toHaveBeenCalledWith("dark");
+  } finally {
+    view.unmount();
+    setActiveLocale("en");
+  }
+});
+
+it("chooses the local look or sends it to the account from the General scope control", async () => {
+  cloudAccount([]);
+  const applyAll = vi.fn(async () => true);
+  Object.assign(scene.world as object, { face: { account: "paper", known: true, pending: false, applyAll } });
+  const view = mount(h(SettingsScreen));
+  try {
+    openSection(view, Copy.settingsGeneral);
+    const local = [...view.el.querySelectorAll("button")].find((button) => button.textContent === "This device");
+    const all = [...view.el.querySelectorAll("button")].find((button) => button.textContent === "All devices");
+    expect(local).toBeDefined();
+    expect(all?.getAttribute("aria-pressed")).toBe("true");
+    expect([...view.el.querySelectorAll("[data-face-preview]")].map((tile) => tile.getAttribute("data-face-preview")))
+      .toEqual(["paper", "ohmarchy"]);
+    await act(async () => { menuEntry(view.el, Copy.faceOhmarchy)!.click(); });
+    expect(applyAll).toHaveBeenCalledWith("ohmarchy");
+    scene.pinLook.mockImplementation((face: "paper" | "ohmarchy") => { scene.pinnedLook = face; });
+    const selects = (label: string) => [...view.el.querySelectorAll("button")].find((button) => button.textContent === label);
+    act(() => local!.click());
+    expect(scene.pinLook).toHaveBeenCalledWith("paper");
+    view.render(h(SettingsScreen));
+    act(() => menuEntry(view.el, Copy.faceOhmarchy)!.click());
+    expect(scene.pinLook).toHaveBeenLastCalledWith("ohmarchy");
+    expect(applyAll).toHaveBeenCalledTimes(1);
+    view.render(h(SettingsScreen));
+    await act(async () => { selects("All devices")!.click(); });
+    expect(applyAll).toHaveBeenCalledTimes(2);
+    expect(applyAll).toHaveBeenLastCalledWith("ohmarchy");
+  } finally {
+    view.unmount();
+  }
+});
+
+it("ignores a second Look press while an account selection is still saving", async () => {
+  cloudAccount([]);
+  let finish!: (confirmed: boolean) => void;
+  const write = new Promise<boolean>((resolve) => { finish = resolve; });
+  const applyAll = vi.fn(() => write);
+  Object.assign(scene.world as object, { face: { account: "paper", known: true, pending: false, applyAll } });
+  const view = mount(h(SettingsScreen));
+  try {
+    openSection(view, Copy.settingsGeneral);
+    const tile = menuEntry(view.el, Copy.faceOhmarchy)!;
+    act(() => { tile.click(); tile.click(); });
+    expect(applyAll).toHaveBeenCalledTimes(1);
+    await act(async () => { finish(true); });
+    expect(view.el.textContent).not.toContain(Copy.faceFailed);
+  } finally {
+    view.unmount();
+  }
+});
+
+it("opens just the pressed mailbox from the paired roster and gives back a stale detail on account switch", () => {
+  const other = { ...cloudBox, id: "m-another", address: "other@example.test" };
+  cloudAccount([{ ...cloudBox, filing: undefined }, other]);
+  const view = mount(h(SettingsScreen));
+  try {
+    openSection(view, Copy.settingsMailboxes);
+    const first = menuEntry(view.el, cloudBox.address);
+    expect(first).toBeDefined();
+    expect(menuEntry(view.el, "other@example.test")).toBeDefined();
+    act(() => first!.click());
+    view.render(h(SettingsScreen));
+    expect(view.el.querySelector("[data-back]")?.getAttribute("data-back")).toBe(Copy.settingsMailboxes);
+    expect(view.el.textContent).toContain(Copy.phoneThisPhone);
+    expect(view.el.textContent).toContain(cloudBox.address);
+    expect(view.el.textContent).not.toContain("other@example.test");
+    const selected = scene.mailbox;
+    cloudAccount([other]);
+    scene.mailbox = selected;
+    view.render(h(SettingsScreen));
+    expect(view.el.textContent).not.toContain(cloudBox.address);
+    expect(menuEntry(view.el, "other@example.test")).toBeDefined();
+    const back = view.el.querySelector<HTMLButtonElement>(`[data-back="${Copy.settings}"]`);
+    expect(back).not.toBeNull();
+    act(() => back!.click());
+    view.render(h(SettingsScreen));
+    expect(menuEntry(view.el, Copy.settingsGeneral)).toBeDefined();
+  } finally {
+    view.unmount();
+  }
+});
+
+it("returns the user to the roster when the opened mailbox was removed", () => {
+  const other = { ...cloudBox, id: "m-another", address: "other@example.test", filing: undefined };
+  cloudAccount([{ ...cloudBox, filing: undefined }, other]);
+  const view = mount(h(SettingsScreen));
+  try {
+    openSection(view, Copy.settingsMailboxes);
+    act(() => menuEntry(view.el, cloudBox.address)!.click());
+    view.render(h(SettingsScreen));
+    (scene.world as { mailboxes: { rows: PhoneMailbox[] } }).mailboxes.rows = [other];
+    view.render(h(SettingsScreen));
+    expect(view.el.textContent).not.toContain(cloudBox.address);
+    expect(menuEntry(view.el, "other@example.test")).toBeDefined();
+    expect(view.el.querySelector(`[data-back="${Copy.settings}"]`)).not.toBeNull();
+  } finally {
+    view.unmount();
+  }
+});
+
+it("does not reopen a replacement account's mailbox from the previous detail even if the id matches", () => {
+  cloudAccount([{ ...cloudBox, filing: undefined }]);
+  const view = mount(h(SettingsScreen));
+  try {
+    openSection(view, Copy.settingsMailboxes);
+    act(() => menuEntry(view.el, cloudBox.address)!.click());
+    view.render(h(SettingsScreen));
+    cloudAccount([{ ...cloudBox, address: "replacement@example.test", filing: undefined }]);
+    scene.mailbox = cloudBox.id;
+    view.render(h(SettingsScreen));
+    expect(menuEntry(view.el, "replacement@example.test")).toBeDefined();
+    expect(view.el.textContent).not.toContain(Copy.phoneThisPhone);
+  } finally {
+    view.unmount();
+  }
+});
+
+it("does not show the old account's loaded filing actions when the next roster reuses an id", async () => {
+  cloudAccount([cloudBox]);
+  Object.assign(scene.world as object, { worldKey: "first" });
+  const view = mount(h(SettingsScreen));
+  try {
+    openSection(view, Copy.settingsMailboxes);
+    await settle();
+    expect(view.el.querySelector('[data-button="Try again now"]')).not.toBeNull();
+    cloudAccount([{ ...cloudBox, address: "next@example.test" }]);
+    Object.assign(scene.world as object, { worldKey: "next" });
+    (scene.session as { fetch: () => Promise<Response> }).fetch = () => new Promise<Response>(() => {});
+    scene.settingsPane = "mailboxes";
+    view.render(h(SettingsScreen));
+    expect(menuEntry(view.el, "next@example.test")).toBeDefined();
+    expect(view.el.querySelector('[data-button="Try again now"]')).toBeNull();
+  } finally {
+    view.unmount();
+  }
+});
+
+it("opens the Settings menu from a pane linked directly", () => {
+  cloudAccount([cloudBox]);
+  scene.settingsPane = "mailboxes";
+  const view = mount(h(SettingsScreen));
+  try {
+    const back = view.el.querySelector<HTMLButtonElement>(`[data-back="${Copy.settings}"]`);
+    expect(back).not.toBeNull();
+    act(() => back!.click());
+    view.render(h(SettingsScreen));
+    expect(menuEntry(view.el, Copy.settingsGeneral)).toBeDefined();
+  } finally {
+    view.unmount();
+  }
 });
 
 it.each([
@@ -166,13 +413,119 @@ it.each([
   try {
     const groups = [...view.el.querySelectorAll('[data-testid="settings-group"]')];
     expect(groups.map((group) => group.getAttribute('data-label'))).toEqual([mail, account, about]);
-    expect(groups[1]?.querySelector('button')?.textContent).toBe(devices);
+    const heading = groups[0]?.querySelector('[data-role="header"]');
+    expect(heading?.getAttribute("data-label")).toBe(mail);
+    expect(heading?.textContent?.replace(/\u2060/g, "")).toBe(mail);
+    expect(styleOf(heading?.querySelector("[data-ax-hidden]") ?? null).backgroundColor).toBe("ink");
+    expect(menuEntry(groups[1]!, devices)).toBe(groups[1]?.querySelector('button'));
     openSection(view, devices);
     expect(view.el.querySelector(`[data-nav="${servers}"]`)).not.toBeNull();
     expect(view.el.querySelector('[data-testid="settings-group"]')).toBeNull();
   } finally {
     view.unmount();
     setActiveLocale("en");
+  }
+});
+
+it("marks the mail heading when notification permission is refused and clears it when permission returns", () => {
+  cloudAccount([]);
+  const view = mount(h(SettingsScreen));
+  try {
+    const color = () => styleOf(view.el.querySelector('[data-role="header"][data-label="Mail"] [data-ax-hidden]')).backgroundColor;
+    expect(color()).toBe("ink");
+    act(() => sayNotificationsOff());
+    expect(color()).toBe("accent");
+    act(() => sayNotificationsOn());
+    expect(color()).toBe("ink");
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each([
+  { locale: "en", general: "oh · AutoEnglish", notifications: "Off", mailbox: "Connected", waiting: "2 waiting", screened: "1 screened out · 3 in Spam" },
+  { locale: "de", general: "oh · AutomatischDeutsch", notifications: "Aus", mailbox: "Verbunden", waiting: "2 warten", screened: "1 aussortiert · 3 im Spam" },
+] as const)("shows the settled mail facts on the Settings menu in $locale", (words) => {
+  cloudAccount([{ ...cloudBox, displayName: "Fixture mailbox" }]);
+  const world = scene.world as { boot: { settled: boolean }; screener: unknown };
+  world.boot.settled = true;
+  world.screener = { waiting: [{}, {}], screened: [{}], spam: [{}, {}, {}], waitingPending: false };
+  setActiveLocale(words.locale);
+  const view = mount(h(SettingsScreen));
+  try {
+    const group = view.el.querySelector('[data-testid="settings-group"]')!;
+    expect(Array.from(group.querySelectorAll("button")).map((button) => button.getAttribute("aria-label") ?? button.getAttribute("data-nav"))).toEqual([
+      Copy.settingsGeneral, Copy.settingsNotifications, Copy.settingsMailboxes, Copy.screener, Copy.awayRow, Copy.settingsSignatures,
+    ]);
+    expect(menuEntry(group, Copy.settingsGeneral)?.textContent).toContain(words.general);
+    expect(menuEntry(group, Copy.settingsNotifications)?.textContent).toContain(words.notifications);
+    const mailbox = menuEntry(group, Copy.settingsMailboxes);
+    expect(mailbox?.textContent).toContain(words.mailbox);
+    expect(mailbox?.textContent).toContain("Fixture mailbox");
+    const screener = menuEntry(group, Copy.screener);
+    expect(screener?.textContent).toContain(words.waiting);
+    expect(screener?.textContent).toContain(words.screened);
+    const sign = screener?.querySelector('[data-icon="screener"]');
+    expect(sign).not.toBeNull();
+    expect(styleOf(sign?.parentElement ?? null)).toMatchObject({ width: 36, height: 36, borderRadius: 999 });
+  } finally {
+    view.unmount();
+    setActiveLocale("en");
+  }
+});
+
+it("keeps the Screener entry quiet while the first read is incomplete", () => {
+  cloudAccount([]);
+  const view = mount(h(SettingsScreen));
+  try {
+    expect(menuEntry(view.el, Copy.screener)?.textContent).toBe(Copy.screener);
+  } finally {
+    view.unmount();
+  }
+});
+
+it("keeps the calendar switch and dock at the menu and gives the selected pane its page", () => {
+  cloudAccount([cloudBox]);
+  const view = mount(h(SettingsScreen));
+  try {
+    expect(view.el.querySelector('[data-dock] [aria-label="ohcal"]')).not.toBeNull();
+    openSection(view, Copy.settingsGeneral);
+    expect(view.el.querySelector('[data-dock]')).toBeNull();
+    expect(view.el.textContent).toContain(Copy.settingsAppearance);
+  } finally {
+    view.unmount();
+  }
+});
+
+it("uses the current account's confirmed mailbox allowance, AI balance and responder settings", async () => {
+  cloudAccount([cloudBox]);
+  Object.assign(scene.world as object, { autoAct: { on: true } });
+  const session = scene.session as ConnectedSession;
+  const fetch = session.fetch;
+  session.fetch = async (url, init) => {
+    if (String(url).endsWith("/account/access")) return Response.json({
+      metered: true, access: "open", mailboxes: 5, aiCredits: { remaining: 1200, total: 1000 },
+    });
+    if (String(url).endsWith("/away-responder")) return Response.json({
+      enabled: false, audience: "screened_in", throttle: "per_day",
+    });
+    return fetch(url, init);
+  };
+  await readAccess(session);
+  const view = mount(h(SettingsScreen));
+  try {
+    await settle();
+    expect(menuEntry(view.el, Copy.settingsMailboxes)?.textContent).toContain("1 of 5");
+    expect(menuEntry(view.el, Copy.settingsAi)?.textContent).toContain("1,000 of 1,000 this month");
+    expect(menuEntry(view.el, Copy.awayRow)?.textContent).toContain("OffPeople I’ve let in · At most once a day");
+
+    cloudAccount([cloudBox]);
+    Object.assign((scene.session as ConnectedSession).profile, { id: "other-profile" });
+    view.render(h(SettingsScreen));
+    expect(menuEntry(view.el, Copy.settingsMailboxes)?.textContent).not.toContain("1 of 5");
+    expect(menuEntry(view.el, Copy.awayRow)?.textContent).toBe(Copy.awayRow);
+  } finally {
+    view.unmount();
   }
 });
 
@@ -291,7 +644,9 @@ describe("the Look on a standalone phone", () => {
     const view = mount(h(SettingsScreen));
     openSection(view, Copy.settingsGeneral);
     await settle();
-    const said = { text: view.el.textContent ?? "", applyAll: view.el.querySelector('[data-button="Apply on all devices"]') !== null };
+    const hints = [...view.el.querySelectorAll("[data-hint]")].map((node) => node.getAttribute("data-hint") ?? "").join(" ");
+    const said = { text: `${view.el.textContent ?? ""} ${hints}`, applyAll: menuEntry(view.el, Copy.settingsLookAllDevices) !== undefined ||
+      view.el.querySelector('[data-button="Apply on all devices"]') !== null };
     view.unmount();
     return said;
   };
@@ -335,8 +690,8 @@ describe("Settings links to the operator's pages", () => {
     }
     scene.settingsPane = null;
     view.render(h(SettingsScreen));
-    const accountEntry = view.el.querySelector(`[data-nav="${Copy.settingsAccount}"]`);
-    if (accountEntry !== null) {
+    const accountEntry = menuEntry(view.el, Copy.settingsAccount);
+    if (accountEntry) {
       openSection(view, Copy.settingsAccount);
       const remove = view.el.querySelector(`[data-nav="${Copy.deleteAccountRow}"]`) as HTMLButtonElement | null;
       expect(remove).not.toBeNull();

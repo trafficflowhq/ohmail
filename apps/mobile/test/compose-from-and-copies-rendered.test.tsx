@@ -4,13 +4,28 @@
  * list; the address picked is the mailbox the send names and the signature it carries. "Cc, Bcc"
  * shows the two fields, and what is typed there leaves with the send, each in its own list.
  */
-import { act, createElement as h, forwardRef, type ReactNode } from "react";
+import { act, createElement as h, forwardRef, type ComponentProps, type ReactNode } from "react";
+import type { NativeSyntheticEvent } from "react-native";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryMirrorStore, MutationRejectedError, OhmailEngine, mutationEffects, type SyncChange } from "@ohmail/client-engine";
+import { createThreadRead } from "../src/ui/reader-seen";
 import { openLetterSession, ownedLetters } from "../src/compose/letter-keeper";
 import { restoreLetters, settleLetters } from "../src/compose/letter-restore";
 import { letterDoor } from "../src/compose/letter-store";
 import { flushQueued, keptRecipients, liveActions, liveDrafts, type DraftKeep } from "../src/state/live";
+
+function inputEvent<T>(type: string, nativeEvent: T): NativeSyntheticEvent<T> {
+  const target = document.activeElement as unknown as NativeSyntheticEvent<T>["target"];
+  const event = new Event(type, { bubbles: true });
+  return {
+    nativeEvent, target, currentTarget: target, type,
+    bubbles: event.bubbles, cancelable: event.cancelable, defaultPrevented: event.defaultPrevented,
+    eventPhase: event.eventPhase, isTrusted: event.isTrusted, timeStamp: event.timeStamp,
+    preventDefault: () => event.preventDefault(), isDefaultPrevented: () => event.defaultPrevented,
+    stopPropagation: () => event.stopPropagation(), isPropagationStopped: () => event.cancelBubble,
+    persist: () => undefined,
+  };
+}
 
 vi.mock("react-native", async () => {
   const { rnDom } = await import("./_rendered-dom");
@@ -21,28 +36,46 @@ vi.mock("react-native", async () => {
       React.createElement("div", { "data-modal": "", "data-under-bars": String(p.statusBarTranslucent === true && p.navigationBarTranslucent === true),
         onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Escape") p.onRequestClose?.(); },
       }, p.children),
-    KeyboardAvoidingView: rnDom.View,
+    KeyboardAvoidingView: (p: { children?: ReactNode; behavior?: string; style?: unknown }) => h("div", {
+      "data-avoid": p.behavior ?? "", "data-style": JSON.stringify(p.style ?? {}),
+    }, p.children),
+    Platform: { ...rnDom.Platform, get OS() { return look.platform; } },
     Keyboard: { dismiss: () => undefined, addListener: () => ({ remove: () => undefined }) },
     AppState: { addEventListener: () => ({ remove: () => undefined }), currentState: "active" },
-    useWindowDimensions: () => ({ width: 400, height: 800, scale: 2, fontScale: 1 }),
+    useWindowDimensions: () => ({ width: 400, height: look.windowHeight, scale: 2, fontScale: 1 }),
     Image: (p: { source?: { uri?: string }; resizeMethod?: string; onError?: () => void }) => {
       drawn.sources.push(p.source);
       return React.createElement("img", { "data-uri": p.source?.uri, "data-resize": p.resizeMethod, onError: p.onError });
     },
-    TextInput: forwardRef<HTMLInputElement, { value: string; accessibilityLabel?: string; disableFullscreenUI?: boolean; keyboardAppearance?: string; onChangeText?: (v: string) => void; onSelectionChange?: (e: { nativeEvent: { selection: { start: number; end: number } } }) => void; onFocus?: () => void; onBlur?: () => void }>(
+    TextInput: forwardRef<HTMLInputElement, ComponentProps<typeof import("react-native").TextInput>>(
       (p, ref) => {
-        if (p.onSelectionChange) caret.select = (start, end) => p.onSelectionChange?.({ nativeEvent: { selection: { start, end } } });
+        if (p.onSelectionChange) caret.select = (start, end) =>
+          p.onSelectionChange?.(inputEvent("selectionchange", { target: 1, selection: { start, end } }));
+        if (p.onContentSizeChange) caret.measure = (height) =>
+          p.onContentSizeChange?.(inputEvent("contentsizechange", { target: 1, contentSize: { height, width: 320 } }));
         return React.createElement("input", {
-        ref, value: p.value, "data-label": p.accessibilityLabel, "data-in-place": String(p.disableFullscreenUI === true), "data-keyboard": p.keyboardAppearance, onFocus: p.onFocus, onBlur: p.onBlur,
+        ref, value: p.value, "data-label": p.accessibilityLabel, "data-in-place": String(p.disableFullscreenUI === true), "data-keyboard": p.keyboardAppearance,
+        onFocus: () => p.onFocus?.(inputEvent("focus", { target: 1 })),
+        onBlur: () => p.onBlur?.(inputEvent("blur", { target: 1 })),
+        "data-scroll": String(p.scrollEnabled === true), "data-keyboard-type": p.keyboardType,
+        "data-autofocus": String(p.autoFocus === true),
+        "data-selection": p.selection ? `${p.selection.start}:${p.selection.end ?? p.selection.start}` : undefined,
+        "data-placeholder": p.placeholder, "data-style": JSON.stringify(Object.assign({}, ...[p.style].flat(2).filter(Boolean))),
         onChange: (e: { target: { value: string } }) => p.onChangeText?.(e.target.value),
         });
       },
     ),
   };
 });
-vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
-const caret = vi.hoisted(() => ({ select: null as null | ((start: number, end: number) => void) }));
-const look = vi.hoisted(() => ({ paper: false, scheme: "light" as "light" | "dark" }));
+vi.mock("expo-router", () => ({ router: { push: vi.fn() } }));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: look.bottom, left: 0, right: 0 }) }));
+const caret = vi.hoisted(() => ({
+  select: null as null | ((start: number, end: number) => void),
+  measure: null as null | ((height: number) => void),
+}));
+const look = vi.hoisted(() => ({
+  paper: false, scheme: "light" as "light" | "dark", platform: "android" as "ios" | "android", bottom: 0, keyboardHeight: 0, windowHeight: 800,
+}));
 vi.mock("../src/theme", () => ({
   useTheme: () => ({
     mail: look.paper, scheme: look.scheme,
@@ -53,23 +86,45 @@ vi.mock("../src/theme", () => ({
 vi.mock("../src/ui/base", async () => {
   const { rnDom } = await import("./_rendered-dom");
   return {
-    Tap: (p: { accessibilityRole?: string; accessibilityLabel?: string; onPress?: () => void; children?: ReactNode }) =>
-      p.accessibilityLabel === "Back" ? h("button", { onClick: p.onPress }, p.accessibilityLabel) : h(rnDom.Pressable, p),
-    Txt: (p: { children?: ReactNode }) => h("span", null, p.children),
-    Button: (p: { label: string; disabled?: boolean; onPress?: () => void }) =>
-      h("button", { "data-button": p.label, disabled: p.disabled, onClick: p.onPress }, p.label),
+    Tap: (p: { accessibilityRole?: string; accessibilityLabel?: string; onPress?: () => void; children?: ReactNode; style?: unknown }) =>
+      p.accessibilityLabel === "Back" ? h("button", { onClick: p.onPress }, p.accessibilityLabel)
+        : h(rnDom.Pressable, { ...p, style: typeof p.style === "function" ? p.style({ pressed: false }) : p.style }),
+    Txt: (p: { children?: ReactNode; style?: unknown }) => h("span", { "data-style": JSON.stringify(p.style ?? {}) }, p.children),
+    Button: (p: { label: string; disabled?: boolean; onPress?: () => void; appearance?: { surface?: { backgroundColor?: string } } }) =>
+      h("button", { "data-button": p.label, "data-face": p.appearance?.surface?.backgroundColor, disabled: p.disabled, onClick: p.onPress }, p.label),
     Rule: () => null,
   };
 });
-vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
+vi.mock("../src/ui/Icon", () => ({ Icon: ({ name }: { name: string }) => h("span", { "data-icon": name }) }));
 vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));
 vi.mock("../src/ui/Sheet", () => ({
-  Sheet: () => null, SheetBackdrop: () => null, SheetRow: () => null,
-  useModalKey: () => "k", useSheetPanelBounds: () => ({}), useSheetRoom: () => ({}),
+  Sheet: (p: { open: boolean; label: string; onClose: () => void; onDismiss?: () => void; phoneMenu?: boolean; inlineAnchor?: boolean; anchorSide?: string; title?: string; children?: ReactNode }) =>
+    p.open ? h("section", { "aria-label": p.label, "data-phone-menu": p.phoneMenu ? p.inlineAnchor ? "inline" : "modal" : undefined,
+      "data-anchor-side": p.anchorSide }, p.title, p.children, h("button", { "data-dismiss": "", onClick: p.onClose }))
+      : p.onDismiss ? h("button", { "data-did-dismiss": "", onClick: p.onDismiss }) : null,
+  SheetBackdrop: () => null,
+  SheetRow: (p: { label: string; disabled?: boolean; onPress?: () => void }) =>
+    h("button", { "data-menu-row": p.label, disabled: p.disabled, onClick: p.onPress }, p.label),
+  useModalKey: () => "k", useSheetPanelBounds: () => ({}), useSheetRoom: (lift: number) => ({ paddingBottom: lift }),
 }));
-vi.mock("../src/ui/glass", () => ({ GlassActionBar: () => null, GlassPill: () => null, nextRoom: () => 0 }));
-vi.mock("../src/ui/posture", () => ({ usePosture: () => ({ heightClass: "regular", panes: 1 }) }));
-vi.mock("../src/ui/keyboard-lift", () => ({ useKeyboardLift: () => 0 }));
+vi.mock("../src/ui/glass", async () => {
+  const { rnDom } = await import("./_rendered-dom");
+  return {
+    GlassActionBar: () => null, nextRoom: () => 0,
+    GlassPill: (p: { style?: object; children?: ReactNode }) => h(rnDom.View, { style: [{ borderRadius: 8 }, p.style] }, p.children),
+  };
+});
+vi.mock("../src/ui/posture", async () => {
+  const { derivePosture } = await import("../src/ui/posture/derive");
+  const useAppWindow = () => ({ width: 400, height: look.windowHeight });
+  return { useAppWindow, usePosture: () => ({
+    ...derivePosture({ ...useAppWindow(), folds: [], platform: look.platform, hasFold: false }), heightClass: "regular", panes: 1,
+  }) };
+});
+vi.mock("../src/ui/keyboard-lift", async (actual) => ({
+  ...await actual<typeof import("../src/ui/keyboard-lift")>(),
+  useKeyboardHeight: (enabled: boolean) => enabled ? look.keyboardHeight : 0,
+}));
 vi.mock("../src/ui/keyboard-native", () => ({ showKeyboardWhenFocused: () => undefined }));
 vi.mock("../src/ui/reader-cover", () => ({ useReaderCover: () => undefined }));
 vi.mock("../src/ui/bottom-chrome", () => ({ useBottomChromeSlot: () => undefined }));
@@ -94,7 +149,7 @@ vi.mock("../src/ui/AttachmentPreview", () => ({
 const scene = vi.hoisted(() => ({ world: null as unknown }));
 vi.mock("../src/state/world", () => ({ useWorld: () => scene.world, useWorldToast: () => ({ say: () => undefined }) }));
 
-const { buttonByName, mount } = await import("./_rendered-dom");
+const { buttonByName, mount, styleOf } = await import("./_rendered-dom");
 const { ComposeSheet } = await import("../src/ui/MessageActions");
 const { Copy } = await import("../src/copy");
 const { onReplySend } = await import("../src/ui/sent-reveal");
@@ -105,22 +160,25 @@ const row = (id: string, address: string, createdAt: string) => ({
   firstSyncStopFolder: null,
 });
 
-function composer() {
+function composer(signature?: { text: string; html: string }, backLabel?: string, draft?: ComponentProps<typeof ComposeSheet>["draft"]) {
   const rows = [row("mb-1", "ann@x.test", "2026-01-01T00:00:00Z"), row("mb-2", "bob@x.test", "2026-02-01T00:00:00Z")];
   const sendNew = vi.fn(async (..._args: unknown[]) => ({ outcome: "sent" as const }));
   scene.world = {
     mailboxes: { known: true, rows, all: rows, sendingId: "mb-1", organizer: null, ownAddresses: [] },
-    signatures: { "mb-1": "Ann's signature", "mb-2": "Bob's signature" },
+    signatures: { "mb-1": signature?.text ?? "Ann's signature", "mb-2": "Bob's signature" },
+    signing: { html: signature ? { "mb-1": signature.html } : {} },
     standalone: false, boot: { connection: null }, drafts: [], addressBook: [],
     sendOutcome: () => "unknown", sendSettlement: () => ({ draftId: null, failure: null }),
     actions: {
       sendNew, sendSurface: () => undefined, keepEnvelope: () => null, draftLeft: () => null,
       sendAndDoneOffered: () => false, draftKeep: async () => "kept", holdFiles: () => undefined, releaseFiles: () => undefined,
+      forwardFiles: () => ({ state: "ready", parts: [] }), forwardPartsSupported: () => true,
       scheduleFilesKept: () => null,
     },
   };
   const closed: number[] = [];
-  const r = mount(h(ComposeSheet, { m: null, mode: "new", onClose: () => closed.push(1) }));
+  const draw = () => h(ComposeSheet, { m: null, mode: "new", onClose: () => closed.push(1), backLabel, draft });
+  const r = mount(draw());
   const q = (sel: string) => r.el.querySelector(sel) as HTMLElement | null;
   const press = (sel: string) => act(() => { q(sel)!.click(); });
   const type = (label: string, v: string) => act(() => {
@@ -129,14 +187,551 @@ function composer() {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   const send = async () => { await act(async () => { q(`button[data-button="${Copy.replySend}"]`)!.click(); }); };
-  return { ...r, q, press, type, send, sendNew, closed };
+  return { ...r, q, press, type, send, sendNew, closed, redraw: () => r.render(draw()) };
 }
 
 let open: ReturnType<typeof composer> | null = null;
 afterEach(() => {
   look.paper = false;
+  look.platform = "android";
+  look.bottom = 0;
+  look.keyboardHeight = 0;
+  look.windowHeight = 800;
+  caret.measure = null;
   open?.unmount();
   open = null;
+});
+
+describe("the phone letter while writing", () => {
+  const cancelLetter = async (el: HTMLElement) => {
+    const cancel = el.querySelector<HTMLElement>(
+      `[data-label="${Copy.replyCancel}"], [data-button="${Copy.replyCancel}"]`,
+    )!;
+    await act(async () => cancel.click());
+  };
+  it("keeps all address and subject labels in the same gutter with normal text entry", () => {
+    look.paper = true;
+    const c = open = composer();
+    c.press(`button[data-button="${Copy.composeAddCopies}"]`);
+    const labelWidth = (name: string) => styleOf([...c.el.querySelectorAll("span")].find((el) => el.textContent === name) ?? null).width;
+    const fromWidth = labelWidth(Copy.composeFromLabel);
+    expect(fromWidth).toBeGreaterThan(0);
+    for (const name of [Copy.forwardTo, Copy.composeCc, Copy.composeBcc, Copy.composeSubject]) {
+      expect(labelWidth(name), name).toEqual(fromWidth);
+      const field = c.q(`input[data-label="${name}"]`);
+      expect(field).not.toBeNull();
+      expect(field?.getAttribute("data-placeholder")).toBe("");
+      expect(field?.getAttribute("data-keyboard-type")).toBe(name === Copy.composeSubject ? "default" : "email-address");
+    }
+  });
+
+  it("shows the place the writer returns to and gives an empty letter a neutral Send", async () => {
+    look.paper = true;
+    const c = open = composer(undefined, Copy.reads);
+    expect(c.q(`button[data-button="${Copy.replySend}"]`)?.dataset.face).toBeTruthy();
+    await act(async () => c.q(`[data-label="${Copy.reads}"]`)!.click());
+    expect(c.closed).toEqual([1]);
+  });
+
+  it("grows the body a few lines, then scrolls inside it with the same focused field", () => {
+    look.paper = true;
+    const c = open = composer();
+    const body = c.q(`input[data-label="${Copy.composePaperPlaceholder}"]`)!;
+    act(() => body.focus());
+    const start = Number(styleOf(body).height);
+    expect(start).toBeGreaterThan(0);
+    expect(caret.measure).not.toBeNull();
+    act(() => caret.measure?.(start + 24));
+    expect(Number(styleOf(body).height)).toBeGreaterThan(start);
+    act(() => caret.measure?.(1500));
+    const bound = Number(styleOf(body).height);
+    expect(bound).toBeLessThan(200);
+    expect(body.dataset.scroll).toBe("true");
+    act(() => caret.measure?.(3000));
+    expect(Number(styleOf(body).height)).toBe(bound);
+    expect(document.activeElement).toBe(body);
+  });
+
+  it("keeps writing tools in the same floating pill as Send, Later and Discard", () => {
+    look.paper = true;
+    const c = open = composer();
+    const body = c.q(`input[data-label="${Copy.composePaperPlaceholder}"]`)!;
+    const letter = body.closest('[data-rn="ScrollView"]')!;
+    const send = c.q(`button[data-button="${Copy.replySend}"]`)!;
+    const later = c.q(`button[data-button="${Copy.sendLater}"]`)!;
+    const discard = c.q(`button[data-button="${Copy.draftsDiscard}"]`)!;
+    const format = c.q(`[data-label="${Copy.composeFormat}"]`)!;
+    expect(letter.contains(format)).toBe(false);
+    const pill = [...c.el.querySelectorAll('[data-rn="View"]')].find((view) => (
+      styleOf(view).borderRadius === 8 && view.contains(send) && view.contains(later) && view.contains(discard) && view.contains(format)
+    ));
+    expect(pill).toBeDefined();
+    expect(pill?.contains(body)).toBe(false);
+    expect(pill?.contains(c.q(`[data-label="${Copy.composeFileTools}"]`))).toBe(true);
+    expect(pill?.contains(c.q(`[data-label="${Copy.composeEmoji}"]`))).toBe(true);
+  });
+
+  it("opens From and Emoji above the composer without starting another modal or replacing the editor", () => {
+    look.paper = true;
+    const c = open = composer();
+    const body = c.q(`input[data-label="${Copy.composePaperPlaceholder}"]`)!;
+    const size = styleOf(body).height;
+    act(() => body.focus());
+    c.press(`[data-label="${Copy.composeFromChange("ann@x.test")}"]`);
+    expect(c.q('[data-phone-menu="inline"]')?.contains(c.q('[data-label="bob@x.test"]'))).toBe(true);
+    c.press('[data-label="bob@x.test"]');
+    c.press(`[data-label="${Copy.composeEmoji}"]`);
+    expect(c.q('[data-phone-menu="inline"]')?.textContent).toContain("🙂");
+    expect(styleOf(c.q('[data-label="🙂"]')).minHeight).toBe(44);
+    expect(c.el.querySelectorAll("[data-modal]")).toHaveLength(1);
+    expect(styleOf(body).height).toBe(size);
+    expect(document.activeElement).toBe(body);
+  });
+
+  it("uses the same phone menu row dimensions for From choices", () => {
+    look.paper = true;
+    const c = open = composer();
+    c.press(`[data-label="${Copy.composeFromChange("ann@x.test")}"]`);
+    const radio = c.q('[data-role="radiogroup"]');
+    const choices = [...radio!.querySelectorAll('[data-role="radio"]')];
+    expect(choices).toHaveLength(2);
+    expect(styleOf(radio).gap).toBe(0);
+    for (const choice of choices) expect(styleOf(choice)).toMatchObject({ minHeight: 48, paddingHorizontal: 12 });
+  });
+
+  it("opens Send later over the new letter without replacing the editor or losing text", () => {
+    look.paper = true;
+    const c = open = composer();
+    c.type(Copy.forwardTo, "recipient@x.test");
+    c.type(Copy.composePaperPlaceholder, "A synthetic letter");
+    c.press(`button[data-button="${Copy.sendLater}"]`);
+    expect(c.q('[data-phone-menu="inline"]')?.textContent).toContain(Copy.sendLaterPick);
+    expect(c.q(`input[data-label="${Copy.composePaperPlaceholder}"]`)?.getAttribute("value")).toBe("A synthetic letter");
+  });
+
+  it("opens the forward More panel below the conversation, with no Send later", () => {
+    look.paper = true;
+    composer().unmount();
+    const m = { id: "m1", mailboxId: "mb-1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan" };
+    const c = mount(h(ComposeSheet, { m, mode: "forward", inline: true, onClose: () => undefined } as never));
+    try {
+      expect(c.el.querySelector(`input[data-label="${Copy.forwardNotePlaceholder}"]`)?.getAttribute("data-placeholder"))
+        .toBe(Copy.forwardNotePlaceholder);
+      act(() => c.el.querySelector<HTMLElement>(`[data-label="${Copy.tabMore}"]`)!.click());
+      const overflow = c.el.querySelector('[data-phone-menu="modal"]:not([data-anchor-side])');
+      expect(overflow?.textContent).toContain(Copy.draftsDiscard);
+      expect(overflow?.textContent).not.toContain(Copy.sendLater);
+    } finally {
+      c.unmount();
+    }
+  });
+
+  it("anchors More above the new letter's pill when the keyboard leaves a short window", () => {
+    look.paper = true;
+    look.windowHeight = 460;
+    look.keyboardHeight = 280;
+    const c = open = composer();
+    c.press(`[data-label="${Copy.tabMore}"]`);
+    expect(c.q('[data-anchor-side="above"]')?.textContent).toContain(Copy.draftsDiscard);
+  });
+
+  it.each(["android", "ios"] as const)("lifts the bottom controls while the %s keyboard is open", (platform) => {
+    look.paper = true;
+    look.platform = platform;
+    look.bottom = 24;
+    const c = open = composer();
+    const room = c.q("[data-avoid]")!;
+    const panel = room.firstElementChild!;
+    expect(styleOf(panel).paddingBottom).toBeGreaterThanOrEqual(24);
+    look.keyboardHeight = 280;
+    c.redraw();
+    expect(room.dataset.avoid).toBe(platform === "ios" ? "padding" : "");
+    expect(styleOf(room).paddingBottom).toBe(platform === "android" ? 304 : 0);
+    expect(styleOf(panel).paddingBottom).toBeGreaterThan(0);
+    expect(styleOf(panel).paddingBottom).toBeLessThan(24);
+  });
+
+  it.each(["android", "ios"] as const)("shows the leading subject before editing and leaves its caret to the %s input after focus", (platform) => {
+    look.paper = true;
+    look.platform = platform;
+    composer().unmount();
+    const message = { id: "m1", from: { name: "Lena", address: "lena@fake.test" },
+      subject: "Workshop plans and material samples", earlier: [] };
+    const c = mount(h(ComposeSheet, { m: message, mode: "reply", inline: true, onClose: () => undefined } as never));
+    try {
+      const field = c.el.querySelector<HTMLInputElement>(`input[data-label="${Copy.composeSubject}"]`)!;
+      expect(field.value).toBe("Re: Workshop plans and material samples");
+      expect(field.dataset.selection).toBe(platform === "android" ? "0:0" : undefined);
+      act(() => field.focus());
+      act(() => field.setSelectionRange(12, 12));
+      expect(field.dataset.selection).toBeUndefined();
+      expect(field.selectionStart).toBe(12);
+      act(() => field.blur());
+      expect(field.dataset.selection).toBeUndefined();
+      expect(field.selectionStart).toBe(12);
+    } finally {
+      c.unmount();
+    }
+  });
+
+  it.each(["reply", "forward"] as const)("names the sender, audience and subject while composing a %s", (mode) => {
+    look.paper = true;
+    composer().unmount();
+    const message = { id: "m1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan", earlier: [] };
+    const c = mount(h(ComposeSheet, { m: message, mode, inline: mode === "reply", onClose: () => undefined } as never));
+    try {
+      expect(c.el.textContent).toContain(Copy.composeFromLabel);
+      expect(c.el.textContent).toContain(Copy.composeSubject);
+      if (mode === "reply") {
+        expect(c.el.querySelector<HTMLInputElement>(`input[data-label="${Copy.composeSubject}"]`)?.value).toBe("Re: Q3 plan");
+        expect(c.el.textContent).toContain(Copy.replyRecipientLabel);
+        expect(c.el.textContent).toContain("Lena");
+        expect(c.el.querySelector(`[data-label="${Copy.replyPlaceholder}"]`)?.getAttribute("data-autofocus")).toBe("true");
+      } else {
+        expect(c.el.textContent).toContain("Fwd: Q3 plan");
+        expect(c.el.querySelector(`[data-label="${Copy.forwardTo}"]`)?.getAttribute("data-autofocus")).toBe("true");
+      }
+    } finally {
+      c.unmount();
+    }
+  });
+
+  it("keeps a reopened forward's copies when only its From changes", async () => {
+    vi.useFakeTimers();
+    look.paper = true;
+    composer().unmount();
+    const actions = (scene.world as { actions: Record<string, unknown> }).actions;
+    const keep = vi.fn(async (_draft: unknown) => "kept" as const);
+    actions.draftKeep = keep;
+    const message = { id: "m1", mailboxId: "mb-1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan" };
+    const draft = {
+      id: "d-1", mailboxId: "mb-1", forwardOf: "m1", forwardParts: null, revision: null,
+      subject: "Fwd: Q3 plan", body: "The plan", to: "peer@x.test", cc: "review@x.test", bcc: "records@x.test",
+    };
+    const c = mount(h(ComposeSheet, { m: message, mode: "forward", draft, onClose: () => undefined } as never));
+    try {
+      const field = (name: string) => c.el.querySelector<HTMLInputElement>(`input[data-label="${name}"]`);
+      expect(field(Copy.composeCc)?.parentElement?.textContent).toContain(draft.cc);
+      expect(field(Copy.composeBcc)?.parentElement?.textContent).toContain(draft.bcc);
+      expect(field(Copy.composeCc)?.value).toBe("");
+      expect(field(Copy.composeBcc)?.value).toBe("");
+      const choose = (label: string) => act(() => c.el.querySelector<HTMLElement>(`[data-label="${label}"]`)!.click());
+      choose(Copy.composeFromChange("ann@x.test"));
+      choose("bob@x.test");
+      await act(async () => { vi.advanceTimersByTime(2500); });
+      expect(keep).toHaveBeenCalledWith(expect.objectContaining({
+        mailboxId: "mb-2", draftId: draft.id, cc: [{ name: null, address: draft.cc }], bcc: [{ name: null, address: draft.bcc }],
+      }));
+    } finally {
+      c.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["disabled", "missing"] as const)("names the fallback From without moving a forward draft whose mailbox is %s", async (state) => {
+    vi.useFakeTimers();
+    look.paper = true;
+    composer().unmount();
+    const world = scene.world as { mailboxes: { rows: ReturnType<typeof row>[]; all: ReturnType<typeof row>[] }; actions: Record<string, unknown> };
+    const [bound, fallback] = world.mailboxes.rows;
+    world.mailboxes.rows = [fallback!];
+    world.mailboxes.all = state === "disabled" ? [{ ...bound!, status: "disabled" }, fallback!] : [fallback!];
+    const keep = vi.fn(async (_draft: unknown) => "kept" as const);
+    world.actions.draftKeep = keep;
+    const message = { id: "m1", mailboxId: "mb-1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan" };
+    const draft = {
+      id: "d-1", mailboxId: "mb-1", forwardOf: "m1", forwardParts: null, revision: null,
+      subject: "Fwd: Q3 plan", body: "The plan", to: "peer@x.test", cc: "", bcc: "",
+    };
+    const c = mount(h(ComposeSheet, { m: message, mode: "forward", draft, onClose: () => undefined } as never));
+    try {
+      await act(async () => { vi.advanceTimersByTime(2500); });
+      expect(keep).not.toHaveBeenCalled();
+      expect(c.el.textContent).toContain("bob@x.test");
+      expect(c.el.textContent).toContain(state === "disabled" ? Copy.composeFromSubstituted("ann@x.test") : Copy.composeFromSubstitutedUnknown);
+    } finally {
+      c.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { edited: true, exit: "Cancel" },
+    { edited: true, exit: "unmount" },
+    { edited: false, exit: "Cancel" },
+  ])("keeps forward recipients at $exit when edited is $edited", async ({ edited, exit }) => {
+    look.paper = true;
+    composer().unmount();
+    const keep = vi.fn(async (_draft: unknown) => "kept" as const);
+    (scene.world as { actions: Record<string, unknown> }).actions.draftKeep = keep;
+    const message = { id: "m1", mailboxId: "mb-1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan" };
+    const close = vi.fn();
+    const c = mount(h(ComposeSheet, { m: message, mode: "forward", onClose: close } as never));
+    let unmounted = false;
+    try {
+      if (edited) {
+        const cc = c.el.querySelector<HTMLInputElement>(`input[data-label="${Copy.composeCc}"]`)!;
+        act(() => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(cc, "review@x.test");
+          cc.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      }
+      if (exit === "unmount") {
+        await act(async () => c.unmount());
+        unmounted = true;
+      } else {
+        await cancelLetter(c.el);
+        expect(close).toHaveBeenCalledOnce();
+      }
+      if (edited) expect(keep).toHaveBeenCalledWith(expect.objectContaining({
+        mode: "forward", body: "", subject: "Fwd: Q3 plan", cc: [{ name: null, address: "review@x.test" }],
+      }));
+      else expect(keep).not.toHaveBeenCalled();
+    } finally {
+      if (!unmounted) c.unmount();
+    }
+  });
+
+  it.each(["forward", "reply"] as const)("keeps a %s draft when the sender is the only edit", async (mode) => {
+    look.paper = true;
+    composer().unmount();
+    const keep = vi.fn(async (_draft: unknown) => "kept" as const);
+    (scene.world as { actions: Record<string, unknown> }).actions.draftKeep = keep;
+    const message = { id: "m1", mailboxId: "mb-1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan" };
+    const c = mount(h(ComposeSheet, { m: message, mode, onClose: () => undefined } as never));
+    try {
+      const choose = (label: string) => c.el.querySelector<HTMLElement>(`[data-label="${label}"]`)!.click();
+      act(() => choose(Copy.composeFromChange("ann@x.test")));
+      act(() => choose("bob@x.test"));
+      await cancelLetter(c.el);
+      expect(keep).toHaveBeenCalledWith(expect.objectContaining({
+        mode, mailboxId: "mb-2", messageId: "m1", to: [], body: "",
+        ...(mode === "forward" ? { cc: [], bcc: [] } : {}),
+      }));
+      if (mode === "reply") {
+        expect(keep.mock.calls[0]![0]).not.toHaveProperty("cc");
+        expect(keep.mock.calls[0]![0]).not.toHaveProperty("bcc");
+      }
+    } finally {
+      c.unmount();
+    }
+  });
+
+  it("sends an inline reply and its signature from the chosen mailbox", async () => {
+    look.paper = true;
+    composer().unmount();
+    const actions = (scene.world as { actions: Record<string, unknown> }).actions;
+    const send = vi.fn(async (..._args: unknown[]) => ({ outcome: "sent" as const }));
+    actions.sendReply = send;
+    const m = { id: "m1", mailboxId: "mb-1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan" };
+    const c = mount(h(ComposeSheet, { m, mode: "reply", inline: true, onClose: () => undefined } as never));
+    try {
+      const choose = (label: string) => {
+        const control = c.el.querySelector<HTMLElement>(`[data-label="${label}"]`);
+        expect(control, label).not.toBeNull();
+        control!.click();
+      };
+      act(() => choose(Copy.composeFromChange("ann@x.test")));
+      act(() => choose("bob@x.test"));
+      expect(c.el.textContent).toContain("bob@x.test");
+      act(() => {
+        const body = c.el.querySelector<HTMLInputElement>(`input[data-label="${Copy.replyPlaceholder}"]`)!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(body, "I can join.");
+        body.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => c.el.querySelector<HTMLElement>(`[data-button="${Copy.replySend}"]`)!.click());
+      expect(send.mock.calls[0]?.slice(0, 4)).toEqual(["m1", "I can join.", false, "Bob's signature"]);
+      expect(send.mock.calls[0]?.at(-1)).toBe("mb-2");
+    } finally {
+      c.unmount();
+    }
+  });
+
+  it("opens the reply-all audience for editing, focuses To, and sends only the edited envelope", async () => {
+    look.paper = true;
+    composer().unmount();
+    const actions = (scene.world as { actions: Record<string, unknown> }).actions;
+    const send = vi.fn(async (..._args: unknown[]) => ({ outcome: "sent" as const }));
+    actions.sendReply = send;
+    actions.keepEnvelope = () => ({
+      to: [{ name: "Lena", address: "lena@x.test" }],
+      cc: [{ name: "Peer", address: "peer@x.test" }],
+      subject: "Re: Q3 plan",
+    });
+    const m = { id: "m1", mailboxId: "mb-1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan",
+      replyAllHead: { to: "Lena", cc: "Peer" } };
+    const c = mount(h(ComposeSheet, { m, mode: "replyAll", inline: true, onClose: () => undefined } as never));
+    try {
+      const field = (label: string) => c.el.querySelector<HTMLInputElement>(`input[data-label="${label}"]`);
+      const type = (label: string, value: string) => act(() => {
+        const input = field(label)!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const press = (selector: string) => act(() => c.el.querySelector<HTMLElement>(selector)!.click());
+      expect(field(Copy.forwardTo)).toBeNull();
+      expect(field(Copy.composeSubject)?.value).toBe("Re: Q3 plan");
+      const change = c.el.querySelector<HTMLElement>('[data-button="Change recipients"], [data-label="Change recipients"]');
+      expect(change?.textContent).toBe("");
+      expect(change?.querySelector('[data-icon="person"]')).not.toBeNull();
+      act(() => change!.click());
+      expect(document.activeElement).toBe(field(Copy.forwardTo));
+      expect(field(Copy.composeCc)).not.toBeNull();
+      expect(field(Copy.composeBcc)).not.toBeNull();
+      press(`[data-label="${Copy.composeRemoveRecipient("Peer")}"]`);
+      type(Copy.composeBcc, "quiet@x.test");
+      type(Copy.composeSubject, "Agenda");
+      type(Copy.replyPlaceholder, "I can join.");
+      press(`[data-button="${Copy.replySend}"]`);
+      await act(async () => {});
+      expect(send.mock.calls[0]?.slice(0, 3)).toEqual(["m1", "I can join.", true]);
+      expect(send.mock.calls[0]?.at(-1)).toEqual({
+        replyEnvelope: { to: [{ name: "Lena", address: "lena@x.test" }], cc: [], bcc: [{ name: null, address: "quiet@x.test" }] },
+        replySubject: "Agenda",
+      });
+    } finally {
+      c.unmount();
+    }
+  });
+
+  it("keeps Send as new from reverting an invalid edited reply audience to the parent", async () => {
+    look.paper = true;
+    composer().unmount();
+    const actions = (scene.world as { actions: Record<string, unknown> }).actions;
+    const send = vi.fn(async (..._args: unknown[]) => ({ outcome: "sent" as const }));
+    actions.sendReply = send;
+    actions.draftLeft = () => "sent";
+    const m = { id: "m1", mailboxId: "mb-1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan" };
+    const draft = { id: "d-1", replyTo: m.id, mailboxId: "mb-1", body: "First version", subject: "Plan",
+      to: "guest@x.test", cc: "", bcc: "", forwardOf: null, forwardParts: null, revision: null };
+    const c = mount(h(ComposeSheet, { m, mode: "reply", draft, onClose: () => undefined } as never));
+    try {
+      const type = (label: string, value: string) => act(() => {
+        const input = c.el.querySelector<HTMLInputElement>(`input[data-label="${label}"]`)!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const button = (label: string) => c.el.querySelector<HTMLButtonElement>(`[data-button="${label}"]`);
+      type(Copy.replyPlaceholder, "New words.");
+      await act(async () => button(Copy.replySend)!.click());
+      expect(button(Copy.composeSendAsNew)).not.toBeNull();
+      type(Copy.composeBcc, "unfinished@");
+      await act(async () => button(Copy.composeSendAsNew)!.click());
+      expect(send).not.toHaveBeenCalled();
+      type(Copy.composeBcc, "private@x.test");
+      await act(async () => button(Copy.composeSendAsNew)!.click());
+      expect(send.mock.calls[0]?.[7]).toBeNull();
+      expect(send.mock.calls[0]?.at(-1)).toMatchObject({ replyEnvelope: {
+        to: [{ name: null, address: "guest@x.test" }], bcc: [{ name: null, address: "private@x.test" }],
+      } });
+    } finally {
+      c.unmount();
+    }
+  });
+
+  it("rechecks the edited reply audience at the Send later appointment", async () => {
+    look.paper = true;
+    composer().unmount();
+    const actions = (scene.world as { actions: Record<string, unknown> }).actions;
+    const send = vi.fn(async (..._args: unknown[]) => ({ outcome: "sent" as const }));
+    actions.sendReply = send;
+    const m = { id: "m1", mailboxId: "mb-1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan" };
+    const c = mount(h(ComposeSheet, { m, mode: "reply", inline: true, onClose: () => undefined } as never));
+    try {
+      const type = (label: string, value: string) => act(() => {
+        const input = c.el.querySelector<HTMLInputElement>(`input[data-label="${label}"]`)!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const press = (selector: string) => act(() => c.el.querySelector<HTMLElement>(selector)!.click());
+      press(`[data-label="${Copy.replyChangeRecipients}"], [data-button="${Copy.replyChangeRecipients}"]`);
+      type(Copy.replyPlaceholder, "New words.");
+      press(`[data-label="${Copy.tabMore}"]`);
+      press(`[data-menu-row="${Copy.sendLater}"]`);
+      type(Copy.composeCc, "unfinished@");
+      await act(async () => c.el.querySelector<HTMLElement>(`[data-menu-row="${Copy.sendLaterTomorrow()}"]`)!.click());
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      c.unmount();
+    }
+  });
+
+  it("Change seeds the current reply plan and a later mailbox refresh cannot change the visible audience", async () => {
+    look.paper = true;
+    composer().unmount();
+    const actions = (scene.world as { actions: Record<string, unknown> }).actions;
+    const send = vi.fn(async (..._args: unknown[]) => ({ outcome: "sent" as const }));
+    actions.sendReply = send;
+    const owner = { name: "Owner", address: "owner@x.test" };
+    const correspondent = { name: "Peer", address: "peer@x.test" };
+    let audience = owner;
+    actions.keepEnvelope = () => ({ to: [audience], cc: [], subject: "Re: Q3 plan" });
+    const m = { id: "m1", mailboxId: "mb-1", from: owner, subject: "Q3 plan" };
+    const draw = () => h(ComposeSheet, { m, mode: "reply", inline: true, onClose: () => undefined } as never);
+    const c = mount(draw());
+    try {
+      audience = correspondent;
+      c.render(draw());
+      expect(c.el.textContent).toContain("Peer");
+      act(() => c.el.querySelector<HTMLElement>(`[data-label="${Copy.replyChangeRecipients}"], [data-button="${Copy.replyChangeRecipients}"]`)!.click());
+      expect(c.el.querySelector(`[data-label="${Copy.composeRemoveRecipient("Peer")}"]`)).not.toBeNull();
+      audience = owner;
+      c.render(draw());
+      act(() => {
+        const input = c.el.querySelector<HTMLInputElement>(`input[data-label="${Copy.replyPlaceholder}"]`)!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "New words.");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => c.el.querySelector<HTMLElement>(`[data-button="${Copy.replySend}"]`)!.click());
+      expect(send.mock.calls[0]?.at(-1)).toEqual({ replyEnvelope: { to: [correspondent], cc: [], bcc: [] } });
+    } finally {
+      c.unmount();
+    }
+  });
+
+  it("records the actual fallback From before sending a reply whose chosen mailbox disconnected", async () => {
+    look.paper = true;
+    composer().unmount();
+    const w = scene.world as {
+      mailboxes: { rows: ReturnType<typeof row>[]; all: Array<Omit<ReturnType<typeof row>, "status"> & { status: string }> };
+      actions: Record<string, unknown>;
+    };
+    w.actions.sendReply = vi.fn(async () => ({ outcome: "queued" as const }));
+    const mirror = new MemoryMirrorStore();
+    await mirror.load();
+    const door = letterDoor(mirror);
+    openLetterSession({ door, uuid: () => "reply-after-disconnect" });
+    const m = { id: "m1", mailboxId: "mb-1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan" };
+    const draw = () => h(ComposeSheet, { m, mode: "reply", inline: true, onClose: () => undefined } as never);
+    const c = mount(draw());
+    try {
+      const choose = (label: string) => c.el.querySelector<HTMLElement>(`[data-label="${label}"]`)!.click();
+      act(() => choose(Copy.composeFromChange("ann@x.test")));
+      act(() => choose("bob@x.test"));
+      w.mailboxes.rows = [w.mailboxes.rows[0]!];
+      w.mailboxes.all = [w.mailboxes.rows[0]!, { ...w.mailboxes.all[1]!, status: "disabled" }];
+      c.render(draw());
+      expect(c.el.textContent).toContain(Copy.composeFromSubstituted("bob@x.test"));
+      act(() => {
+        const input = c.el.querySelector<HTMLInputElement>(`input[data-label="${Copy.replyPlaceholder}"]`)!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "I can join.");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => c.el.querySelector<HTMLElement>(`[data-button="${Copy.replySend}"]`)!.click());
+      expect(door.letter("reply-after-disconnect")).toMatchObject({ mailboxId: "mb-2", send: { mailboxId: "mb-1" } });
+      await restoreLetters({
+        door, owned: new Set(), keep: async () => "refused", hasMessage: () => true, drafts: () => [],
+        firstSync: async () => undefined, parse: keptRecipients,
+        outbox: () => [{ key: "fallback-send", mutation: {
+          kind: "mail_send", inReplyTo: "m1", body: "I can join.\n\nAnn's signature", mailboxId: "mb-1",
+        } }],
+      });
+      expect(door.letter("reply-after-disconnect")?.send?.key).toBe("fallback-send");
+    } finally {
+      c.unmount();
+      openLetterSession(null);
+    }
+  });
 });
 
 it.each([
@@ -320,6 +915,57 @@ describe("a new mail from the second of two mailboxes", () => {
     expect(c.sendNew.mock.calls[0]![0]).toBe("mb-1");
     expect(c.sendNew.mock.calls[0]![4]).toBe("Ann's signature");
   });
+});
+
+it("keeps a long formatted signature folded until asked and sends it whole when folded", async () => {
+  const url = "https://example.test/contact?source=signature";
+  const signature = {
+    text: `Regards,\nExample team\nContact us (${url})`,
+    html: `<p>Regards,<br>Example team<br><a href="${url}">Contact us</a></p>`,
+  };
+  const c = open = composer(signature);
+  const toggle = () => c.q(`[data-role="button"][data-label="${Copy.sigLabel}"]`);
+  expect(toggle()?.getAttribute("data-expanded")).toBe("false");
+  expect(c.el.textContent).not.toContain("Example team");
+  act(() => toggle()!.click());
+  expect(toggle()?.getAttribute("data-expanded")).toBe("true");
+  expect(c.el.textContent).toContain("Example team");
+  expect(c.q('[data-role="link"]')?.textContent).toBe("Contact us");
+  expect(c.el.textContent).not.toContain(url);
+  act(() => toggle()!.click());
+  expect(c.el.textContent).not.toContain("Example team");
+  c.type(Copy.forwardTo, "reader@example.test");
+  c.type(Copy.composeBodyPlaceholder, "The letter's own words.");
+  await c.send();
+  expect(c.sendNew.mock.calls[0]?.[3]).toBe("The letter's own words.");
+  expect(c.sendNew.mock.calls[0]?.[4]).toBe(signature.text);
+  expect(c.sendNew.mock.calls[0]?.at(-1)).toBe(signature.html);
+});
+
+it("edits the expanded signature for this send without adding it to saved drafts", async () => {
+  const signature = { text: "The first team", html: "<p><strong>The first team</strong></p>" };
+  vi.useFakeTimers();
+  try {
+    const c = open = composer(signature, undefined, {
+      id: "draft-1", mailboxId: "mb-1", body: "", to: "", cc: "", bcc: "", subject: "Workshop",
+      revision: null, forwardOf: null, forwardParts: null,
+    });
+    const keep = vi.fn(async (_request: DraftKeep) => "kept");
+    (scene.world as { actions: { draftKeep: typeof keep } }).actions.draftKeep = keep;
+    c.type(Copy.forwardTo, "reader@example.test");
+    c.type(Copy.composeBodyPlaceholder, "The letter's own words.");
+    c.press(`[data-role="button"][data-label="${Copy.sigLabel}"]`);
+    c.press(`button[data-button="${Copy.sigEditAsText}"]`);
+    c.type(Copy.sigAria, "The substitute team");
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(keep.mock.calls.at(-1)?.[0].body).toBe("The letter's own words.");
+    await c.send();
+    const args = c.sendNew.mock.calls[0]!;
+    expect(args[4]).toBe("The substitute team");
+    expect(args).not.toContain(signature.html);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 describe("Cc and Bcc on a new mail", () => {
@@ -621,4 +1267,158 @@ it.each(["discarded", "queued"] as const)("closes a confirmed %s draft without k
     expect(close).toHaveBeenCalledOnce();
   } finally { r.unmount(); }
   expect(keep).not.toHaveBeenCalled();
+});
+
+describe("message actions while writing in a conversation", () => {
+  const letter = {
+    id: "root", mailboxId: "mb-1", from: { name: "A sender", address: "other@x.test" }, subject: "A conversation",
+    place: "ohbox", time: "", body: "The original letter", unread: true, earlier: [],
+    folder: "INBOX", presentedFolder: "INBOX", pile: null, canReplyAll: true, replyAllHead: null,
+    noForward: false, forwardAsk: null, labels: [],
+  } as const;
+
+  function writing(mode: "reply" | "forward", ownMail = false) {
+    look.paper = true;
+    composer().unmount();
+    const state = scene.world as { actions: Record<string, unknown> };
+    const tag = { id: "plans", name: "Plans", hue: "grey" };
+    const remember = vi.fn();
+    const read = createThreadRead();
+    const release = vi.spyOn(read, "release");
+    const acts = {
+      pileToggle: vi.fn(), resurfaceNow: vi.fn(), tagToggle: vi.fn(), move: vi.fn(), markSeen: vi.fn(),
+      deleteMessage: vi.fn(), draftDiscard: vi.fn(), screeningRules: () => null, screeningStayed: () => null,
+      screeningUnsubClaim: () => "none", screeningUnsubscribeIds: () => [], screeningForecast: () => null,
+      screenSender: vi.fn(),
+    };
+    Object.assign(state, { worldKey: "work", tags: [tag], screenerConfirmation: { acknowledged: 0, remember } });
+    Object.assign(state.actions, acts);
+    const onClose = vi.fn();
+    const onDeleted = vi.fn();
+    const message = { ...letter, ownMail, labels: [], earlier: [] };
+    const target = { ...message, id: "answer-target" };
+    const view = mount(h(ComposeSheet, { m: target, mode, inline: true, onClose, keyboardHeight: look.keyboardHeight,
+      messageActions: { message, record: read, onDeleted } } as never));
+    const q = <T extends HTMLElement>(selector: string) => view.el.querySelector<T>(selector);
+    const click = (button: HTMLElement | null | undefined) => act(() => { expect(button).toBeTruthy(); button!.click(); });
+    const more = () => click(q(`[data-label="${Copy.tabMore}"]`));
+    const panel = (label: string) => q(`section[aria-label="${label}"]`);
+    const choose = (label: string, choice: string) => click([...panel(label)?.querySelectorAll<HTMLElement>("[data-menu-row]") ?? []]
+      .find((row) => row.dataset.menuRow === choice));
+    const moreRows = () => [...panel(Copy.tabMore)?.querySelectorAll<HTMLElement>("[data-menu-row]") ?? []]
+      .map((row) => row.dataset.menuRow);
+    const body = q<HTMLInputElement>(`input[data-label="${mode === "forward" ? Copy.forwardNotePlaceholder : Copy.replyPlaceholder}"]`)!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(body, "My unsent words");
+      body.dispatchEvent(new Event("input", { bubbles: true }));
+      body.focus();
+    });
+    return { view, acts, tag, message, body, more, choose, moreRows, panel, release, onClose, onDeleted, remember, click };
+  }
+
+  it("uses the conversation's actions and pickers while the same typed reply stays open", () => {
+    const writingReply = writing("reply");
+    const { view, acts, tag, message, body, more, choose, moreRows, release, panel, onClose } = writingReply;
+    try {
+      more();
+      expect(moreRows()).toEqual([
+        Copy.sendLater, Copy.draftsDiscard, Copy.actionLater, Copy.actionSetAside, Copy.actionResurface,
+        Copy.actionTag, Copy.actionScreening, Copy.actionMove, Copy.actionMarkRead, Copy.actionDelete,
+      ]);
+      choose(Copy.tabMore, Copy.actionLater);
+      expect(acts.pileToggle.mock.calls).toEqual([[message.id, "replyLater"]]);
+      more();
+      choose(Copy.tabMore, Copy.actionSetAside);
+      expect(acts.pileToggle).toHaveBeenLastCalledWith(message.id, "setAside");
+      more();
+      choose(Copy.tabMore, Copy.actionResurface);
+      choose(Copy.resurfaceWhen, Copy.resurfaceNow);
+      expect(acts.resurfaceNow.mock.calls).toEqual([[message.id]]);
+      more();
+      choose(Copy.tabMore, Copy.actionTag);
+      choose(Copy.actionTag, tag.name);
+      expect(acts.tagToggle.mock.calls).toEqual([[message.id, tag, true]]);
+      more();
+      choose(Copy.tabMore, Copy.actionScreening);
+      expect(panel(Copy.actionScreening)?.textContent).toContain(Copy.screeningFor(message.from.name));
+      choose(Copy.actionScreening, `→ ${Copy.placeOhbox}`);
+      expect(acts.screenSender.mock.calls).toEqual([[message.id, "ohbox", "sender", true, undefined, undefined]]);
+      more();
+      choose(Copy.tabMore, Copy.actionMove);
+      choose(Copy.actionMove, Copy.placeReads);
+      expect(acts.move.mock.calls).toEqual([[message, "reads"]]);
+      more();
+      choose(Copy.tabMore, Copy.actionMarkRead);
+      expect(acts.markSeen.mock.calls).toEqual([[message.id, false, [message.id], message.id]]);
+      expect(release.mock.calls).toEqual([[message.id]]);
+      expect(panel(Copy.tabMore)).toBeNull();
+      expect(body.isConnected).toBe(true);
+      expect(body.value).toBe("My unsent words");
+      expect(document.activeElement).toBe(body);
+      expect(onClose).not.toHaveBeenCalled();
+      expect(acts.draftDiscard).not.toHaveBeenCalled();
+    } finally { view.unmount(); }
+  });
+
+  it("keeps message Later in a forward and asks before moving the letter to Trash", () => {
+    const { view, acts, message, body, more, choose, moreRows, panel, click, onClose, onDeleted, remember } = writing("forward", true);
+    try {
+      more();
+      expect(moreRows()).toEqual([
+        Copy.draftsDiscard, Copy.actionLater, Copy.actionSetAside, Copy.actionResurface,
+        Copy.actionTag, Copy.actionMove, Copy.actionMarkRead, Copy.actionDelete,
+      ]);
+      choose(Copy.tabMore, Copy.actionDelete);
+      expect(acts.deleteMessage).not.toHaveBeenCalled();
+      click(panel(Copy.deleteAsk)?.querySelector("[data-dismiss]"));
+      expect(acts.deleteMessage).not.toHaveBeenCalled();
+      more();
+      choose(Copy.tabMore, Copy.actionDelete);
+      choose(Copy.deleteAsk, Copy.actionDelete);
+      expect(remember.mock.calls).toEqual([["moveToTrash"]]);
+      expect(acts.deleteMessage.mock.calls).toEqual([[message.id, { onCommitted: expect.any(Function) }]]);
+      expect(onDeleted).not.toHaveBeenCalled();
+      expect(body.isConnected).toBe(true);
+      expect(body.value).toBe("My unsent words");
+      expect(onClose).not.toHaveBeenCalled();
+      act(() => (acts.deleteMessage.mock.calls[0]?.[1] as { onCommitted: () => void }).onCommitted());
+      expect(onDeleted).toHaveBeenCalledOnce();
+      expect(acts.draftDiscard).not.toHaveBeenCalled();
+    } finally { view.unmount(); }
+  });
+
+  it("opens an iOS message picker after the writing menu is dismissed", () => {
+    look.platform = "ios";
+    const { view, more, choose, panel, click, body, tag, acts, message } = writing("reply");
+    try {
+      more();
+      choose(Copy.tabMore, Copy.actionTag);
+      expect(panel(Copy.tabMore)).toBeNull();
+      expect(panel(Copy.actionTag)).toBeNull();
+      click(view.el.querySelector<HTMLElement>("[data-did-dismiss]"));
+      choose(Copy.actionTag, tag.name);
+      expect(acts.tagToggle.mock.calls).toEqual([[message.id, tag, true]]);
+      expect(body.value).toBe("My unsent words");
+    } finally { view.unmount(); }
+  });
+
+  it.each([true, false])("returns to the writing field after Tag when the keyboard was open: %s", (keyboardOpen) => {
+    look.platform = "ios";
+    look.keyboardHeight = keyboardOpen ? 300 : 0;
+    const { view, more, choose, panel, click, body } = writing("reply");
+    try {
+      body.setSelectionRange(4, 4);
+      more();
+      choose(Copy.tabMore, Copy.actionTag);
+      click(view.el.querySelector<HTMLElement>("[data-did-dismiss]"));
+      act(() => body.blur());
+      click(panel(Copy.actionTag)?.querySelector("[data-dismiss]"));
+      expect(document.activeElement).not.toBe(body);
+      const dismissed = view.el.querySelector<HTMLElement>("[data-did-dismiss]");
+      if (dismissed) click(dismissed);
+      expect(document.activeElement === body).toBe(keyboardOpen);
+      expect(body.selectionStart).toBe(4);
+      expect(body.value).toBe("My unsent words");
+    } finally { view.unmount(); }
+  });
 });

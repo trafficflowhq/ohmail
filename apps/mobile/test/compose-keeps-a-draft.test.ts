@@ -177,7 +177,8 @@ describe("every road out of the sheet asks before it closes", () => {
   });
 
   it("the backdrop, the back gesture and Cancel are ONE close, and it consults the keep", () => {
-    expect(SHEET).toContain("onRequestClose={closeComposer}");
+    expect(SHEET).toContain("const requestClose = menuKind === null ? closeComposer : closeMenu;");
+    expect(SHEET).toContain("onRequestClose={requestClose}");
     expect(SHEET).toContain("<SheetBackdrop label={Copy.replyCancel} onPress={closeComposer} />");
     expect(SHEET).toContain('<Button label={Copy.replyCancel} icon={inline ? "x" : undefined} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />');
     const close = SHEET.slice(SHEET.indexOf("const closeComposer = () => {"), SHEET.indexOf("const send = async ("));

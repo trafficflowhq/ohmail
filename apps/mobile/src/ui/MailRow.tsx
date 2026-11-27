@@ -7,26 +7,27 @@
  * unread, colour carries seen, and the dot is the only mark.
  */
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { Animated, PanResponder, Text, View } from "react-native";
+import { Animated, PanResponder, Platform, Text, View } from "react-native";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { Copy } from "../copy";
 import { useTheme, type Theme } from "../theme";
 import { mailColors, mailSize } from "../theme/mail";
 import { MailAvatar } from "./MailAvatar";
 import { MailboxChip } from "./MailboxChip";
 import { MailRowByline } from "./MailRowByline";
+import { ReceiptTitle } from "./ReceiptTitle";
 import type { Mail } from "../state/model";
 import { useWorld } from "../state/world";
 import { folderName, moveTargetsFor, type WorldMail, type WorldPileState } from "../state/live";
 import { Badge, Tap, TagChip, TapRow, Txt } from "./base";
 import { Icon } from "./Icon";
-import { StreamContentChips, StreamRecipient } from "./StreamMailFacts";
 import { mailRowSpoken, marksOfRow, threadBadgeOf, trackerShort } from "./row-spoken";
 import { faceLabel, rowActionVerb, rowActions, type RowActionVerb } from "./row-actions";
 import {
   readFaceOf, swipeClaims, swipeOffset, swipeVerbFor, SWIPE_FIRE_DX,
 } from "./row-swipe";
 import { rowSubjectLine } from "./row-subject";
-import { MARK_HOLD_MS, STRIP_END, STRIP_FACE_IN, STRIP_HIT_SLOP, STRIP_MORE, STRIP_SLOT, STRIP_START, marksShown, slotOf, type RailItem } from "./reader-marks";
+import { MARK_HOLD_MS, ROW_MARK_STEP, STRIP_END, STRIP_FACE_IN, STRIP_HIT_SLOP, STRIP_MORE, STRIP_SLOT, STRIP_START, marksShown, slotOf, type RailItem } from "./reader-marks";
 import { MARK_RING, MarkRing, MarkSheet, MarkSquare, ringRest, rowSquareRadius, useMarkHold, useSquaresWindow } from "./MarkSquare";
 
 /** The open conversation's squares on its row: the reader's, its ring, and a press on one. */
@@ -50,6 +51,9 @@ export function MailRow({
   swipe,
   receipt = false,
   receiptDetail,
+  receiptHead,
+  receiptBody,
+  ohbox = false,
   /**
    * THE READER'S SQUARES, on the row of the conversation an Ohbox reader showed last
    * (`state/thread-place.ts`): ringed where the reader is or stopped; a press scrolls the reader there.
@@ -57,19 +61,26 @@ export function MailRow({
    */
   strip,
 }: {
-  m: Mail & Pick<WorldMail, "pendingReplyCopy"> & { pile?: WorldPileState; presentedFolder?: WorldMail["presentedFolder"]; folder?: WorldMail["folder"] };
+  m: Mail & Pick<WorldMail, "pendingReplyCopy" | "recipients"> & { pile?: WorldPileState; presentedFolder?: WorldMail["presentedFolder"]; folder?: WorldMail["folder"] };
   searchTerm?: string;
   onPress: () => void;
   swipe?: boolean;
   receipt?: boolean;
   receiptDetail?: ReactNode;
+  receiptHead?: ReactNode;
+  receiptBody?: ReactNode;
+  ohbox?: boolean;
   strip?: RowStripFacts | null;
 }) {
   const t = useTheme();
   const w = useWorld();
   const seen = !m.unread;
-  const mailbox = m.mailboxLabel;
-  const address = m.sentTo === undefined && m.from.address !== m.from.name ? m.from.address : undefined;
+  const ohboxPaper = ohbox && t.mail === true;
+  const mailbox = ohboxPaper ? undefined : m.mailboxLabel;
+  const fromAddress = m.sentTo === undefined && m.from.address !== m.from.name ? m.from.address : undefined;
+  const byline = ohboxPaper ? m.rowByline : undefined;
+  const hintAddress = byline ? byline.address : fromAddress;
+  const address = ohboxPaper && hintAddress ? displayAddress(hintAddress) : hintAddress;
   const readInk = t.mail ? mailColors(t)["ink-read"] : t.c.ink2;
   const thread = threadBadgeOf(m);
   const marks = marksOfRow(m);
@@ -158,20 +169,20 @@ export function MailRow({
   );
 
   const receiptPaper = receipt && t.mail === true;
-  const readInFull = (
+  const receiptTitle = receiptPaper ? "streamTitle" : "h2";
+  const readInFull = receipt && !receiptPaper ? (
     <View style={{
       backgroundColor: t.c.tint2, borderRadius: t.radius.pill, paddingHorizontal: 16, paddingVertical: 12,
       flexDirection: "row", alignItems: "center", gap: 7,
     }}>
       <Txt variant="button">{Copy.readsReadInFull}</Txt>
-      {receiptPaper ? <Icon name="diagonal" size={13} color={t.c.ink} /> : null}
     </View>
-  );
+  ) : null;
   const tap = (
     <TapRow
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={mailRowSpoken(m)}
+      accessibilityLabel={mailRowSpoken(m, byline?.spokenName)}
       accessibilityHint={swipe && m.pendingReplyCopy ? Copy.replyCopyWaiting : undefined}
       /* THE ROW'S VERBS, FOR A READER WHO CANNOT SWIPE. A gesture is invisible to a screen
          reader, so they are published as actions on the row itself — VoiceOver's rotor and
@@ -189,40 +200,49 @@ export function MailRow({
         : {})}
       style={{
         paddingHorizontal: receipt ? 20 : mailSize.edge - mailSize.rowInset,
-        paddingTop: receipt ? 24 : mailSize.inset,
-        paddingBottom: receiptPaper ? 11 : receipt ? 24 : mailSize.inset,
+        paddingTop: receiptPaper ? 16 : receipt ? 24 : mailSize.inset,
+        paddingBottom: receiptPaper ? 10 : receipt ? 24 : mailSize.inset,
         flexDirection: receipt ? "column" : "row",
         alignItems: receipt ? "stretch" : "center",
-        gap: receipt ? 16 : mailSize.inset,
-        minHeight: mailSize.row,
+        gap: receiptPaper ? 0 : receipt ? 16 : mailSize.inset,
+        minHeight: receiptPaper ? undefined : mailSize.row,
       }}
     >
       {receipt ? (
         <>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          {!receiptPaper ? <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
             <MailAvatar person={m.from} unread={m.unread} mailbox={m.mailbox} />
             <View style={{ flex: 1, minWidth: 0 }}>
               <Txt variant="rowSender" numberOfLines={1}>{m.sentTo ?? m.from.name}</Txt>
               {address ? <Txt variant="caption" tone="ink2" numberOfLines={1}>{address}</Txt> : null}
-              {t.mail ? <StreamRecipient toYou={m.toYou} /> : null}
             </View>
-            {mailbox ? <MailboxChip label={mailbox} /> : null}
+            {mailbox ? <MailboxChip label={mailbox} withinRow /> : null}
             <Txt variant="caption" tone="ink2" numberOfLines={1} tabular
-              style={t.mail ? { flexShrink: 0, marginRight: 23 } : { flexShrink: 0 }}>{m.time}</Txt>
-          </View>
+              style={{ flexShrink: 0 }}>{m.time}</Txt>
+          </View> : null}
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: 12 }}>
-            {rowSubjectLine(m.subject, m.amount) ? <Txt variant="h2" style={{ flex: 1 }}>{searchTerm ? highlightSearch(m.subject, searchTerm, t) : <>{m.subject}</>}</Txt> : null}
-            {m.amount ? <Txt variant="h2" tabular>{m.amount}</Txt> : null}
+            {rowSubjectLine(m.subject, m.amount) ? (
+              receiptPaper && Platform.OS === "ios"
+                ? <ReceiptTitle subject={m.subject}>{searchTerm ? highlightSearch(m.subject, searchTerm, t) : m.subject}</ReceiptTitle>
+                : <Txt variant={receiptTitle} textBreakStrategy={receiptPaper ? "balanced" : undefined} style={{ flex: 1 }}>
+                    {searchTerm ? highlightSearch(m.subject, searchTerm, t) : m.subject}
+                  </Txt>
+            ) : null}
+            {m.amount ? <Txt variant={receiptTitle} tabular>{m.amount}</Txt> : null}
           </View>
-          {t.mail ? <StreamContentChips images={m.imagesBlocked} tracker={m.trackerNote} /> : null}
           {!receiptPaper ? receiptDetail : null}
           {!receiptPaper && preview ? <Txt variant="streamBody" numberOfLines={3}>{preview}</Txt> : null}
         </>
-      ) : <MailAvatar person={m.from} unread={m.unread} mailbox={m.mailbox} additionalPeople={m.additionalPeople} />}
+      ) : (
+        <MailAvatar person={ohboxPaper ? m.rowPeople?.[0] ?? m.from : m.from}
+          unread={m.unread} mailbox={ohboxPaper ? undefined : m.mailbox}
+          companion={ohboxPaper && !m.additionalPeople ? m.rowPeople?.[1] : undefined}
+          additionalPeople={m.additionalPeople} />
+      )}
       <View style={receipt ? { gap: 6, alignItems: "center" } : { flex: 1, minWidth: 0, gap: 2 }}>
         {!receipt ? <>
 
-        <MailRowByline name={m.sentTo ?? m.from.name} address={m.senderCheck ? undefined : address}
+        <MailRowByline name={byline?.name ?? m.sentTo ?? m.from.name} address={m.senderCheck ? undefined : address}
           time={m.time} seen={seen} mailbox={mailbox}>
           {t.mail && marks && !strip ? <RowMarks marks={marks} /> : null}
           {searchPlace ? <Txt variant="caption" tone="ink2" numberOfLines={1}
@@ -278,21 +298,17 @@ export function MailRow({
               : null}
           </View>
         ) : null}
-        {receipt && !receiptPaper ? readInFull : null}
+        {readInFull}
       </View>
     </TapRow>
   );
   /* The strip stands under the row's press target, never inside it: its squares are presses of their own. */
   const row = receiptPaper ? (
     <View>
+      {receiptHead}
       {tap}
-      <View style={{ paddingHorizontal: 20, paddingBottom: 24, gap: 9 }}>
-        {receiptDetail}
-        {preview ? <Txt variant="streamBody" numberOfLines={3}>{preview}</Txt> : null}
-        <Tap accessibilityRole="button" accessibilityLabel={Copy.readsReadInFull} onPress={onPress} style={{ alignSelf: "center" }}>
-          {readInFull}
-        </Tap>
-      </View>
+      {receiptDetail ? <View style={{ paddingHorizontal: 20 }}>{receiptDetail}</View> : null}
+      {receiptBody}
     </View>
   ) : strip ? (
     <View>
@@ -364,33 +380,44 @@ function highlightSearch(text: string, query: string | undefined, t: Theme) {
 function RowMarks({ marks }: { marks: readonly ("unread" | "read" | "mine")[] }) {
   const t = useTheme();
   const [line, setLine] = useState<number | null>(null);
-  const width = Math.min(112, marks.length * 11 + 13);
-  const [room, setRoom] = useState<{ w: number; more: boolean } | null>(null);
-  const all = line === null || marksShown(marks, line).length === marks.length;
-  // Until the box beside the count is measured, the count's room is guessed on the generous side.
-  const compactMarks = t.mail ? marks.slice(-5) : marks;
-  const shown = all ? compactMarks
-    : marksShown(compactMarks, Math.max(0, room?.more ? room.w : line - 4 - 8 * (String(marks.length).length + 1)));
+  const [squaresBox, setSquaresBox] = useState<{ width: number; counted: boolean } | null>(null);
+  const pad = 6;
+  const gap = t.mail ? mailSize.rowSquareGap : 3;
+  const pitch = ROW_MARK_STEP + gap - 3;
+  const countRoom = Math.max(mailSize.rowSquareMore, 8 * (String(marks.length).length + 1));
+  const maxMarks = t.mail ? mailSize.rowSquareSlots : marks.length;
+  const width = Math.min(marks.length, maxMarks) * pitch - gap + 2 * pad
+    + (marks.length > maxMarks ? countRoom : 0);
+  const room = line ?? (t.mail ? width - 2 * pad : null);
+  const fit = room === null ? maxMarks : Math.min(maxMarks, Math.floor((room + gap) / pitch));
+  const kept = fit < marks.length && room !== null
+    ? Math.max(1, Math.min(maxMarks, Math.floor((room + gap - countRoom) / pitch))) : fit;
+  const shown = t.mail ? marks.slice(-kept)
+    : line !== null && marksShown(marks, line).length < marks.length
+      ? marksShown(marks, Math.max(0, squaresBox?.counted ? squaresBox.width
+        : line - 4 - 8 * (String(marks.length).length + 1)))
+      : marks;
   const hidden = marks.length - shown.length;
   return (
     <View
       style={{
         flexDirection: "row", alignItems: "center", gap: 4,
         ...(t.mail ? {
-          width, flexShrink: 1, height: 22, paddingHorizontal: 8,
+          width, flexShrink: 1, height: 22, paddingHorizontal: pad,
           borderRadius: t.radius.pill, backgroundColor: t.c.tint2,
         } : { height: 8, marginTop: 6 }),
       }}
-      onLayout={(e) => setLine(Math.max(0, e.nativeEvent.layout.width - (t.mail ? 16 : 0)))}
+      onLayout={(e) => setLine(Math.max(0, e.nativeEvent.layout.width - (t.mail ? 2 * pad : 0)))}
       importantForAccessibility="no-hide-descendants"
       accessibilityElementsHidden
     >
       {hidden > 0 ? (
-        <Txt variant="caption" tone="ink3" tabular>{Copy.rowMarksMore(hidden)}</Txt>
+        <Txt variant="caption" tone={t.mail ? "ink2" : "ink3"} tabular
+          style={t.mail ? { flexShrink: 0 } : undefined}>{Copy.rowMarksMore(hidden)}</Txt>
       ) : null}
       <View
-        style={{ flex: 1, flexDirection: "row", gap: 3, overflow: "hidden" }}
-        onLayout={(e) => setRoom({ w: e.nativeEvent.layout.width, more: hidden > 0 })}
+        style={{ flex: 1, flexDirection: "row", gap, overflow: "hidden" }}
+        onLayout={t.mail ? undefined : (e) => setSquaresBox({ width: e.nativeEvent.layout.width, counted: hidden > 0 })}
         testID="row-marks"
       >
         {shown.map((k, i) => (
@@ -403,6 +430,7 @@ function RowMarks({ marks }: { marks: readonly ("unread" | "read" | "mine")[] })
               borderWidth: k === "mine" ? 1.5 : 0,
               borderColor: t.mail ? t.c.ink3 : t.c.accent,
               borderRadius: rowSquareRadius(t.radius.focus),
+              flexShrink: 0,
               opacity: t.mail || k === "unread" ? 1 : k === "mine" ? t.c.markMine : t.c.markRead,
             }}
           />

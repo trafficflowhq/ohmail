@@ -3,19 +3,12 @@
  * the list may say about itself, and the voices and the people a folded row speaks for.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import {
-  arrivalMs,
-  countWhen,
-  foldOhboxRows,
-  isOwnOutbound,
-  isOwnSent,
-  listSurface,
-  ohboxUnreadIds,
-} from "@ohmail/client-engine";
+import { countWhen, foldOhboxRows, isOwnSent, listSurface, ohboxUnreadIds } from "@ohmail/client-engine";
 import type { ListSurface, OhboxRow as OhboxRowGroup, ResurfacedThreadRow } from "@ohmail/client-engine";
 import { useMemo } from "react";
 import { NO_ROWS, type SessionPlacement } from "./placement.js";
-import type { OhboxListInput, OhboxListModel, OhboxPerson } from "./types.js";
+import type { OhboxListInput, OhboxListModel } from "./types.js";
+import { groupPeople, type OhboxPerson } from "./people.js";
 
 /** What the groups are made of: the placement's three groups, the selector's own, the sync's state. */
 export interface OhboxGroupsInput {
@@ -142,62 +135,6 @@ export function ohboxGroups({
     rowIndexOf,
   };
 }
-
-/**
- * THE VOICES A GROUPED ROW SPEAKS FOR — one message per distinct sender, newest first. The unread members while the
- * conversation is waiting (what is unanswered is what the row is for), else the newest member alone once it has all
- * been read. Returns the MESSAGES rather than their names because two things are derived from this list and they
- * must not drift: the sender line ({@link groupSenders}) and the row's lead circles. A row whose text reads "Ada
- * Lund, Bo Ek" and whose faces are somebody else's would be two answers to one question.
- */
-export const groupVoices = (g: OhboxRowGroup): EngineMessage[] => {
-  const ms = (m: EngineMessage): number => arrivalMs(m) ?? Number.NEGATIVE_INFINITY;
-  const pool = (g.unreadCount > 0 ? g.members.filter((m) => m.unread) : [g.face])
-    .slice()
-    .sort((a, b) => (ms(a) === ms(b) ? 0 : ms(b) - ms(a)));
-  const seen = new Set<string>();
-  const out: EngineMessage[] = [];
-  for (const m of pool) {
-    const key = m.from.address.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(m);
-  }
-  return out;
-};
-
-/** A grouped row's sender summary: the distinct unread voices, newest first. */
-export const groupSenders = (g: OhboxRowGroup, senderName: (m: EngineMessage) => string): string =>
-  groupVoices(g).map(senderName).join(", ");
-
-/**
- * THE ROW'S PEOPLE: everybody in the conversation as it stands (`conversationOf`, the whole history and not only the
- * members this group holds), one entry a sender: the row's voices first, then everybody else newest first, the
- * account's own letters as one person (`you`) in their place. A letter with no conversation is its sender alone.
- */
-export const groupPeople = (
-  g: OhboxRowGroup,
-  conversationOf: ((messageId: string) => readonly EngineMessage[]) | undefined,
-): OhboxPerson[] => {
-  const ms = (m: EngineMessage): number => arrivalMs(m) ?? Number.NEGATIVE_INFINITY;
-  const threaded = g.members.length > 1 || g.face.threadId != null;
-  const convo = threaded ? (conversationOf?.(g.openTarget.id) ?? []) : [];
-  const pool = (convo.length > 0 ? convo : g.members)
-    .slice()
-    .sort((a, b) => (ms(a) === ms(b) ? 0 : ms(b) - ms(a)));
-  const out: OhboxPerson[] = [];
-  const seen = new Set<string>();
-  const add = (m: EngineMessage): void => {
-    const you = isOwnOutbound(m);
-    const key = you ? "\u0000you" : m.from.address.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push({ letter: m, you });
-  };
-  for (const m of groupVoices(g)) add(m);
-  for (const m of pool) add(m);
-  return out;
-};
 
 /**
  * A row's people, asked of its conversation once a row and kept: per row as drawn (a row is the same object while the

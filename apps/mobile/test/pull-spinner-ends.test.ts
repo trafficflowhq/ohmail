@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PULL_SPIN_CAP_MS, spinUntil } from "../src/state/pull-round";
 
 /*
- * PULL TO REFRESH ON EVERY MAIL LIST, AND A SPINNER THAT ENDS: each list hands the platform's RefreshControl the one
+ * PULL TO REFRESH ON EVERY MAIL LIST, AND A SPINNER THAT ENDS: each list hands the mail scroller the one
  * pull hook, whose `onRefresh` rings the app's own sync and clears `refreshing` when that round settles, or at the
  * cap when the round hangs. A pull while one runs asks nothing more. The spinner is the theme's accent.
  */
@@ -52,14 +52,14 @@ describe("the pull's spinner", () => {
     const hook = read("../src/state/pull.ts");
     expect(hook).toContain("spinUntil(pullRound(networkNow(), (heard) => conn.syncNow(heard)");
     expect(hook).toMatch(/if \(inFlight\.current\) return;/);
-    expect(hook).toMatch(/\.finally\(\(\) => \{\s*inFlight\.current = false;\s*if \(alive\.current\) setRefreshing\(false\);/);
+    expect(hook).toMatch(/\.finally\(\(\) => \{\s*inFlight\.current = undefined;\s*if \(alive\.current\) setRefreshing\(false\);/);
   });
 
-  it("the RefreshControl is the theme's accent on both platforms", () => {
-    const base = read("../src/ui/base.tsx");
-    expect(base).toMatch(/<RefreshControl[\s\S]*?refreshing=\{refresh\.refreshing\}[\s\S]*?onRefresh=\{refresh\.onRefresh\}/);
-    expect(base).toContain("tintColor={t.c.accentInk}");
-    expect(base).toContain("colors={[t.c.accentInk]}");
+  it("the waiting mark uses the theme's accent on both platforms", () => {
+    const scroll = read("../src/ui/PullScroll.tsx");
+    expect(scroll).toContain("borderColor: t.c.accent");
+    expect(scroll).toContain("dot ? t.c.accent");
+    expect(scroll).not.toMatch(/RefreshControl|ActivityIndicator/);
   });
 
   it("every mail list hands its scroller the pull", () => {

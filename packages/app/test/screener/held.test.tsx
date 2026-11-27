@@ -64,6 +64,26 @@ function parts() {
 }
 
 describe("a held letter", () => {
+  it.each(["Customer enquiries", null])(
+    "keeps delivery beside the sender details when known (%s)",
+    (mailbox) => {
+      const waiting = [sender("lena", "Lena Hart", { mailboxId: "work" })];
+      mountPlace(modelOf(asked, { waiting, waitingCount: 1 }), {
+        beside: { ...BESIDE, mailboxWord: () => mailbox },
+      });
+      const detail = within(reading());
+      if (mailbox === null) {
+        expect(detail.queryByTitle(/^Delivered to /)).toBeNull();
+        return;
+      }
+      const chip = detail.getByRole("note", { name: `Delivered to ${mailbox}` });
+      expect(chip.title).toBe(`Delivered to ${mailbox}`);
+      expect(chip.textContent).toBe(`Delivered to ${mailbox}`);
+      const senderAddress = detail.getByRole("button", { name: waiting[0]!.from.address });
+      expect(chip.parentElement?.contains(senderAddress)).toBe(true);
+    },
+  );
+
   it("is drawn by the shell's body with its pictures blocked, even where the account loads them by itself", () => {
     const { letters, seen } = parts();
     mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2 }), { beside: { ...BESIDE, letters } });
@@ -442,7 +462,9 @@ describe("which mailbox a sender wrote to", () => {
       modelOf(asked, { waiting: [sender("lena", "Lena Hart", { mailboxId: "mb-work" })], waitingCount: 1 }),
       { beside: { ...BESIDE, mailboxWord: words } },
     );
-    expect(reading().textContent).toContain("Delivered to Work");
+    expect(within(reading()).getByRole("note", { name: "Delivered to Work" }).textContent).toBe(
+      "Delivered to Work",
+    );
     world.view.unmount();
     mountPlace(
       modelOf(asked, { waiting: [sender("lena", "Lena Hart", { mailboxId: "mb-home" })], waitingCount: 1 }),
@@ -450,6 +472,6 @@ describe("which mailbox a sender wrote to", () => {
         beside: { ...BESIDE, mailboxWord: words },
       },
     );
-    expect(reading().textContent).not.toContain("Delivered to");
+    expect(within(reading()).queryByRole("note", { name: /^Delivered to / })).toBeNull();
   });
 });

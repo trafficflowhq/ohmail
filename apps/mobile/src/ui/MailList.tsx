@@ -4,7 +4,7 @@
  * is what ran the Android heap out at a fold relayout. The panel the rows rest on is ONE view
  * (its lift is a layered shadow no per-cell paint could join), injected as the scroll content's
  * first child and stretched from the head's foot to the footer's; `minIndexForVisible` skips
- * it. Insets are `useListInsets`', the pull gesture `pullRefreshControl`'s — the two rules
+ * it. Insets are `useListInsets`', the pull gesture `PullScroll`'s — the two rules
  * `Scroller` reads. A cell measures itself in scroll-content coordinates for the sweeps.
  */
 import {
@@ -31,14 +31,17 @@ import {
   type NativeSyntheticEvent,
   type ScrollViewProps,
   type SectionListData,
+  type SectionListProps,
   type SectionListRenderItemInfo,
 } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { mailSize } from "../theme/mail";
 import { Icon } from "./Icon";
+import { HeadingEnd } from "./HeadingEnd";
 import { KeyboardRoom } from "./keyboard-room";
-import { Button, Section, Tap, Txt, panelSurface, pullRefreshControl, useListInsets, type PullRefresh } from "./base";
+import { PullScroll } from "./PullScroll";
+import { Button, ListWithHeading, Section, Tap, Txt, panelSurface, useListInsets, type PullRefresh } from "./base";
 import {
   FIRST_GROUP_TOP,
   LIST_WINDOW,
@@ -71,8 +74,10 @@ export interface MailListProps<T> {
   groups: readonly ListGroup<T>[];
   rowKey: (row: T) => string;
   renderRow: (row: T) => ReactElement | null;
-  /** Above the rows, scrolling with them — the view head, the doorbell, a segmented control. */
+  /** The place heading. On a refreshing list it stands above the scrollable sheet. */
   head?: ReactNode;
+  /** Controls inside the sheet, before its first group. */
+  sheetHead?: ReactNode;
   /** Canvas between the head and the panel (History's rows panel stood 8 below its head). */
   gapAbove?: number;
   /** What stands where the rows would when there are none — the skeleton or the empty state. */
@@ -83,6 +88,8 @@ export interface MailListProps<T> {
   tail?: ReactNode;
   /** The l1 panel behind rows, empty state and foot. Off where the rows are their own cards. */
   surface?: boolean;
+  /** Let a short sheet end with its contents while keeping the list's dock clearance. */
+  fitSurface?: boolean;
   /** The rows' inset from the panel's edge — the screens' old `paddingHorizontal: 6` wrapper. */
   rowInset?: number;
   refresh?: PullRefresh;
@@ -97,6 +104,7 @@ export interface MailListProps<T> {
   onRowFrame?: (row: T, frame: RowFrame) => void;
   /** A row's cell left the list (the window moved on): its last frame is no longer kept current. */
   onRowGone?: (row: T) => void;
+  onViewableItemsChanged?: SectionListProps<T>["onViewableItemsChanged"];
   /** Filled with a scroll to a content offset — History's year strip jumps with it. */
   scrollTo?: { current: ((y: number) => void) | null };
   /**
@@ -119,6 +127,8 @@ export interface MailListProps<T> {
   avoidKeyboard?: boolean;
   jumpToTop?: boolean;
 }
+
+const ROW_VIEWABILITY = { minimumViewTime: 250, itemVisiblePercentThreshold: 10 };
 
 type ScrollEv = NativeSyntheticEvent<NativeScrollEvent>;
 const viewOf = (e: ScrollEv) => ({ y: e.nativeEvent.contentOffset.y, height: e.nativeEvent.layoutMeasurement.height });
@@ -231,22 +241,25 @@ function useGlideEnds(ref: Ref<ScrollView> | undefined, own: GlideProps) {
 function SurfacedScroll({
   ref,
   surface,
+  refresh,
   children,
   maintainVisibleContentPosition: hold,
   ...rest
-}: ScrollViewProps & { ref?: Ref<ScrollView>; surface: ReactNode }) {
+}: ScrollViewProps & { ref?: Ref<ScrollView>; surface: ReactNode; refresh?: PullRefresh }) {
   const anchorFrom = (surface !== null ? 1 : 0) + 1;
   const { glideRef, ...ends } = useGlideEnds(ref, rest);
+  const Scroll = refresh ? PullScroll : ScrollView;
   return (
-    <ScrollView
+    <Scroll
       ref={glideRef}
       {...rest}
       {...ends}
+      {...(refresh ? { refresh } : null)}
       maintainVisibleContentPosition={hold ? { ...hold, minIndexForVisible: anchorFrom } : hold}
     >
       {surface}
       {children}
-    </ScrollView>
+    </Scroll>
   );
 }
 
@@ -255,11 +268,13 @@ export function MailList<T>({
   rowKey,
   renderRow,
   head,
+  sheetHead,
   gapAbove = 0,
   empty,
   foot,
   tail,
   surface = true,
+  fitSurface = false,
   rowInset = 0,
   refresh,
   onScroll,
@@ -270,6 +285,7 @@ export function MailList<T>({
   scrollEventThrottle,
   onRowFrame,
   onRowGone,
+  onViewableItemsChanged,
   scrollTo,
   rowLayout,
   topFor,
@@ -317,6 +333,8 @@ export function MailList<T>({
   }, [topFor]);
 
   const [headH, setHeadH] = useState<number | null>(null);
+  const [beforeSheetH, setBeforeSheetH] = useState(0);
+  const onBeforeSheet = useCallback((e: LayoutChangeEvent) => setBeforeSheetH(e.nativeEvent.layout.height), []);
   const [tailH, setTailH] = useState(0);
   const onHead = useCallback((e: LayoutChangeEvent) => setHeadH(e.nativeEvent.layout.height), []);
   const onTail = useCallback((e: LayoutChangeEvent) => setTailH(e.nativeEvent.layout.height), []);
@@ -354,12 +372,9 @@ export function MailList<T>({
         return (
           <>
             <Section style={section.first ? { paddingTop: FIRST_GROUP_TOP } : undefined}>
-              {section.title}
+              <HeadingEnd variant="sectionLabel" hot={section.hot}>{section.title}</HeadingEnd>
               {flush && section.count !== null ? (
-                <>
-                  <Txt variant="sectionLabel" tone={section.first ? "accent" : "ink"}>.</Txt>{" "}
-                  <Txt variant="caption" tone="ink2" tabular>{section.count}</Txt>
-                </>
+                <Txt variant="caption" tone="ink2" tabular>{"  "}{section.count}</Txt>
               ) : null}
             </Section>
             {section.note !== null ? (
@@ -375,7 +390,7 @@ export function MailList<T>({
     [flush],
   );
 
-  /* The panel, once the head has a height to start under. Its foot is where the footer's is: the
+  /* The panel starts below the content before the sheet. Its foot is where the footer's is: the
      content's bottom padding plus whatever sits on the canvas below the panel. */
   const surfaceNode =
     surface && headH !== null ? (
@@ -389,7 +404,7 @@ export function MailList<T>({
             position: "absolute",
             left: insets.paddingLeft,
             right: insets.paddingRight,
-            top: headH,
+            top: sheetHead == null ? headH : beforeSheetH,
             bottom: insets.paddingBottom + tailH,
           },
           flush ? {
@@ -397,13 +412,14 @@ export function MailList<T>({
             backgroundColor: t.c.panel,
             borderTopLeftRadius: mailSize.sheetRadius,
             borderTopRightRadius: mailSize.sheetRadius,
+            ...(fitSurface ? { borderBottomLeftRadius: mailSize.sheetRadius, borderBottomRightRadius: mailSize.sheetRadius } : null),
           } : panelSurface(t),
         ]}
       />
     ) : null;
   const renderScroll = useCallback(
-    (p: ScrollViewProps) => <SurfacedScroll {...p} surface={surfaceNode} />,
-    [surfaceNode],
+    (p: ScrollViewProps) => <SurfacedScroll {...p} surface={surfaceNode} refresh={refresh} />,
+    [surfaceNode, refresh],
   );
 
   const footer = (
@@ -413,6 +429,15 @@ export function MailList<T>({
     </View>
   );
 
+  const scrollHead = (
+    <View onLayout={sheetHead == null ? onHead : onBeforeSheet}>
+      {refresh?.result ? (
+        <Button label={refresh.result} variant="quiet" onPress={refresh.onRefresh} />
+      ) : null}
+      {refresh ? null : head}
+      {gapAbove > 0 ? <View style={{ height: gapAbove }} /> : null}
+    </View>
+  );
   const list = (
     <CellRulesContext.Provider value={rules}>
       <SectionList<T, PlannedSection<T>>
@@ -425,20 +450,15 @@ export function MailList<T>({
         renderSectionHeader={renderSectionHeader}
         CellRendererComponent={Cell}
         renderScrollComponent={renderScroll}
-        ListHeaderComponent={
-          <View onLayout={onHead}>
-            {refresh?.result ? (
-              <Button label={refresh.result} variant="quiet" onPress={refresh.onRefresh} />
-            ) : null}
-            {head}
-            {gapAbove > 0 ? <View style={{ height: gapAbove }} /> : null}
-          </View>
-        }
+        ListHeaderComponent={sheetHead == null ? scrollHead : (
+          <View onLayout={onHead}>{scrollHead}{sheetHead}</View>
+        )}
         ListFooterComponent={footer}
         ListEmptyComponent={empty !== undefined && empty !== null ? <View>{empty}</View> : undefined}
         stickySectionHeadersEnabled={false}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={onViewableItemsChanged ? ROW_VIEWABILITY : undefined}
         showsVerticalScrollIndicator={false}
-        refreshControl={pullRefreshControl(t, refresh)}
         onScroll={gestures?.onScroll ?? listScroll}
         onScrollBeginDrag={gestures?.onScrollBeginDrag ?? onScrollBeginDrag}
         onScrollEndDrag={gestures?.onScrollEndDrag ?? onScrollEndDrag}
@@ -460,14 +480,13 @@ export function MailList<T>({
         removeClippedSubviews={Platform.OS === "android" && rowLayout === undefined}
         {...LIST_WINDOW}
         style={{ flex: 1 }}
-        contentContainerStyle={insets}
+        contentContainerStyle={fitSurface ? { ...insets, minHeight: undefined } : insets}
         keyboardShouldPersistTaps={avoidKeyboard ? "handled" : undefined}
         automaticallyAdjustKeyboardInsets={avoidKeyboard}
       />
     </CellRulesContext.Provider>
   );
-  if (jumpToTop) {
-    return (
+  const column = jumpToTop ? (
       <View style={{ flex: 1 }}>
         {list}
         {far ? (
@@ -495,7 +514,6 @@ export function MailList<T>({
           </Tap>
         ) : null}
       </View>
-    );
-  }
-  return avoidKeyboard && Platform.OS === "android" ? <KeyboardRoom>{list}</KeyboardRoom> : list;
+  ) : avoidKeyboard && Platform.OS === "android" ? <KeyboardRoom>{list}</KeyboardRoom> : list;
+  return refresh && head != null ? <ListWithHeading head={head} insets={insets}>{column}</ListWithHeading> : column;
 }

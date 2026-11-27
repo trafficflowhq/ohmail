@@ -4,24 +4,31 @@
  * correspondents the web's field offers (`addressBook` + `matchAddresses`, up to six); a press
  * writes the one the person picked in place of what they were typing and keeps every entry before it.
  */
-import { act, createElement as h, forwardRef, type ReactNode } from "react";
+import { act, createElement as h, forwardRef, useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { AddressBookEntry } from "@ohmail/client-engine";
 
 const keyboard = new Map<string, () => void>();
+let pasteText: ((text: string) => void) | undefined;
 vi.mock("react-native", async () => ({
   ...(await import("./_rendered-dom")).rnDom,
   Keyboard: { addListener: (name: string, fn: () => void) => (keyboard.set(name, fn), { remove: () => keyboard.delete(name) }) },
-  TextInput: forwardRef<HTMLInputElement, { value: string; accessibilityLabel?: string; onChangeText?: (v: string) => void; onFocus?: () => void; onBlur?: () => void }>(
-    (p, ref) => h("input", {
+  TextInput: forwardRef<HTMLInputElement, { value: string; accessibilityLabel?: string; onChangeText?: (v: string) => void; onFocus?: () => void; onBlur?: () => void; onSubmitEditing?: () => void }>(
+    (p, ref) => {
+      pasteText = p.onChangeText;
+      return h("input", {
       ref, value: p.value, "data-label": p.accessibilityLabel, onFocus: p.onFocus, onBlur: p.onBlur,
       onChange: (e: { target: { value: string } }) => p.onChangeText?.(e.target.value),
-    }),
+      onKeyDown: (e: { key: string }) => { if (e.key === "Enter") p.onSubmitEditing?.(); },
+      });
+    },
   ),
 }));
 vi.mock("../src/theme", () => ({
-  useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }), type: new Proxy({}, { get: () => ({}) }), radius: new Proxy({}, { get: () => 8 }), textCap: 2, hit: 48 }),
+  useTheme: () => ({ mail: true, c: new Proxy({}, { get: () => "#000" }), type: new Proxy({}, { get: () => ({}) }), radius: new Proxy({}, { get: () => 8 }), textCap: 2, hit: 48 }),
 }));
+vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
+vi.mock("../src/ui/MailAvatar", () => ({ MailAvatar: () => null }));
 vi.mock("../src/ui/base", () => ({
   Tap: (p: { children?: ReactNode; accessibilityLabel?: string; onPress?: () => void; hitSlop?: unknown; style?: unknown }) =>
     h("div", { "data-row": p.accessibilityLabel, "data-slop": JSON.stringify(p.hitSlop ?? "auto"), "data-style": JSON.stringify(p.style), onClick: p.onPress }, p.children),
@@ -30,6 +37,7 @@ vi.mock("../src/ui/base", () => ({
 
 const { mount } = await import("./_rendered-dom");
 const { RecipientInput, stepBack } = await import("../src/ui/RecipientInput");
+const { parseRecipients } = await import("../src/state/live");
 
 const entry = (address: string, name = ""): AddressBookEntry => ({ address, name, count: 1, lastAt: 0, evidence: "they_wrote" });
 const BOOK = [
@@ -138,5 +146,68 @@ describe("a recipient field suggests the people the mirror knows", () => {
     f.type("perso");
     expect(f.rows()).not.toEqual([]);
     f.unmount();
+  });
+});
+
+describe("accepted recipients on the phone letter", () => {
+  function paperField(seed = "", editable = true) {
+    const changed: string[] = [];
+    const Controlled = () => {
+      const [value, setValue] = useState(seed);
+      return h(RecipientInput, {
+        label: "To", value, editable, plain: true, book: () => BOOK,
+        onChangeText: (next) => { setValue(next); changed.push(next); },
+      });
+    };
+    const r = mount(h(Controlled));
+    const input = r.el.querySelector("input")!;
+    const press = (word: string) => act(() => {
+      const row = [...r.el.querySelectorAll<HTMLElement>("[data-row]")].find((el) => el.dataset.row === word);
+      expect(row, word).toBeDefined();
+      row!.click();
+    });
+    return { ...r, input, press, changed };
+  }
+
+  it("keeps a quoted display name together as a chip and removes only the named recipient", () => {
+    const f = paperField('"Doe, Ann" <ann@example.test>, ben@example.test, unfinished');
+    try {
+      expect(f.el.textContent).toContain("Doe, Ann");
+      expect(f.input.value).toBe("unfinished");
+      f.press("Remove Doe, Ann");
+      expect(f.changed).toEqual(["ben@example.test, unfinished"]);
+      expect(f.input.value).toBe("unfinished");
+      expect(document.activeElement).toBe(f.input);
+    } finally { f.unmount(); }
+  });
+
+  it("accepts multiple pasted addresses and the next typed recipient in the same field", () => {
+    const f = paperField();
+    try {
+      act(() => pasteText?.('"Doe, Ann" <ann@example.test>\nben@example.test; cy@example.test'));
+      expect(f.input.value).toBe("");
+      expect(f.el.textContent).toContain("Doe, Ann");
+      expect(f.el.textContent).toContain("cy@example.test");
+      act(() => pasteText?.("dee@example.test"));
+      expect(f.input.value).toBe("dee@example.test");
+      act(() => f.input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })));
+      expect(f.input.value).toBe("");
+      expect(parseRecipients(f.changed.at(-1)!)).toEqual([
+        { name: "Doe, Ann", address: "ann@example.test" },
+        { name: null, address: "ben@example.test" },
+        { name: null, address: "cy@example.test" },
+        { name: null, address: "dee@example.test" },
+      ]);
+    } finally { f.unmount(); }
+  });
+
+  it("shows saved recipients as chips and keeps a pending send read-only", () => {
+    const f = paperField("ben@example.test", false);
+    try {
+      expect(f.el.textContent).toContain("ben@example.test");
+      expect(f.input.value).toBe("");
+      expect(f.el.querySelector("[data-row]")).toBeNull();
+      expect(f.changed).toEqual([]);
+    } finally { f.unmount(); }
   });
 });

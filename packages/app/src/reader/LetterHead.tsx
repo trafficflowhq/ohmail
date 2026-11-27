@@ -4,6 +4,7 @@ import { Icon, type Point } from "@ohmail/ui/base";
 import { BlockedImages, type MessageHeadProps } from "@ohmail/ui/mail";
 import {
   awayAnswerStamp,
+  distinctDeliveryLabel,
   headStamp,
   isForwardedByUs,
   letterStampInstant,
@@ -97,7 +98,7 @@ export function useLetterHeadPresentation(props: LetterHeadProps) {
     senderCheck: identity ? senderCheckSentence(screener, identity) : undefined,
     amount: streamCard || (preview && (place !== "receipts" || message.subject)) ? undefined : message.amount,
     delivery: delivery ? (
-      <DeliveryLabel place={place === "reads"} title={tm("deliveredToTitle", { label: delivery })}>
+      <DeliveryLabel title={tm("deliveredToTitle", { label: delivery })}>
         {tm("deliveredTo", { label: delivery })}
       </DeliveryLabel>
     ) : undefined,
@@ -174,7 +175,7 @@ function useLetterHead({ message, copy, onPerson, card, preview = false, streamC
   const recipients = recipientRows(message, own);
   const delivery =
     (preview || streamCard) && (place === "reads" || place === "receipts")
-      ? distinctDelivery(mailbox, recipients)
+      ? distinctDeliveryLabel(mailbox, recipients, own)
       : null;
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [full, setFull] = useState(false);
@@ -279,15 +280,6 @@ function useLetterHead({ message, copy, onPerson, card, preview = false, streamC
     recipientName,
     lines,
   };
-}
-
-/** A bare delivery address already printed on the recipient line adds no routing information. */
-function distinctDelivery(mailbox: string | null, recipients: RecipientRows): string | null {
-  if (mailbox === null) return null;
-  const repeated = [...recipients.to, ...recipients.cc].some(
-    (person) => person.me && person.address.trim().toLowerCase() === mailbox.toLowerCase(),
-  );
-  return repeated ? null : mailbox;
 }
 
 type Person = EngineMessage["from"];

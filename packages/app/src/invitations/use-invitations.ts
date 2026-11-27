@@ -3,16 +3,8 @@
  * groups again whenever the mirror moves. Nothing is kept: a cancel that arrives while a row is open is drawn at once.
  */
 import { useEffect, useMemo, useState } from "react";
-import {
-  addDays,
-  dayOfIso,
-  isoOfDay,
-  nowIn,
-  occurrencesIn,
-  readerZones,
-  type CalendarPort,
-} from "@ohmail/app-logic/calendar";
-import { invitationsOf, type InvitationGroups } from "@ohmail/app-logic/calendar/invitations";
+import { isoOfDay, nowIn, readerZones, type CalendarPort } from "@ohmail/app-logic/calendar";
+import { invitationsInWindow, type InvitationGroups } from "@ohmail/app-logic/calendar/invitations";
 import { ownAddressesOf } from "@ohmail/app-logic/mail-state";
 import { useFrame } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
@@ -58,18 +50,16 @@ export function useInvitations(port: CalendarPort | typeof NONE): Invitations | 
   const today = now === null ? null : isoOfDay(now.day);
   return useMemo(() => {
     if (port === NONE || today === null) return null;
-    const from = dayOfIso(today);
-    const to = dayOfIso(addDays(today, port.held().window.daysAhead));
-    if (from === null || to === null) return null;
-    const occurrences = occurrencesIn({ ...sources, query: { from, to }, zone, zones }).shown;
-    const groups = invitationsOf({
-      occurrences,
+    const groups = invitationsInWindow({
+      events: sources.events,
+      calendars: sources.calendars,
+      daysAhead: port.held().window.daysAhead,
       connections: sources.connections,
       ownAddresses: own,
       todayKey: today,
       zone,
       zones,
     });
-    return { groups, today, sources };
+    return groups === null ? null : { groups, today, sources };
   }, [sources, own, today, zone, zones, port]);
 }

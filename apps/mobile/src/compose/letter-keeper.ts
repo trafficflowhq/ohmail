@@ -5,7 +5,7 @@
  * writes it at once. A keep or a send is MARKED before its mutation is dispatched, so a hard stop
  * between the two leaves the next launch the truth: the letter was being kept, or was sent.
  */
-import { keptFit, rowHoldsLetter, wordsOf, type Letter, type LetterDoor, type LetterFile } from "./letter-store";
+import { keptFit, rowHoldsLetter, wordsOf, type Letter, type LetterDoor, type LetterFile, type LetterMark } from "./letter-store";
 
 /** How long after the last change the letter reaches the disk. */
 export const LETTER_WRITE_MS = 500;
@@ -20,7 +20,9 @@ let session: LetterSession | null = null;
 export function openLetterSession(s: LetterSession | null): void { session = s; }
 export const letterSession = (): LetterSession | null => session;
 
-export type LetterWords = Pick<Letter, "mode" | "messageId" | "mailboxId" | "to" | "cc" | "bcc" | "subject" | "body" | "html" | "envelope">;
+export type LetterWords = Pick<Letter, "mode" | "messageId" | "mailboxId" | "fromEdited" | "to" | "cc" | "bcc" | "subject" | "body" | "html" | "envelope"
+  | "replyRecipientsEdited" | "replySubjectEdited">;
+type EnvelopeMark = Pick<LetterMark, "mailboxId" | "draftId" | "forwardParts">;
 
 /** What a keep answered: the row it made or updated, or the key a queued save waits under. */
 export interface KeptRow { draftId: string | null; key: string | null; revision?: string }
@@ -44,12 +46,12 @@ export interface LetterKeeper {
   overKeepLimit(): LetterFile[];
   /** Drop the files that do not fit before a keep: the close named them. */
   dropOverLimit(): void;
-  markKeep(): void;
+  markKeep(draftId?: string | null): void;
   keepAnswered(row: KeptRow | null, savedAs?: string): void;
-  markSend(sig?: string | null): void;
+  markSend(sig?: string | null, sigHtml?: string | null, envelope?: EnvelopeMark): void;
   sendAnswered(r: SendAnswer): void;
   /** A send press: marked on the disk before `dispatch` writes its outbox row, then answered. */
-  sendVia<R extends SendAnswer>(dispatch: () => Promise<R>, sig?: string | null): Promise<R>;
+  sendVia<R extends SendAnswer>(dispatch: () => Promise<R>, sig?: string | null, sigHtml?: string | null, envelope?: EnvelopeMark): Promise<R>;
   /** Cancel send withdrew it: the files stay with the row that holds the words, if one does. */
   cancelled(draftId: string | null): void;
   /** Nothing worth keeping, or the person discarded it. */
@@ -119,7 +121,13 @@ export function openLetterKeeper(o: KeeperOptions): LetterKeeper {
     owned.delete(o.id);
   };
 
-  const markSend = (sig: string | null = null): void => { set({ send: { at: now().toISOString(), key: null, sig } }); write(); };
+  const markSend = (sig: string | null = null, sigHtml?: string | null, envelope?: EnvelopeMark): void => {
+    set({ send: {
+      at: now().toISOString(), key: null, sig,
+      ...(sigHtml ? { sigHtml } : {}), ...envelope,
+    } });
+    write();
+  };
   const sendAnswered = (r: SendAnswer): void => {
     if (r.outcome === "sent" || r.outcome === "superseded") { drop(); return; }
     // The server holds an unverified send in its row: the letter is that row, its files with it.
@@ -165,17 +173,20 @@ export function openLetterKeeper(o: KeeperOptions): LetterKeeper {
       write();
       for (const f of over) o.door.dropFile(f.fileId);
     },
-    markKeep: () => { set({ keep: { at: now().toISOString(), key: null } }); write(); },
+    markKeep: (draftId = letter.draftId) => {
+      set({ keep: { at: now().toISOString(), key: null, mailboxId: letter.mailboxId ?? undefined, draftId } });
+      write();
+    },
     keepAnswered: (row, savedAs) => {
       if (row === null) { set({ keep: null }); write(); return; }
       if (row.draftId !== null) { bound(row.draftId, savedAs, row.revision); return; }
-      set({ keep: { at: letter.keep?.at ?? now().toISOString(), key: row.key }, ...(savedAs !== undefined ? { savedAs } : {}) });
+      set({ keep: { ...letter.keep, at: letter.keep?.at ?? now().toISOString(), key: row.key }, ...(savedAs !== undefined ? { savedAs } : {}) });
       write();
     },
     markSend,
     sendAnswered,
-    sendVia: async (dispatch, sig) => {
-      markSend(sig);
+    sendVia: async (dispatch, sig, sigHtml, envelope) => {
+      markSend(sig, sigHtml, envelope);
       const r = await dispatch();
       sendAnswered(r);
       return r;

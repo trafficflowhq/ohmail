@@ -22,7 +22,7 @@ const read = (f: string): string => readFileSync(path.join(ROOT, f), "utf8");
 
 const SCHEMA_MAIL = "packages/db/src/schema-mail.ts";
 const SCHEMA_DEVICE = "packages/db/src/schema-mail-sqlite.ts";
-const ACCOUNT_SWEEP = "packages/services/src/account-deletion-service.ts";
+const ACCOUNT_SWEEP = "packages/db/src/account-deletion-service.ts";
 const MAILBOX_SWEEP = "packages/db/src/mailbox-erasure.ts";
 const DEVICE_WALK = "apps/sidecar/src/local-mirror.ts";
 

@@ -20,6 +20,7 @@ import { Empty, Screen, Tail, Tap, Txt, useListInsets, ViewHead } from "../src/u
 import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { ListDetail, useListDetail } from "../src/ui/list-detail";
 import { MailList } from "../src/ui/MailList";
+import { MailPlaceDock } from "../src/ui/MailPlaceDock";
 import { MessageReader } from "../src/ui/MessageReader";
 import { Gated } from "../src/ui/Gated";
 import { MailRow } from "../src/ui/MailRow";
@@ -256,7 +257,7 @@ function HistoryBody({ inPane }: { inPane: boolean }) {
       open={open}
       onClose={close}
       toRoute={(id) => `/message/${id}`}
-      list={list}
+      list={t.mail && open === null ? <MailPlaceDock>{list}</MailPlaceDock> : list}
       renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
     />
   );

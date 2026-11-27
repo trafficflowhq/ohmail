@@ -1,5 +1,5 @@
-import { screenerMode } from "../mail-state/mail-state.js";
-import type { OrganizerRefusal } from "./organizer-refusal.js";
+import { screenerMode, type ScreenerRole } from "../mail-state/mail-state.js";
+import { isNothingOrganizes, type OrganizerRefusal } from "./organizer-refusal.js";
 
 /**
  * WHAT A PRESS ON THE RULES PANE CAN DO HERE — the server's `planAccountFanOut`, read from the
@@ -34,6 +34,13 @@ export function rulesPostureOf(facts: ReadonlyArray<Row> | null): RulesPosture {
   const reason = unheld ? "no_organizer" : role.reason ?? "no_organizer";
   if (reason === "no_organizer" && live.some((m) => Boolean(m.takeoverAuthorizedAt))) return { mode: "starting" };
   return { mode: "blocked", reason, name: role.name };
+}
+
+/** The Screener withholds a decision the organizer cannot take, unless a takeover already stands. */
+export function screenerPressRefused(
+  role: Pick<ScreenerRole, "mode" | "takeoverAsked"> & { pressRefusal?: OrganizerRefusal | null },
+): boolean {
+  return role.takeoverAsked !== true && (role.mode === "blocked" || isNothingOrganizes(role.pressRefusal));
 }
 
 /** The refusal a press would meet, before it is pressed — `null` where a press can land. */

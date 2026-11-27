@@ -96,33 +96,35 @@ function TriageMail({ inPane, pile }: { inPane: boolean; pile?: string }) {
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
       {inPane ? <PaneTop /> : t.mail ? <TopBar /> : <DetailBar /> }
-      <Scroller bounded refresh={pull}>
-        {t.mail ? (
-          <ViewHead title={only === null ? Copy.triage : pileTitle(only)}
-            leading={inPane ? undefined : <MailCalendarSwitch />}
-            right={shown === "replyLater" && run.canStart ? (
-              <Button label={Copy.replyRunStart} icon="spark" variant="quiet" style={{ backgroundColor: t.c.tint2 }} onPress={run.start} />
-            ) : null}
-          />
-        ) : (
-          <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
-            <Txt variant="h1">{only === null ? Copy.triage : pileTitle(only)}</Txt>
-            {only === null ? (
-              <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>{settled ? w.pilesMeta : " "}</Txt>
-            ) : null}
-          </View>
-        )}
-        {tabs && w.piles.length > 0 ? (
-          <Segmented
-            value={picked}
-            onChange={setPicked}
-            segments={w.piles.map((p) => ({
-              value: p.kind, label: p.title, ...(settled ? { count: p.items.length } : {}),
-            }))}
-            style={{ marginHorizontal: 6, marginBottom: 12 }}
-          />
-        ) : null}
-
+      <Scroller bounded refresh={pull} head={
+        <>
+          {t.mail ? (
+            <ViewHead title={only === null ? Copy.triage : pileTitle(only)}
+              leading={inPane ? undefined : <MailCalendarSwitch />}
+              right={shown === "replyLater" && run.canStart ? (
+                <Button label={Copy.replyRunStart} icon="spark" variant="quiet" style={{ backgroundColor: t.c.tint2 }} onPress={run.start} />
+              ) : null}
+            />
+          ) : (
+            <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
+              <Txt variant="h1">{only === null ? Copy.triage : pileTitle(only)}</Txt>
+              {only === null ? (
+                <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>{settled ? w.pilesMeta : " "}</Txt>
+              ) : null}
+            </View>
+          )}
+          {tabs && w.piles.length > 0 ? (
+            <Segmented
+              value={picked}
+              onChange={setPicked}
+              segments={w.piles.map((p) => ({
+                value: p.kind, label: p.title, ...(settled ? { count: p.items.length } : {}),
+              }))}
+              style={{ marginHorizontal: 6, marginBottom: 12 }}
+            />
+          ) : null}
+        </>
+      }>
         {piles.map((p, pi) => (
           <View key={p.kind} style={{ marginBottom: 16 }}>
             {/*

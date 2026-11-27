@@ -586,5 +586,71 @@ describe("the sync doorbell hands its answer to a listener", () => {
     expect(heard).toHaveLength(1);
     view.unmount();
   });
+
+  it("the drawer and list share the pending request and both wait for its answer after the drain", async () => {
+    const phone = await phoneAfterThePairingEnded({ ownMailbox: false, remove: null });
+    scene.store = new ServerProfileStore(phone.kv);
+    scene.deps = phone.deps;
+    const answer = { requested: 0, requestedAt: "2026-11-13T12:00:00.000Z", mailboxes: [] };
+    let reply!: () => void;
+    const pending = new Promise<typeof answer>((resolve) => { reply = () => resolve(answer); });
+    const requestPull = vi.fn(() => pending);
+    const syncOnce = vi.fn(async () => undefined);
+    const session = {
+      profile: phone.paired, standalone: false, bearer: null,
+      verifyIdentity: async () => ({ kind: "match" }),
+      store: { close: async () => undefined, version: () => 0 },
+      fetch: async () => new Response("{}", { status: 404 }),
+      engine: { ...QUIET, start: async () => undefined, syncOnce, requestPull },
+    };
+    scene.connect = async () => ({ kind: "connected", session });
+    let conn: Connection | null = null;
+    function Probe() { conn = useConnection(); return null; }
+    const view = mount(h(ConnectionProvider, null, h(Probe)));
+    try {
+      await settle();
+      expect(conn!.state.k, "premise: the launch opened the pairing").toBe("live");
+      const drawer = vi.fn();
+      const list = vi.fn();
+      const ended = vi.fn();
+      let first!: Promise<void>;
+      let second!: Promise<void>;
+      await act(async () => { first = conn!.syncNow(drawer).then(ended); });
+      await settle();
+      expect(requestPull).toHaveBeenCalledTimes(1);
+      expect(syncOnce).toHaveBeenCalledTimes(1);
+      expect(ended).not.toHaveBeenCalled();
+      await act(async () => { second = conn!.syncNow(list).then(ended); });
+      await settle();
+      expect(requestPull).toHaveBeenCalledTimes(1);
+      expect(syncOnce).toHaveBeenCalledTimes(1);
+      expect(ended).not.toHaveBeenCalled();
+
+      // The wake can drain again while the ring still waits. It shares the wire request
+      // and finishes on its own drain, while the drawer and list keep waiting for the answer.
+      await act(async () => { await conn!.syncNow(); });
+      expect(requestPull).toHaveBeenCalledTimes(1);
+      expect(syncOnce).toHaveBeenCalledTimes(2);
+      expect(ended).not.toHaveBeenCalled();
+
+      await act(async () => { reply(); await Promise.all([first, second]); });
+      expect(drawer).toHaveBeenCalledTimes(1);
+      expect(drawer).toHaveBeenCalledWith(answer);
+      expect(list).toHaveBeenCalledTimes(1);
+      expect(list).toHaveBeenCalledWith(answer);
+      expect(ended).toHaveBeenCalledTimes(2);
+
+      let finishAfterLeaving!: () => void;
+      requestPull.mockReturnValueOnce(new Promise<typeof answer>((resolve) => { finishAfterLeaving = () => resolve(answer); }));
+      const retired = vi.fn();
+      let departed!: Promise<void>;
+      await act(async () => { departed = conn!.syncNow(retired); });
+      await settle();
+      expect(requestPull).toHaveBeenCalledTimes(2);
+      await act(async () => { await conn!.disconnect(); });
+      await act(async () => { finishAfterLeaving(); await departed; });
+      expect(retired).not.toHaveBeenCalled();
+    } finally { view.unmount(); }
+  });
 });
 

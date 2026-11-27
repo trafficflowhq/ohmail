@@ -134,7 +134,8 @@ describe("the Screener list names the mailbox a stranger wrote to", () => {
   it("the sheet states it too, above the mail the decision is about", async () => {
     await mount(TWO, true);
     const reading = within(host).getByRole("region", { name: "Reading" });
-    const caption = within(reading).getByText("Delivered to Work", { exact: true });
+    const caption = within(reading).getByRole("note", { name: "Delivered to Work" });
+    expect(caption.textContent).toBe("Delivered to Work");
     const letter = within(reading).getByRole("article");
     expect(caption.compareDocumentPosition(letter) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

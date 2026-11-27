@@ -160,7 +160,8 @@ it("keeps another exact phone hit available when an in-flight reply confirms and
     expect(p.world().message(other.id)).toMatchObject({ id: other.id });
     expect(p.world().message(other.id)?.pendingReplyCopy).toBeUndefined();
     expect(p.world().message(other.id, true)?.pendingReplyCopy).toBe(true);
-
+    expect(await p.actions.pileToggle(other.id, "replyLater")).toBe(false);
+    expect(p.posted.some((entry) => entry.startsWith("triage_set:"))).toBe(false);
     const stored = msg("mailbox-copy", AT + 2000, { ...OURS, messageIdHeader: header });
     await p.engine.syncOnce();
     p.deliver(stored);
@@ -170,6 +171,10 @@ it("keeps another exact phone hit available when an in-flight reply confirms and
     expect(p.world().message(stored.id)?.pendingReplyCopy).toBeUndefined();
     expect(p.world().message(other.id)?.pendingReplyCopy).toBeUndefined();
     expect(p.world().message(other.id)?.id).toBe(other.id);
+    expect(await p.actions.pileToggle(other.id, "replyLater")).toBe(true);
+    expect(p.posted.filter((entry) => entry.startsWith("triage_set:"))).toContain(
+      "triage_set:exact-hit:reply_later",
+    );
   } finally {
     p.engine.dispose();
   }
@@ -656,7 +661,7 @@ it("holds native filing after a reply from a held History page", async () => {
     expect((await p.actions.sendReply(parent.id, "A new reply.", false)).outcome).toBe("sent");
     expect(p.posted.some((entry) => entry.startsWith("mail_send:"))).toBe(true);
     const opened = p.world().message(parent.id)!;
-    if (!opened.pendingReplyCopy) await p.actions.pileToggle(opened.id, "setAside");
+    expect(await p.actions.pileToggle(opened.id, "setAside")).toBe(false);
     expect({
       disabled: opened.pendingReplyCopy ?? false,
       filedOriginal: p.posted.includes("triage_set:off-mirror-parent:set_aside"),

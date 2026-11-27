@@ -9,15 +9,16 @@
  */
 import { cssPoint } from "@ohmail/app-logic/geometry";
 import {
-  pullClaims,
-  pullFires,
-  pullOffset,
+  pullEnd,
+  pullMove,
+  pullStart,
   swipeDrawn,
   swipeEnd,
   swipeMove,
   swipeStart,
   type SwipeSides,
   type SwipeTrack,
+  type PullTrack,
 } from "@ohmail/app-logic/touch";
 import { startsAtDrawerEdge } from "../frame/rail-gesture.js";
 import { NONE, type None } from "../host/index.js";
@@ -32,20 +33,23 @@ export interface ListLive {
 export interface ListTouchStore {
   /** How far the row `id` is drawn now, in px; 0 at rest. */
   pulledOf(id: string): number;
-  /** How far the list is drawn down by a pull, in px. */
-  pullOf(): number;
+  /** How far the list is drawn down by a claimed pull, in px, or null between gestures. */
+  pullOf(): number | null;
   /** How many releases have pulled: each one holds the spinner while the pull it asked for runs. */
   askedOf(): number;
   subscribe(changed: () => void): () => void;
   /** The verbs at a row's sides, by the row's id (its `data-id`). */
   sides(id: string, sides: RowSides): () => void;
   /** Listen on the list's scroller; the returned call takes every listener and the mark away. */
-  attach(scroller: HTMLElement, live: () => ListLive, pull: boolean): () => void;
+  attach(scroller: HTMLElement, live: () => ListLive, enabled: { swipe: boolean; pull: boolean }): () => void;
 }
 
 /** A press on a control inside a row is the control's, never the start of a swipe. */
 const CONTROLS = "button, a, input, textarea, select, [data-press]";
+const PULL_CONTROLS = `${CONTROLS}, [role=button], [role=menuitem], [contenteditable]`;
 const MARK = "data-touch-list";
+const PULL_MARK = "data-pull-list";
+const AT_TOP = "data-pull-at-top";
 
 interface Swiping {
   readonly id: string;
@@ -57,10 +61,8 @@ interface Swiping {
 }
 
 interface Pulling {
-  readonly x: number;
-  readonly y: number;
-  claimed: boolean;
-  dy: number;
+  readonly finger: number;
+  track: PullTrack;
 }
 
 /** One press on the list, as both gestures see it: one may claim it, never both. */
@@ -82,7 +84,7 @@ function swallowRelease(scroller: HTMLElement, press: Press): void {
 /** What the listeners tell the store. */
 interface Drawn {
   row(next: { id: string; dx: number } | null): void;
-  pull(down: number): void;
+  pull(down: number | null): void;
   /** A release past the mark: the spinner holds, whether this release starts the pull or one already runs. */
   asked(): void;
   verbs(id: string): RowSides | undefined;
@@ -129,7 +131,7 @@ function swipeListeners(scroller: HTMLElement, press: Press, drawn: Drawn, live:
     if (!s.track.claimed) return;
     if (!was) {
       /* A selection standing, or a pull under way: the row is not the finger's after all. */
-      if (live().off || press.pulling?.claimed) {
+      if (live().off || press.pulling?.track.claimed) {
         press.swiping = null;
         return;
       }
@@ -151,64 +153,79 @@ function swipeListeners(scroller: HTMLElement, press: Press, drawn: Drawn, live:
     drawn.row(null);
     if (verb !== null) drawn.verbs(s.id)?.[verb]?.press();
   };
-  const click = (event: MouseEvent) => {
-    if (!press.swallow) return;
-    press.swallow = false;
-    event.preventDefault();
-    event.stopPropagation();
-  };
   return [
     ["pointerdown", down, PASSIVE],
     ["pointermove", move, PASSIVE],
     ["pointerup", (event: PointerEvent) => up(event, false), PASSIVE],
     ["pointercancel", (event: PointerEvent) => up(event, true), PASSIVE],
-    ["click", click, { capture: true }],
   ];
 }
 
 /** A pull at the list's top, read from touch events on the scroller: only they can keep the browser from panning. */
 function pullListeners(scroller: HTMLElement, press: Press, drawn: Drawn, live: () => ListLive): Listen[] {
-  const start = (event: TouchEvent) => {
-    if (press.pulling?.claimed) drawn.pull(0);
-    press.pulling = null;
-    const finger = event.touches[0];
-    if (!finger || event.touches.length > 1 || scroller.scrollTop > 0) return;
-    press.pulling = { x: finger.clientX, y: finger.clientY, claimed: false, dy: 0 };
-  };
-  const move = (event: TouchEvent) => {
-    const p = press.pulling;
-    const finger = event.touches[0];
-    if (!p || !finger) return;
-    const dx = finger.clientX - p.x;
-    const dy = finger.clientY - p.y;
-    if (!p.claimed) {
-      if (press.swiping?.track.claimed || scroller.scrollTop > 0) {
-        press.pulling = null;
-        return;
-      }
-      if (!pullClaims(dx, dy)) return;
-      p.claimed = true;
-    }
-    event.preventDefault();
-    p.dy = dy;
-    drawn.pull(pullOffset(dy));
-  };
+  const atTop = () => scroller.scrollTop <= 0;
+  const syncTop = () => scroller.toggleAttribute(AT_TOP, atTop());
   const end = (cancelled: boolean) => {
     const p = press.pulling;
     press.pulling = null;
-    if (!p?.claimed) return;
-    drawn.pull(0);
-    if (!cancelled) swallowRelease(scroller, press);
+    if (!p) return;
     const now = live().pull;
-    if (cancelled || now === NONE || !pullFires(p.dy)) return;
-    drawn.asked();
-    /* One pull at a time: a release while one runs only holds the spinner for it. */
-    if (!now.busy) now.run();
+    const outcome = pullEnd(p.track, cancelled || now === NONE, now !== NONE && now.busy);
+    if (!outcome.claimed) return;
+    drawn.pull(null);
+    if (!cancelled) swallowRelease(scroller, press);
+    if (outcome.hold) drawn.asked();
+    if (outcome.run && now !== NONE) now.run();
   };
+  const start = (event: TouchEvent) => {
+    end(true);
+    const finger = event.touches[0];
+    const target = event.target as Element | null;
+    if (!finger || event.touches.length !== 1 || live().off || target?.closest(PULL_CONTROLS)) return;
+    const track = pullStart(finger.clientX, finger.clientY, atTop());
+    if (track) press.pulling = { finger: finger.identifier, track };
+  };
+  const move = (event: TouchEvent) => {
+    const p = press.pulling;
+    if (!p) return;
+    const finger = event.touches[0];
+    if (
+      !finger ||
+      finger.identifier !== p.finger ||
+      event.touches.length !== 1 ||
+      event.defaultPrevented ||
+      !event.cancelable ||
+      live().off ||
+      press.swiping?.track.claimed
+    ) {
+      end(true);
+      return;
+    }
+    const track = pullMove(p.track, finger.clientX, finger.clientY, atTop());
+    if (!track) {
+      end(true);
+      return;
+    }
+    p.track = track;
+    if (track.claimed) {
+      event.preventDefault();
+      drawn.pull(track.offset);
+    }
+  };
+  const release = (event: TouchEvent) => {
+    const p = press.pulling;
+    const finger = event.changedTouches?.[0];
+    if (p?.track.claimed && finger?.identifier === p.finger) {
+      p.track = pullMove(p.track, finger.clientX, finger.clientY, atTop()) ?? p.track;
+    }
+    end(false);
+  };
+  syncTop();
   return [
+    ["scroll", syncTop, PASSIVE],
     ["touchstart", start, PASSIVE],
     ["touchmove", move, { capture: true, passive: false }],
-    ["touchend", () => end(false), PASSIVE],
+    ["touchend", release, PASSIVE],
     ["touchcancel", () => end(true), PASSIVE],
   ];
 }
@@ -217,7 +234,7 @@ export function createListTouch(): ListTouchStore {
   const told = new Set<() => void>();
   const verbs = new Map<string, RowSides>();
   let pulled: { id: string; dx: number } | null = null;
-  let pull = 0;
+  let pull: number | null = null;
   let asked = 0;
   const tell = () => {
     for (const changed of [...told]) changed();
@@ -254,21 +271,31 @@ export function createListTouch(): ListTouchStore {
         if (verbs.get(id) === sides) verbs.delete(id);
       };
     },
-    attach(scroller, live, withPull) {
+    attach(scroller, live, enabled) {
       const press: Press = { swiping: null, pulling: null, swallow: false };
-      const listens = [
-        ...swipeListeners(scroller, press, drawn, live),
-        ...(withPull ? pullListeners(scroller, press, drawn, live) : []),
+      const click = (event: MouseEvent) => {
+        if (!press.swallow) return;
+        press.swallow = false;
+        event.preventDefault();
+        event.stopPropagation();
+      };
+      const listens: Listen[] = [
+        ["click", click, { capture: true }],
+        ...(enabled.swipe ? swipeListeners(scroller, press, drawn, live) : []),
+        ...(enabled.pull ? pullListeners(scroller, press, drawn, live) : []),
       ];
-      scroller.setAttribute(MARK, "");
+      if (enabled.swipe) scroller.setAttribute(MARK, "");
+      if (enabled.pull) scroller.setAttribute(PULL_MARK, "");
       for (const [type, listener, options] of listens)
         scroller.addEventListener(type, listener as EventListener, options);
       return () => {
         scroller.removeAttribute(MARK);
+        scroller.removeAttribute(PULL_MARK);
+        scroller.removeAttribute(AT_TOP);
         for (const [type, listener, options] of listens)
           scroller.removeEventListener(type, listener as EventListener, options);
         drawn.row(null);
-        drawn.pull(0);
+        drawn.pull(null);
       };
     },
   };

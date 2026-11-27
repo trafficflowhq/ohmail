@@ -28,6 +28,7 @@ export function listenToTouch(
     rule.touchDown(now());
   };
   const onTouchMove = (e: TouchEvent): void => {
+    if (e.defaultPrevented) return;
     rule.hand("touch", now(), true);
     const t = e.touches[0];
     if (!t || !touchFrom) return;

@@ -6,7 +6,7 @@
  * query costs NO wire request: the answer is the device's. The screen and the three nav
  * entries are pinned in the workspace's structure idiom (no RN renderer here).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -103,6 +103,166 @@ describe("the device answers a search from its mirror, off the wire", () => {
     expect(face.query("invoice").items.map((m) => m.id)).toEqual(["m2"]);
     live.store.close();
     live.fake.server.close();
+  });
+});
+
+describe("the Place picker can read empty folders from its own account", () => {
+  const places = [{ folder: "INBOX", count: 3 }, { folder: "ohmail/Quarantine", count: 0 }];
+
+  async function inventoryDoor(answer: () => Promise<Response> = async () => Response.json({ places })) {
+    const origin = "https://search.test";
+    const accountId = "acct-places";
+    let identity: string | null = accountId;
+    const fetch = vi.fn(async (resource: string) => {
+      const url = new URL(resource);
+      if (url.pathname === "/auth/session" && identity !== null) {
+        return Response.json({ user: { accountId: identity } });
+      }
+      if (url.pathname === "/search" && url.searchParams.get("places") === "1") return answer();
+      return new Response(null, { status: 404 });
+    });
+    const boot = await bootEngine({ ...deps, fetch }, { origin, token: "tok-places", accountId });
+    if (boot.kind !== "ready") throw new Error("boot refused");
+    return { ...boot, fetch, setIdentity: (account: string | null) => { identity = account; } };
+  }
+
+  it("waits for the identity verdict before reading genuine zeros from the archive", async () => {
+    const boot = await inventoryDoor();
+    try {
+      expect(await boot.engine.searchPlaces()).toBeNull();
+      expect(boot.fetch).not.toHaveBeenCalled();
+
+      const identity = boot.verifyIdentity();
+      const inventory = boot.engine.searchPlaces();
+      expect(await identity).toEqual({ kind: "verified" });
+      expect(await inventory).toEqual(places);
+      expect(boot.fetch.mock.calls.map(([url]) => new URL(url).pathname + new URL(url).search))
+        .toEqual(["/auth/session", "/search?places=1"]);
+    } finally {
+      boot.store.close();
+    }
+  });
+
+  it("drops an in-flight inventory when a new identity verdict refuses the account", async () => {
+    let release = (_response: Response) => {};
+    const response = new Promise<Response>((resolve) => { release = resolve; });
+    const servePlaces = vi.fn(() => response);
+    const boot = await inventoryDoor(servePlaces);
+    try {
+      expect(await boot.verifyIdentity()).toEqual({ kind: "verified" });
+      const inventory = boot.engine.searchPlaces();
+      await vi.waitFor(() => expect(servePlaces).toHaveBeenCalledOnce());
+
+      boot.setIdentity("acct-different");
+      expect((await boot.verifyIdentity()).kind).toBe("mismatch");
+      release(Response.json({ places }));
+      expect(await inventory).toBeNull();
+      expect(await boot.engine.searchPlaces()).toBeNull();
+      expect(servePlaces).toHaveBeenCalledOnce();
+    } finally {
+      release(new Response(null, { status: 503 }));
+      boot.store.close();
+    }
+  });
+
+  it("keeps counts unknown when the archive cannot confirm its account", async () => {
+    const boot = await inventoryDoor();
+    try {
+      boot.setIdentity(null);
+      expect(await boot.verifyIdentity()).toEqual({ kind: "unverified" });
+      expect(await boot.engine.searchPlaces()).toBeNull();
+      expect(boot.fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(["/auth/session"]);
+    } finally {
+      boot.store.close();
+    }
+  });
+
+  it.each([
+    { name: "matching", renewed: "test-account", expected: places },
+    { name: "different", renewed: "other-account", expected: null },
+    { name: "timed out again", renewed: null, expected: null },
+  ])("requires fresh owner proof after a slow identity response ($name)", async ({ renewed, expected }) => {
+    const accountId = "test-account";
+    let settle!: (res: Response) => void;
+    const firstReply = new Promise<Response>((resolve) => { settle = resolve; });
+    let settleRetry!: (res: Response) => void;
+    const lateRetry = new Promise<Response>((resolve) => { settleRetry = resolve; });
+    let identityReads = 0;
+    const inventory = vi.fn(() => Response.json({ places }));
+    const fetch = vi.fn(async (resource: string) => {
+      const url = new URL(resource);
+      if (url.pathname === "/auth/session") {
+        identityReads++;
+        if (identityReads === 1) return firstReply;
+        return renewed === null ? lateRetry : Response.json({ user: { accountId: renewed } });
+      }
+      if (url.pathname === "/api/search" && url.searchParams.get("places") === "1") return inventory();
+      return new Response(null, { status: 404 });
+    });
+    const origin = "https://search.test";
+    const boot = await bootEngine({ ...deps, fetch }, {
+      origin, apiBase: `${origin}/api`, token: "fixture", accountId, identityDeadlineMs: 10,
+    });
+    if (boot.kind !== "ready") throw new Error("boot refused");
+    try {
+      expect(await boot.verifyIdentity()).toEqual({ kind: "unverified" });
+      settle(Response.json({ user: { accountId } }));
+      const first = boot.engine.searchPlaces();
+      const second = boot.engine.searchPlaces();
+      expect(await Promise.all([first, second])).toEqual([expected, expected]);
+      expect(identityReads).toBe(2);
+      expect(inventory).toHaveBeenCalledTimes(expected === null ? 0 : 2);
+      if (expected === null) {
+        settleRetry(Response.json({ user: { accountId } }));
+        expect(await boot.engine.searchPlaces()).toBeNull();
+        expect(identityReads).toBe(2);
+        expect(inventory).not.toHaveBeenCalled();
+      }
+    } finally {
+      settle(new Response(null, { status: 503 }));
+      settleRetry(new Response(null, { status: 503 }));
+      boot.store.close();
+    }
+  });
+
+  it("reads the full inventory when renewal finishes after both early checks timed out", async () => {
+    const origin = "https://search.test";
+    const accountId = "sample-owner";
+    let generation = 1;
+    const late: ((response: Response) => void)[] = [];
+    let identityReads = 0;
+    const inventory = vi.fn(() => Response.json({ places }));
+    const fetch = async (resource: string) => {
+      const url = new URL(resource);
+      if (url.pathname === "/auth/session") {
+        identityReads++;
+        return generation === 1
+          ? new Promise<Response>((resolve) => { late.push(resolve); })
+          : Response.json({ user: { accountId } });
+      }
+      if (url.pathname === "/api/search" && url.searchParams.get("places") === "1") return inventory();
+      return new Response(null, { status: 404 });
+    };
+    const boot = await bootEngine(deps, {
+      origin, apiBase: `${origin}/api`, accountId, identityDeadlineMs: 10,
+      auth: { headers: () => ({}), fetch, credentialGeneration: () => generation },
+    });
+    if (boot.kind !== "ready") throw new Error("boot refused");
+    try {
+      expect(await boot.verifyIdentity()).toEqual({ kind: "unverified" });
+      expect(await boot.engine.searchPlaces()).toBeNull();
+      expect(await boot.engine.searchPlaces()).toBeNull();
+      expect(identityReads).toBe(2);
+      expect(inventory).not.toHaveBeenCalled();
+
+      generation++;
+      expect(await boot.engine.searchPlaces()).toEqual(places);
+      expect(identityReads).toBe(3);
+      expect(inventory).toHaveBeenCalledOnce();
+    } finally {
+      for (const resolve of late) resolve(new Response(null, { status: 503 }));
+      boot.store.close();
+    }
   });
 });
 

@@ -21,6 +21,7 @@ import { Button, Empty, Screen, Scroller, Tail, Txt, ViewHead } from "../../src/
 import { DetailBar, PaneTop } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList } from "../../src/ui/MailList";
+import { MailPlaceDock } from "../../src/ui/MailPlaceDock";
 import { MessageReader } from "../../src/ui/MessageReader";
 import { Gated } from "../../src/ui/Gated";
 import { MailRow } from "../../src/ui/MailRow";
@@ -146,7 +147,7 @@ function FolderBody({ inPane, paneId }: { inPane: boolean; paneId?: string }) {
       open={open}
       onClose={close}
       toRoute={(mid) => `/message/${mid}`}
-      list={list}
+      list={theme.mail && open === null ? <MailPlaceDock>{list}</MailPlaceDock> : list}
       renderDetail={(mid, ctx) => <MessageReader id={mid} inPane={ctx.inPane} onClose={ctx.onClose} />}
     />
   );

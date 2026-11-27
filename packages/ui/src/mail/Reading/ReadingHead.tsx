@@ -21,8 +21,8 @@ export interface ReadingHeadProps {
   names?: string;
   /** Its tags. */
   tags?: ReactNode;
-  /** The mailbox it is in, as a word, where there are several. */
-  mailbox?: string;
+  /** The receiving mailbox, where there are several. */
+  mailbox?: ReactNode;
   /** What ends the line on touch: the squares along the head. */
   squares?: ReactNode;
   /** Whether the letter has scrolled under the heading. */

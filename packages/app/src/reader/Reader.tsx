@@ -17,6 +17,7 @@ import { useNewEvent } from "../calendar/use-new-event.js";
 import { NONE } from "../host/index.js";
 import { useReaderOpen } from "../frame/commands.js";
 import { useOwnAddresses } from "../frame/room.js";
+import { DeliveryLabel } from "../place-list/DeliveryLabel.js";
 import { ActionBar, type PanelRoom } from "./actions/ActionBar.js";
 import { RunReadingHead } from "./actions/ReplyRun.js";
 import { Blank, GoneLetter, type ReadingBack } from "./blank/Blank.js";
@@ -124,14 +125,11 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
   const calendarAction = useCalendarAction(opened, host.features.calendar !== NONE);
   if (opened === null && state === "gone") return <GoneLetter back={back} />;
   if (opened === null) return <Sheet kind="reading" label={text("reader")("pane")} back={back} />;
+  const mailbox = view.mailboxWord(opened.mailboxId);
   const threaded = messages.length > 1;
+  const squaresPlace = phone ? "top" : narrow ? "heading" : "column";
   const squares = threaded && (
-    <Squares
-      messages={messages}
-      walk={walk}
-      place={phone ? "top" : narrow ? "heading" : "column"}
-      column={scroller.current}
-    />
+    <Squares messages={messages} walk={walk} place={squaresPlace} column={scroller.current} />
   );
   const latest = newestFirst ? 0 : messages.length - 1;
   const eachSubject = readSubjectDisplay(host.session.scope) === "each";
@@ -164,7 +162,13 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
             subject={eachSubject ? undefined : shownSubject}
             {...facesOf(threaded ? view.people : [])}
             tags={opened.labels.length > 0 ? <Tags labels={opened.labels} /> : undefined}
-            mailbox={view.mailboxWord(opened.mailboxId) ?? undefined}
+            mailbox={
+              mailbox ? (
+                <DeliveryLabel title={text("message")("deliveredToTitle", { label: mailbox })}>
+                  {mailbox}
+                </DeliveryLabel>
+              ) : undefined
+            }
           />
         }
         foot={

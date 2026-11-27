@@ -311,6 +311,8 @@ export default defineConfig({
       { find: "@trafficflow/db/admin", replacement: r("./packages/db/src/admin.ts") },
       { find: "@trafficflow/db/journal", replacement: r("./packages/db/src/journal.ts") },
       { find: "@trafficflow/db/cloud", replacement: r("./packages/db/src/cloud.ts") },
+      { find: "@trafficflow/db/account-erasure", replacement: r("./packages/db/src/account-deletion-service.ts") },
+      { find: "@trafficflow/db/auth-throttle-keys", replacement: r("./packages/db/src/auth-throttle-keys.ts") },
       { find: "@trafficflow/db/calendar", replacement: r("./packages/db/src/calendar/index.ts") },
       /* The ledger-source VOCABULARY on its own — pure string construction over `node:crypto`, no
          table, no connection. It has its own door because the mail half calls these names from
