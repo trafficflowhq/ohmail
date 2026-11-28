@@ -1203,6 +1203,7 @@
     "bulkSpam": "{count} to Spam",
     "wholeDomain": "the whole domain {domain}",
     "unsubOffered": "Unsubscribe offered",
+    "unsubIfOffered": "Unsubscribe if offered",
     "unsubscribe": "Unsubscribe",
     "unsubSending": "Sending…",
     "unsubSent": "Unsubscribe request sent.",

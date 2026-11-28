@@ -85,7 +85,7 @@ export function Sentence({
     view.segment === "spam" && view.open && "pinned" in view.open && !view.open.pinned
       ? sender.detection
       : undefined;
-  const offered = waiting && model.unsubClaimOf(sender, scope) !== "none";
+  const claim = waiting ? model.unsubClaimOf(sender, scope) : "none";
   const lead = t.rich("place.goes", {
     who: whoOf(sender),
     place,
@@ -134,7 +134,7 @@ export function Sentence({
           </Slot>
         ) : null}
         {shared && waiting ? <Tag>{t("place.perAddress")}</Tag> : null}
-        {offered ? <Tag>{t("unsubOffered")}</Tag> : null}
+        {claim !== "none" ? <Tag>{t(claim === "sends" ? "unsubOffered" : "unsubIfOffered")}</Tag> : null}
         {view.segment === "screened" ? (
           <>
             {sender.scope === "domain" ? <Tag>{t("barScopeDomain")}</Tag> : null}

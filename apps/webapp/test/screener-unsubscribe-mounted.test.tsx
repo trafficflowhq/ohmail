@@ -14,6 +14,7 @@ const ONE_CLICK = "news@list.example";
 const NO_OFFER = "person@plain.example";
 const copy = messages.screener;
 const confirmedLabel = copy.place.unsub.screened;
+const conditionalLabel = "Unsubscribe if offered";
 
 type Held = {
   id: string;
@@ -53,7 +54,8 @@ async function mount({ held, width, autoUnsubscribe, providerConfirms, consentRo
 const cardLine = (shell: HTMLElement): string | null => {
   const sheet = shell.querySelector('[data-kind="reading"]');
   if (!sheet) throw new Error("the sender sheet is not open");
-  return within(sheet as HTMLElement).queryByText(copy.unsubOffered, { exact: true })?.textContent ?? null;
+  return within(sheet as HTMLElement).queryByText((text) => text === copy.unsubOffered || text === conditionalLabel)
+    ?.textContent ?? null;
 };
 const screenOut = (shell: HTMLElement): HTMLElement =>
   within(within(shell).getByRole("toolbar", { name: copy.place.panel }))
@@ -83,7 +85,7 @@ describe.each([1280, 390] as const)("the Screener card at %i says the unsubscrib
 
   it("a one-click letter its provider did not confirm: the condition, never the fact — the pass sends only for a confirmed sender", async () => {
     const mounted = await mount({ held: [{ id: "a2", from: ONE_CLICK, posture: "one_click", verdict: "unavailable" }], width });
-    expect(cardLine(mounted.shell)).toBe(copy.unsubOffered);
+    expect(cardLine(mounted.shell)).toBe(conditionalLabel);
     expect(mounted.shell.textContent).not.toContain("also send");
     await click(screenOut(mounted.shell));
     const ask = within(document.body).getByRole("dialog", { name: confirmedLabel });
@@ -93,7 +95,7 @@ describe.each([1280, 390] as const)("the Screener card at %i says the unsubscrib
 
   it("every held letter read and none offering it: the condition still stands — later mail and past mail may offer one", async () => {
     const mounted = await mount({ held: [{ id: "b1", from: NO_OFFER, posture: "no_header" }, { id: "b2", from: NO_OFFER, posture: "not_one_click" }], width });
-    expect(cardLine(mounted.shell)).toBe(copy.unsubOffered);
+    expect(cardLine(mounted.shell)).toBe(conditionalLabel);
     expect(mounted.shell.textContent).not.toContain("also send");
     await click(screenOut(mounted.shell));
     const ask = within(document.body).getByRole("dialog", { name: confirmedLabel });
@@ -103,7 +105,7 @@ describe.each([1280, 390] as const)("the Screener card at %i says the unsubscrib
 
   it("a held letter still unread: the card says it as a condition, never as a promise", async () => {
     const mounted = await mount({ held: [{ id: "c1", from: NO_OFFER, posture: "no_header" }, { id: "c2", from: NO_OFFER, posture: "unread" }], width });
-    expect(cardLine(mounted.shell)).toBe(copy.unsubOffered);
+    expect(cardLine(mounted.shell)).toBe(conditionalLabel);
     expect(mounted.shell.textContent).not.toContain("also send");
     await click(screenOut(mounted.shell));
     const ask = within(document.body).getByRole("dialog", { name: confirmedLabel });
