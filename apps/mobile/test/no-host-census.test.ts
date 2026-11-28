@@ -310,9 +310,12 @@ function exportedSource(spec: string): string | null {
   if (!existsSync(join(dir, "package.json"))) return null;
   const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { exports?: Record<string, unknown> };
   const entry = manifest.exports?.[`./${m[2]}`];
-  const source = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>)["ohmail-source"] : null;
-  if (typeof source !== "string" || !existsSync(join(dir, source))) return null;
-  return realpathSync(join(dir, source));
+  const source = typeof entry === "object" && entry !== null
+    ? (entry as Record<string, unknown>)["ohmail-source"]
+    : typeof entry === "string" && m[2]!.endsWith(".json") && entry.endsWith(".json") ? entry : null;
+  if (typeof source !== "string") return null;
+  const file = join(dir, source);
+  return statSync(file, { throwIfNoEntry: false })?.isFile() === true ? realpathSync(file) : null;
 }
 
 /**
@@ -831,6 +834,7 @@ describe("§5 the four doors are named and reachable — the positive control", 
   const doors = readFileSync(join(APP, "src/ui/Doors.tsx"), "utf8");
   const welcome = readFileSync(join(APP, "app/welcome.tsx"), "utf8");
   const servers = readFileSync(join(APP, "app/servers.tsx"), "utf8");
+  const settings = readFileSync(join(APP, "app/settings.tsx"), "utf8");
 
   it("names all four, in both languages, differently from each other", () => {
     for (const [locale, deck] of Object.entries(DECKS)) {
@@ -909,10 +913,13 @@ describe("§5 the four doors are named and reachable — the positive control", 
     // without the second is a control that cannot do what its name says.
     expect(doors).toContain("onPress={onStandalone}");
     expect(doors).toContain("standaloneAvailable({ startEngine: phoneEngineStart() })");
-    expect(welcome).toContain('router.push("/servers")');
+    expect(settings).toContain('router.push("/servers")');
+    expect(ROUTE_FILES.map(rel)).toContain("apps/mobile/app/servers.tsx");
     expect(welcome).toContain('router.push("/scan")');
-    expect(welcome).toContain('router.push("/standalone")');
-    expect(welcome).toContain("standaloneAvailable({ startEngine: phoneEngineStart() })");
+    expect(welcome).toMatch(/label=\{Copy\.welcomeSignInSelfHosted\}[^\n]*setWay\("server"\)/);
+    expect(welcome).toContain('way === "server" && !waiting');
+    expect(welcome).toContain("signIn(address)");
+    expect(welcome).toContain("conn.signIn(target, request.signal)");
     expect(servers).toContain("<Doors");
     expect(servers).toContain('onScan={() => router.push("/scan")}');
     expect(servers).toContain('onStandalone={() => router.push("/standalone")}');

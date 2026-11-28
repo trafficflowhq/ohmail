@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CalendarAct } from "@ohmail/app-logic/calendar";
 import type { ReaderReply } from "../../src/reader/ports.js";
 import { calendar } from "../../src/calendar/entry.js";
+import { keySheetOver } from "../../src/keys/sheet/index.js";
 import {
   calendarRecord,
   connectionRecord,
@@ -68,6 +69,7 @@ function mailbox(
       } as typeof mail.engine,
       products: "both",
       calendar,
+      overs: { keys: keySheetOver },
       wires: { calendar: world.port },
     },
   });
@@ -81,6 +83,11 @@ it("v opens the letter's draft without writing and stays out of text fields", as
   fireEvent.keyDown(field, { key: "v" });
   field.remove();
   expect(address.read()).toBe("#/ohbox/m/m1");
+  fireEvent.keyDown(document.body, { key: "?", shiftKey: true });
+  const shortcuts = within(screen.getByRole("dialog", { name: "Keyboard shortcuts" }));
+  const shortcut = shortcuts.getByText("Add to calendar").closest("p")!;
+  expect(shortcut.querySelector("kbd")?.textContent).toBe("v");
+  fireEvent.click(shortcuts.getByRole("button", { name: "Close" }));
   fireEvent.keyDown(document.body, { key: "v" });
   expect(address.read()).toBe("#/cal/week?panel=new");
   const form = within(await screen.findByRole("dialog", { name: "New event" }));
@@ -99,9 +106,10 @@ it("puts Add to calendar last after a divider, and sends only accepted guests af
   const menu = screen.getByRole("menu", { name: "More" });
   const items = within(menu).getAllByRole("menuitem");
   const add = within(menu).getByRole("menuitem", { name: "Add to calendar" });
-  expect(items.at(-1)).toBe(add);
+  expect(items.at(-2)).toBe(add);
+  expect(items.at(-1)).toBe(within(menu).getByRole("menuitem", { name: "Keyboard shortcuts" }));
   expect(add.previousElementSibling?.tagName).toBe("HR");
-  expect(add.querySelector("kbd")?.textContent).toBe("v");
+  expect(add.querySelector("kbd")).toBeNull();
   fireEvent.click(add);
   const form = within(await screen.findByRole("dialog", { name: "New event" }));
   fireEvent.click(form.getByRole("button", { name: "Invite June Potter" }));

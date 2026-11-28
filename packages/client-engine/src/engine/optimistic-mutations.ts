@@ -71,7 +71,7 @@ interface DispatchOptions {
 export abstract class EngineOptimisticMutations extends EngineAttachments {
   // ── optimistic mutations ─────────────────────────────────────────────────
 
-  protected sentReplyExpiry?: ReturnType<typeof setTimeout>;
+  protected cancelSentReplyCheck?: () => void;
 
   /**
    * Whether the server's copy of draft `id` may hold formatting: the overlaid row, the row the
@@ -2352,19 +2352,16 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
 
   /** A reply can stop waiting while the client is offline and no drain is running. */
   private armSentReplyExpiry(): void {
-    clearTimeout(this.sentReplyExpiry);
-    this.sentReplyExpiry = undefined;
+    this.cancelSentReplyCheck?.();
+    this.cancelSentReplyCheck = undefined;
     if (this.disposed) return;
     const next = nextSentReplyExpiry(this.store);
     if (!Number.isFinite(next)) return;
-    const delay = Math.min(2_147_483_647, Math.max(0, next - this.now().getTime()));
-    this.sentReplyExpiry = setTimeout(() => {
+    this.cancelSentReplyCheck = this.scheduleSentReplyCheck(Math.max(0, next - this.now().getTime()), async () => {
       const stamp = this.store.stampOf("view_meta");
-      void this.refreshSentReplies().then(() => {
-        if (!this.disposed && this.store.stampOf("view_meta") !== stamp) this.notify();
-      });
-    }, delay);
-    if (typeof this.sentReplyExpiry === "object") this.sentReplyExpiry.unref?.();
+      await this.refreshSentReplies();
+      if (!this.disposed && this.store.stampOf("view_meta") !== stamp) this.notify();
+    });
   }
 
   protected async refreshSentReplies(): Promise<void> {

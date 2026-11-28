@@ -13,7 +13,7 @@ import { openLocalDb, type OpenLocalDb } from "../src/db.js";
  */
 vi.mock("../src/fresh-store.js", async (original) => ({
   ...(await original<typeof import("../src/fresh-store.js")>()),
-  makeStoreInMemory: async (): Promise<number> => { throw new Error("planted: the in-memory maker failed"); },
+  makeStoreInMemory: async (): Promise<never> => { throw new Error("planted: the in-memory maker failed"); },
 }));
 
 const dirs: string[] = [];

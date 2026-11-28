@@ -109,6 +109,13 @@ export function shardFiles(n, root = ROOT, map = readMap(root)) {
   return [...own, ...unmapped];
 }
 
+function shardPart(files, part) {
+  if (!part) return files;
+  if (part !== "a" && part !== "b") throw new Error(`unknown shard part: ${part}`);
+  const parity = part === "a" ? 0 : 1;
+  return files.filter((_, index) => index % 2 === parity);
+}
+
 /** What --check refuses: a mapped file that is gone (STALE), runs alone or runs in the desktop job. */
 export function checkMap(root = ROOT, map = readMap(root)) {
   const files = testFiles(root);
@@ -132,8 +139,8 @@ export function checkMap(root = ROOT, map = readMap(root)) {
 
 /** A shard's report (or the desktop job's, n = "desktop") against the files it was handed: the ones that
  *  did not run, the ones that ran unasked, and the ones the service gate skipped for a missing service. */
-export function verifyReport(n, report, root = ROOT, map = readMap(root)) {
-  const want = new Set(n === "desktop" ? desktopFiles(root) : shardFiles(n, root, map));
+export function verifyReport(n, report, root = ROOT, map = readMap(root), part = "") {
+  const want = new Set(shardPart(n === "desktop" ? desktopFiles(root) : shardFiles(n, root, map), part));
   const ran = new Set(report.testResults.map((r) => relative(root, r.name).split("\\").join("/")));
   return { missing: [...want].filter((f) => !ran.has(f)), extra: [...ran].filter((f) => !want.has(f)), gated: gatedFiles(report, root) };
 }
@@ -357,7 +364,7 @@ function main(argv) {
     const n = Number(rest[0]);
     const map = readMap();
     if (!Number.isInteger(n) || n < 0 || n >= map.shards.length) throw new Error(`${cmd} takes a shard index 0..${map.shards.length - 1}`);
-    const files = shardFiles(n, ROOT, map);
+    const files = shardPart(shardFiles(n, ROOT, map), rest[1]);
     if (cmd === "--shard") {
       if (!files.length) throw new Error(`shard ${n} has no file to run`);
       process.stdout.write(`${files.join("\n")}\n`);
@@ -369,7 +376,7 @@ function main(argv) {
   if (cmd === "--verify-report") {
     const n = rest[0] === "desktop" ? "desktop" : Number(rest[0]);
     const report = JSON.parse(readFileSync(rest[1], "utf8"));
-    const { missing, extra, gated } = verifyReport(n, report);
+    const { missing, extra, gated } = verifyReport(n, report, ROOT, readMap(), rest[2]);
     for (const f of missing) process.stderr.write(`ci-shards: MISSING ${f} was handed to shard ${n} and did not run\n`);
     for (const f of extra) process.stderr.write(`ci-shards: EXTRA ${f} ran in shard ${n} without being handed to it\n`);
     for (const g of gated) process.stderr.write(`ci-shards: GATED ${g} — a service this job must start was missing\n`);

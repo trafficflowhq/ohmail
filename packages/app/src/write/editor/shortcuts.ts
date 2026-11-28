@@ -1,11 +1,7 @@
 import { getExtensionField, resolveExtensions } from "@tiptap/react";
 import type { EditorMarks, MarkId } from "../editor-controls.js";
-import type { Text } from "../../text/index.js";
-import { teachWritingKey } from "../keys.js";
-import { CODE_KEYS, PARAGRAPH_STYLES, paragraphKey } from "./formats.js";
+import { CODE_KEYS, LINK_KEY } from "../format-help.js";
 import { EXTENSIONS } from "./schema.js";
-
-export const LINK_KEY = "mod+k";
 
 const extensionMark: Readonly<Record<string, MarkId>> = {
   bold: "bold",
@@ -43,7 +39,7 @@ function formatChords(): NonNullable<EditorMarks["shortcuts"]> {
 
 export const editorShortcuts = formatChords();
 
-function historyChords() {
+export function historyChords() {
   const history = resolveExtensions(EXTENSIONS).find(({ name }) => name === "undoRedo");
   if (!history) return [];
   // The history extension publishes callbacks that only call one editor command.
@@ -70,22 +66,4 @@ function historyChords() {
     const letter = parts.pop();
     return label && letter ? [[[...parts.sort(), letter].join("+"), label] as const] : [];
   });
-}
-
-const historyShortcuts = historyChords();
-
-const paragraphNames = ["paragraph", "heading1", "heading2", "heading3"] as const;
-
-export function paragraphChoices(t: Text) {
-  return PARAGRAPH_STYLES.map((style) => [style, t(`marks.${paragraphNames[style]}`)] as const);
-}
-
-export function editorHelp(t: Text, marks: NonNullable<EditorMarks["shortcuts"]> = editorShortcuts) {
-  return [
-    ...Object.entries(marks).flatMap(([id, chords]) =>
-      t.has(`marks.${id}`) ? chords.map((chord) => teachWritingKey(chord, t(`marks.${id}`))) : [],
-    ),
-    ...paragraphChoices(t).map(([style, label]) => teachWritingKey(paragraphKey(style), label)),
-    ...historyShortcuts.flatMap(([chord, label]) => (t.has(label) ? [teachWritingKey(chord, t(label))] : [])),
-  ];
 }

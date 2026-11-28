@@ -112,6 +112,8 @@ export interface EngineOptions {
   /** Read only the standalone calendar feed and use its snapshot for boot and cursor recovery. */
   calendarOnly?: boolean;
   adapter: EngineAdapter;
+  /** Override the default platform wake-up for an idle mirror with a sent reply awaiting its copy. */
+  scheduleSentReplyCheck?: (delayMs: number, check: () => Promise<void>) => () => void;
   /**
    * The first key of a search warms the way to the store ({@link OhmailEngine.warmSearch}): the
    * desktop window, whose relay to a paired account drops an idle connection after 4 s. Omitted:

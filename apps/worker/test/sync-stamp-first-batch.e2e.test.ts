@@ -50,15 +50,14 @@ import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.
  * `apps/worker/test/sync-stamp.pg.test.ts` owns the writer itself (and the source scans that keep
  * the batched caller where it is). This file owns WHEN the first one happens.
  *
- * Nowhere near a real mailbox: two fake mailboxes in an isolated database.
+ * The adapters are fake and the database is isolated.
  */
 
 const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 43));
 let DB = "";
 type Db = ReturnType<typeof makeDb>;
 
-async function seedMailbox(db: Db): Promise<{ accountId: string; mailboxId: string }> {
-  const accountId = randomUUID();
+async function seedMailbox(db: Db, accountId = randomUUID()): Promise<{ accountId: string; mailboxId: string }> {
   const [row] = await db.insert(mailboxes)
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
   const enc = await KP.encrypt("pw");
@@ -117,46 +116,34 @@ describe("the first stamp is this mailbox's own business", () => {
     const db = makeDb(DB);
     const fleet = new FakeAdapterFleet();
 
-    // ── HOW MANY MAILBOXES, AND WHY IT IS NO LONGER THREE ─────────────────────────
-    //
-    // Seeded in order, because the roster is stable oldest-first: A leads the rotation, then B,
-    // C, D, E. The last one exists so the SHUTDOWN arm below has a mailbox the pass never
-    // REACHED — that is what makes the pass demonstrably truncated, and therefore what makes A's
-    // and B's surviving stamps evidence of their own per-mailbox writes rather than of the
-    // batched one.
-    //
-    // Three used to be enough because the rotation was serial: park the second and the third is
-    // unreachable. The rotation now runs `DEFAULT_CYCLE_LANES` mailboxes at once and REFILLS a
-    // lane the instant one frees, so an unreached mailbox needs every lane held: B, C and D are
-    // all parked inside `changesSince`, and E is the witness behind them. The lane count is
-    // deliberately NOT pinned here — the claim is about the stamp, and it has to hold in the
-    // configuration that ships.
+    // E shares B's account. Once B is parked in its turn, E cannot enter another lane.
+    // Hold E's dial until that turn starts, then wait for E to join the roster before stopping.
+    // This keeps E in the rotation and unvisited regardless of parallel attach completion order.
     const A = await seedMailbox(db);
     const B = await seedMailbox(db);
-    const C = await seedMailbox(db);
-    const D = await seedMailbox(db);
-    const E = await seedMailbox(db);
-    const names = new Map([
-      [A.mailboxId, "A"], [B.mailboxId, "B"], [C.mailboxId, "C"], [D.mailboxId, "D"], [E.mailboxId, "E"],
-    ]);
+    const E = await seedMailbox(db, B.accountId);
+    const names = new Map([[A.mailboxId, "A"], [B.mailboxId, "B"], [E.mailboxId, "E"]]);
 
     // A: enough messages for several 40-message batches, so its FIRST cycle is truncated and it still owes a
     // backlog at the moment of the assertion. That matters — a mailbox stamped only after its
     // backlog drained would satisfy a weaker version of this claim.
     fleet.behave(A.mailboxId, { deliver: mail(120, "a"), batchSize: 40 });
-    // B, C, D: parked inside `changesSince` forever. This is the stand-in for "still working":
-    // the hung-provider case in the extreme, and every slow mailbox in between. Three of them
-    // because three is what it takes to hold every lane — see above.
     let release = (): void => { /* replaced below */ };
-    const parked = new Promise<void>((resolve) => { release = () => { resolve(); }; });
-    releases.push(() => { release(); });
+    const parked = new Promise<void>((resolve) => { release = resolve; });
+    let releaseDial = (): void => { /* replaced below */ };
+    const dial = new Promise<void>((resolve) => { releaseDial = resolve; });
+    releases.push(() => release(), () => releaseDial());
     fleet.behave(B.mailboxId, { deliver: mail(1, "b"), syncGate: parked });
-    fleet.behave(C.mailboxId, { deliver: mail(1, "c"), syncGate: parked });
-    fleet.behave(D.mailboxId, { deliver: mail(1, "d"), syncGate: parked });
-    fleet.behave(E.mailboxId, { deliver: mail(1, "e") });
+    fleet.behave(E.mailboxId, { deliver: mail(1, "e"), gate: dial });
 
-    const worker: RunningWorker = await startWorker(cfgFor(fleet));
-    closers.push(() => worker.stop());
+    const roster = Promise.withResolvers<RunningWorker>();
+    const starting = startWorker(cfgFor(fleet), { onInitialRoster: roster.resolve });
+    closers.push(async () => { await (await starting).stop(); });
+    const worker = await Promise.race([roster.promise, starting]);
+    await waitFor(() => fleet.indicesOf(B.mailboxId, "sync_start").length > 0, 30_000, "B to enter its parked turn");
+    releaseDial();
+    await starting;
+    await waitFor(() => worker.stats().mailboxes === 3, 30_000, "E to join the active roster");
 
     // ── THE OBSERVATION POINT, AND WHY IT MOVED ───────────────────────────────────
     //
@@ -175,8 +162,7 @@ describe("the first stamp is this mailbox's own business", () => {
     // below (B must still read NULL at the same instant) is what stops a blanket
     // `UPDATE mailboxes SET last_sync_at = now()` from satisfying it.
     //
-    // Still no duration is asserted anywhere: `syncInFlight === 1` is what makes the instant
-    // meaningful, and B stays parked until this test releases it.
+    // B stays parked until this test releases it.
     const stampOfA = async (): Promise<Date | null> => {
       const [row] = await db.select().from(mailboxes).where(eq(mailboxes.id, A.mailboxId));
       return row?.lastSyncAt ?? null;

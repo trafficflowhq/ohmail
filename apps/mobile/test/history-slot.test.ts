@@ -79,7 +79,8 @@ describe.each([["History", SCREEN, "i"], ["Search", SEARCH, "r\\.slot"]])("%s me
   });
 
   it("every drawn row reports its own laid-out height under its index, a deleted row at 0", () => {
-    expect(src).toMatch(new RegExp(`onLayout=\\{\\(e\\) => onRowHeight\\(${at}, e\\.nativeEvent\\.layout\\.height\\)\\}>\\s*<MailRow`));
+    const rowStyle = src === SEARCH ? ' style=\\{r\\.key === firstResult \\? cursorFace : undefined\\}' : '';
+    expect(src).toMatch(new RegExp(`onLayout=\\{\\(e\\) => onRowHeight\\(${at}, e\\.nativeEvent\\.layout\\.height\\)\\}${rowStyle}>\\s*<MailRow`));
     expect(src).toMatch(new RegExp(`m === "gone" \\? <View onLayout=\\{\\(\\) => onRowHeight\\(${at}, 0\\)\\} />`));
     expect(src).toMatch(/if \(heights\.record\(i, height\)\) redraw\(\);/);
   });

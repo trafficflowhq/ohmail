@@ -100,7 +100,7 @@ describe("the send lock answers for a write the jar refused", () => {
     const press = { composer: "first-window", mutation: {
       kind: "mail_send" as const, draftCreateKey: "first-save", inReplyTo: null, body: "The first letter.",
     } };
-    writeBeforeOutbox(first.key, press, OWNER);
+    writeBeforeOutbox(first.key, press, NONE_OWED, OWNER);
     expect(recordForEndedSend(first.key, OWNER)?.beforeOutbox).toEqual(press);
 
     const second = lockOf({ key: "idem-key-2", fp: "fp-2", session: "second-message" });
@@ -111,7 +111,7 @@ describe("the send lock answers for a write the jar refused", () => {
     claimSendLock(second, NONE_OWED, OWNER);
     expect(recordForEndedSend(first.key, OWNER)?.beforeOutbox).toEqual(press);
     expect(recordForEndedSend(second.key, OWNER)?.beforeOutbox).toBeUndefined();
-    writeBeforeOutbox(first.key, undefined, OWNER);
+    writeBeforeOutbox(first.key, undefined, NONE_OWED, OWNER);
     expect(recordForEndedSend(first.key, OWNER)?.beforeOutbox).toBeUndefined();
   });
 

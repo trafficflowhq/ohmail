@@ -98,10 +98,20 @@ describe("the password door: a stranger locks only themselves", () => {
   it("a registered and an unregistered address answer the same sequence and walk the same statements", async () => {
     const h = await harness({ maxFailures: 5 });
     await register(h, "real@x.example");
-    const client = (h.db as unknown as { $client: { query: (...a: unknown[]) => unknown } }).$client;
-    const original = client.query.bind(client);
+    type QueryHandle = { query: (...args: unknown[]) => unknown };
+    type Client = QueryHandle & { transaction: (run: (tx: QueryHandle) => unknown) => unknown };
+    const client = (h.db as unknown as { $client: Client }).$client;
+    const { query, transaction } = client;
     let statements = 0;
-    client.query = (...a: unknown[]) => { statements++; return original(...a); };
+    function countQueries(handle: QueryHandle) {
+      const read = handle.query.bind(handle);
+      handle.query = (...args) => { statements++; return read(...args); };
+    }
+    countQueries(client);
+    client.transaction = (run) => transaction.call(client, (tx) => {
+      countQueries(tx);
+      return run(tx);
+    });
     let derivations = 0;
     const verify = h.deps.passwordHasher.verify.bind(h.deps.passwordHasher);
     h.deps.passwordHasher.verify = async (p, s) => { derivations++; return verify(p, s); };
@@ -120,11 +130,13 @@ describe("the password door: a stranger locks only themselves", () => {
     };
     const known = await run("real@x.example");
     const ghost = await run("ghost@x.example");
-    client.query = original;
+    client.query = query;
+    client.transaction = transaction;
     expect(ghost.codes).toEqual(known.codes);
     expect(known.codes.slice(0, 6)).toEqual(["credential_refused", "credential_refused", "credential_refused", "credential_refused", "credential_refused", "account_locked"]);
     expect(known.codes.slice(25)).toEqual([...Array(15).fill("credential_refused"), ...Array(5).fill("sign_in_slowed")]);
     expect(ghost.derived, "hash work differs by branch").toEqual(known.derived);
+    expect(Math.min(...ghost.counts), "the query probe saw no statement on a refusal").toBeGreaterThan(0);
     // The one named residual: a registered address's refusal writes its audit row (the erasure
     // fence read and the insert), after the verify. Everything before it is statement for statement.
     known.counts.forEach((n, i) => expect(n - ghost.counts[i]!, `attempt ${i + 1}`).toBe(known.codes[i] === "credential_refused" ? 2 : 0));

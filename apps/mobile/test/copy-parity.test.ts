@@ -337,9 +337,11 @@ function parameterTypes(source: string, key: string): string[] {
   const inner = source.slice(open + 1, close).trim();
   if (inner === "") return [];
   return inner.split(",").map((p) => {
-    const m = /:\s*([A-Za-z]+)\s*$/.exec(p.trim());
-    if (m === null) throw new Error(`cannot read the type of "${p.trim()}" in ${key}`);
-    return m[1]!;
+    const parameter = p.trim();
+    const m = /:\s*([A-Za-z]+)\s*(?:=\s*(?:true|false))?$/.exec(parameter);
+    if (m !== null) return m[1]!;
+    if (/^\w+\s*=\s*(?:true|false)$/.test(parameter)) return "boolean";
+    throw new Error(`cannot read the type of "${parameter}" in ${key}`);
   });
 }
 

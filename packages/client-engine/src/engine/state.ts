@@ -47,6 +47,7 @@ export abstract class EngineState {
   protected readonly types: string[] | undefined;
   protected readonly syncLimit: number | undefined;
   protected readonly now: () => Date;
+  protected readonly scheduleSentReplyCheck: NonNullable<EngineOptions["scheduleSentReplyCheck"]>;
   protected readonly uuid: () => string;
   /** See {@link EngineOptions.locks}. */
   protected readonly locks: EngineLocks | null;
@@ -633,7 +634,7 @@ export abstract class EngineState {
   /** In-flight calendar passes by message id — single-flight, see {@link OhmailEngine.loadCalendarTexts}. */
   protected readonly calendarTextRequests = new Map<string, Promise<void>>();
 
-  constructor(opts: EngineOptions) {
+  constructor(opts: EngineOptions, scheduleSentReplyCheck: NonNullable<EngineOptions["scheduleSentReplyCheck"]>) {
     this.adapter = opts.adapter;
     this.calendarOnly = opts.calendarOnly === true;
     this.inlineImageUrls = opts.inlineImageUrls === "object" ? "object" : "data";
@@ -700,6 +701,7 @@ export abstract class EngineState {
     this.transportIsUnreachable = opts.outboxTransportIsUnreachable === true;
     this.withdrawUnsupported = opts.onWithdrawUnsupported ?? null;
     this.now = opts.now ?? (() => new Date());
+    this.scheduleSentReplyCheck = scheduleSentReplyCheck;
     this.bootedAt = this.now().getTime();
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
     this.locks = opts.locks === undefined ? defaultEngineLocks() : opts.locks;

@@ -29,7 +29,7 @@ export function checkMap(root?: string, map?: ShardMap): string[];
 export function measuredCosts(root: string, reports: VitestReport[]): Map<string, number>;
 export function treeCosts(root: string, reports: VitestReport[]): Map<string, number>;
 export function pack(root: string, cost: Map<string, number>, measuredAt: string): { map: ShardMap; seconds: number[] };
-export function verifyReport(n: number | "desktop", report: VitestReport, root?: string, map?: ShardMap): { missing: string[]; extra: string[]; gated: string[] };
+export function verifyReport(n: number | "desktop", report: VitestReport, root?: string, map?: ShardMap, part?: "a" | "b"): { missing: string[]; extra: string[]; gated: string[] };
 export function gatedFiles(report: VitestReport, root?: string): string[];
 
 export const SQLITE_MAP: string;

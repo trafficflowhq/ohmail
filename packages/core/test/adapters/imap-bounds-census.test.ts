@@ -115,6 +115,18 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
     how: "bounded_read",
     why: "boundedCollect at IMAP_ENUM_MAX_UIDS — a sequence range asks for `count` and the server decides what it sends",
   },
+  "enumerateUidWindow|fetch": {
+    how: "bounded_read",
+    why: "boundedCollect charges every row against IMAP_ENUM_MAX_UIDS and the read deadline before checking the finite UID range",
+  },
+  "firstUidAfter|fetch": {
+    how: "bounded_read",
+    why: "boundedCollect takes at most two rows under the read deadline to prove adjacent sequences, after the bounded search for them",
+  },
+  "sequenceUid|fetchOne": {
+    how: "single_message",
+    why: "fetchOne asks for one sequence under the read deadline and the answer must carry that sequence and a valid UID",
+  },
   "messageIdsHeld|fetch": {
     how: "bounded_read",
     why: "boundedFetch at IMAP_ENUM_MAX_UIDS on the count and MESSAGE_ID_FIELD_MAX_BYTES per enumerated UID on the header bytes, under the read clock; a breach refuses and retires the connection",

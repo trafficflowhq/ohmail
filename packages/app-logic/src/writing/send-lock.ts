@@ -291,20 +291,29 @@ function mayDrop(r: SendLock, why: SendLockDrop, owed: SendLockOwed, nowMs: numb
 
 /**
  * THE DOOR: reads the jar itself, so no caller can hand it a list it already shortened. `doomed`
- * names why a record should go (or `null`); `add` is a claim written in the same save. Returns
- * what the jar holds afterwards.
+ * names why a record should go (or `null`). A claim appends in the same save. A press receipt
+ * changes only the matching record's receipt and returns without considering any removal.
  */
 function dropSendLocks(
   doomed: (r: SendLock) => SendLockDrop | null, owed: SendLockOwed, nowMs: number,
-  owner: string | null, add: SendLock | null = null,
+  owner: StorageScope, write?: { claim: SendLock } | { receipt: { key: string; press: SendLock["beforeOutbox"] } },
 ): SendLock[] {
   const rows = loadOrEmpty(owner);
+  if (write && "receipt" in write) {
+    const { key, press } = write.receipt;
+    const row = rows.find((r) => r.key === key && r.v <= SEND_LOCK_FORMAT);
+    if (row === undefined || (press === undefined && row.beforeOutbox === undefined)) return rows;
+    if (press === undefined) delete row.beforeOutbox;
+    else row.beforeOutbox = press;
+    save(rows, owner);
+    return rows;
+  }
   const kept = rows.filter((r) => {
     const why = doomed(r);
     return why === null || !mayDrop(r, why, owed, nowMs);
   });
-  if (add !== null) kept.push(add);
-  if (add !== null || kept.length !== rows.length) save(kept, owner);
+  if (write) kept.push(write.claim);
+  if (write || kept.length !== rows.length) save(kept, owner);
   return kept;
 }
 
@@ -452,7 +461,7 @@ export function claimSendLock(lock: SendLock, owed: SendLockOwed, owner: Storage
    * build wrote. Leaving the number in the caller's hands made it a literal at the one call site that
    * had to be remembered on every format change, and 0.14.1 forgot it.
    */
-  dropSendLocks(replaced, owed, lock.at, owner, { ...lock, v: SEND_LOCK_FORMAT });
+  dropSendLocks(replaced, owed, lock.at, owner, { claim: { ...lock, v: SEND_LOCK_FORMAT } });
 }
 
 /**
@@ -982,13 +991,10 @@ export function recordForSendKey(
 }
 
 /** Keep the sealed press until the outbox has committed it. */
-export function writeBeforeOutbox(key: string, press: SendLock["beforeOutbox"], owner: StorageScope): void {
-  const rows = loadOrEmpty(owner);
-  const row = rows.find((r) => r.key === key && r.v <= SEND_LOCK_FORMAT);
-  if (row === undefined || (press === undefined && row.beforeOutbox === undefined)) return;
-  if (press === undefined) delete row.beforeOutbox;
-  else row.beforeOutbox = press;
-  save(rows, owner);
+export function writeBeforeOutbox(
+  key: string, press: SendLock["beforeOutbox"], owed: SendLockOwed, owner: StorageScope,
+): void {
+  dropSendLocks(() => null, owed, Date.now(), owner, { receipt: { key, press } });
 }
 
 /**

@@ -33,6 +33,8 @@ type Answer =
 const READS: Record<string, Answer> = {
   "enumerateUids|fetch": { how: "asked_rows", carries: ["uid"] },
   "enumerateNewestUids|fetch": { how: "asked_rows", carries: ["uid"] },
+  "enumerateUidWindow|fetch": { how: "asked_rows", carries: ["uid"] },
+  "firstUidAfter|fetch": { how: "asked_rows", carries: ["uid"] },
   "arrivalDatesFor|fetch": { how: "asked_rows", carries: ["date"] },
   "readArrivals|fetch": { how: "asked_rows", carries: ["date"] },
   "fetchCapped|fetch": { how: "asked_rows", carries: ["size", "uid"] },

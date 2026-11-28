@@ -73,6 +73,7 @@ function connection(drafts: number, answers: ForgetAttempt[]) {
   const switches: string[] = [];
   scene.conn = {
     state: { k: "idle" }, profiles: [HERE], activeId: HERE.id, syncing: false, syncError: null,
+    signOutNotices: [],
     unsentDraftsHere: () => drafts,
     forget: async (_id: string, opts?: { anyway?: boolean }) => { forgets.push(opts); return answers.shift() ?? { ok: true }; },
     switchTo: async (id: string) => { switches.push(id); return { ok: true }; },

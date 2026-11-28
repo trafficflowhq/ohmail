@@ -172,7 +172,7 @@ describe("the screens draw what the world hands them", () => {
 
   it("hands the lists and the reading screen the same tags", () => {
     const w = src("src/state/world-projection.ts");
-    const at = w.indexOf("message: (id) => liveMessage(engine, id, {");
+    const at = w.indexOf("message: (id, wholeThread) => liveMessage(engine, id, {");
     expect(at).toBeGreaterThan(-1);
     expect(w.slice(at, at + 260)).toMatch(/\btags,/);
     // ONE tags binding, handed to the lists' view, the world and the reader.

@@ -628,6 +628,25 @@
 
 /* On a phone a News card gives the sender its own lines and keeps delivery with the time and shield. */
 @container stream-card (inline-size < 600px) {
+  [data-stream-phone-list] [data-stream-window]:not([data-receipts]) {
+    .oh-messagehead-sender,
+    .oh-messagehead-line {
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+    }
+
+    .oh-messagehead-who {
+      display: grid;
+      grid-column: 2 / -1;
+      grid-template-columns: subgrid;
+      justify-items: start;
+    }
+
+    .oh-messagehead-address {
+      grid-column: 1 / -1;
+    }
+  }
+
   [data-stream-phone-list] [data-stream-window]:not([data-receipts]) .oh-messagehead-tools {
     display: contents;
   }
@@ -635,6 +654,7 @@
   [data-stream-phone-list] [data-stream-window]:not([data-receipts]) .oh-messagehead-tools > .oh-button {
     grid-column: 3;
     grid-row: 1;
+    z-index: var(--oh-messagehead-layer);
     justify-self: end;
     margin-right: var(--oh-messagehead-pull);
   }

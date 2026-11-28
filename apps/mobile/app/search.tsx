@@ -202,6 +202,7 @@ function SearchBody({ inPane }: { inPane: boolean }) {
      One list per screen: the branch below decides its groups, its head and its empty state. */
   const resultCount = new Intl.NumberFormat(locale).format(store.ready && !store.totalExact ? store.about ?? store.total : found);
   const resultStamp = store.ready && !store.totalExact && store.about === null ? `${resultCount}+` : resultCount;
+  const similarReach = partsSaid ? Copy.searchPartReach : undefined;
   const resultHeading = (key: string, title: string, rows: Row[], note?: string): Row[] => {
     if (!t.mail || rows.length === 0) return rows;
     const first = rows[0];
@@ -229,9 +230,9 @@ function SearchBody({ inPane }: { inPane: boolean }) {
             {
               key: "similar", title: t.mail && shownItems.length === 0 ? undefined : Copy.searchSimilarHead,
               note: t.mail && shownItems.length === 0 ? undefined
-                : `${store.ready && store.importing ? Copy.searchSimilarHintSynced : Copy.searchSimilarHint}${partsSaid ? ` ${Copy.searchPartReach}` : ""}`,
+                : `${store.ready && store.importing ? Copy.searchSimilarHintSynced : Copy.searchSimilarHint}${similarReach ? ` ${similarReach}` : ""}`,
               rows: shownItems.length === 0
-                ? resultHeading("similar-heading", Copy.searchSimilarHead, shownSimilar, partsSaid ? Copy.searchPartReach : undefined)
+                ? resultHeading("similar-heading", Copy.searchSimilarHead, shownSimilar, similarReach)
                 : shownSimilar,
             },
           ]

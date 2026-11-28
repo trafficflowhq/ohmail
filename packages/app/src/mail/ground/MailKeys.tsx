@@ -21,7 +21,7 @@ import {
   SEND_KEY,
   teachWritingKey,
 } from "../../write/keys.js";
-import { editorHelp } from "../../write/editor/shortcuts.js";
+import { editorHelp } from "../../write/format-help.js";
 import { useEnabledBinding, useKeyBindings, useKeyPress, type KeyBinding } from "@ohmail/app-logic/keys";
 import { listWalkHelp } from "@ohmail/app-logic/place-list";
 import { useOptionalTheme } from "@ohmail/ui/theme";

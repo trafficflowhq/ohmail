@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
-import { eq, inArray, sql, type SQL } from "drizzle-orm";
-import postgres from "postgres";
+import { connectMaintenanceFixture, eq, inArray, sql, type SQL } from "../packages/db/test/_maintenance-role-fixture.js";
 import {
   accounts, accountSyncState, auditLog, bindDb, changeLog, devices, erasureRemaining, mailboxes, messageBodies, messages,
   outboundSendFingerprints, outboundSends, pairingTokens, PROFILE_FOUND_AUDIT_ACTION, readDrainCursor, refreshTokens, sessions, stampMailboxErasure, users, type Tx,
@@ -12,16 +11,16 @@ import {
   pruneChangeLogForAccount, pruneSendFingerprints, pruneSignInRecords, recordRefundObligation, serverTables, WORKER_ROLE, type OwnedDb,
 } from "@trafficflow/db/cloud";
 import { realPgAvailable, ruleVerbs, throwawayDb } from "@trafficflow/db/testing";
-import { MAILBOX_ERASURE_PASS_BUDGET_MS, mailboxErasurePass } from "../src/mailbox-erasure-pass.js";
+import { MAILBOX_ERASURE_PASS_BUDGET_MS, mailboxErasurePass } from "../apps/worker/src/mailbox-erasure-pass.js";
 import { silentLogger } from "@trafficflow/core/mail";
-import { accountErasurePass } from "../src/account-erasure-pass.js";
-import { refundObligationDrainPass } from "../src/refund-obligation-drain.js";
-import { retentionPrunePass } from "../src/retention-prune.js";
+import { accountErasurePass } from "../apps/worker/src/account-erasure-pass.js";
+import { refundObligationDrainPass } from "../apps/worker/src/refund-obligation-drain.js";
+import { retentionPrunePass } from "../apps/worker/src/retention-prune.js";
 import {
   acceptAccountErasure, deleteAccount, EMAIL_VERIFY_PURPOSE, erasureOutcome, makeAuthService, makeTestAuthDeps, MailService,
   releaseAcceptedErasure, resumeAccountErasure, SpyMailer, throttleKeysFor, type ServiceContext,
 } from "@trafficflow/services";
-import { bindWorker, type WorkerBinding } from "../src/start/bind.js";
+import { bindWorker, type WorkerBinding } from "../apps/worker/src/start/bind.js";
 
 const pgUp = await realPgAvailable();
 const ground = throwawayDb("maintenance_roles");
@@ -29,7 +28,7 @@ const role = "test_worker_" + randomBytes(8).toString("hex");
 const apiRole = "test_api_" + randomBytes(8).toString("hex");
 
 describe.skipIf(!pgUp)("worker maintenance under the runtime account policies", () => {
-  let admin: postgres.Sql;
+  let admin: ReturnType<typeof connectMaintenanceFixture>;
   let worker: OwnedDb;
   let api: OwnedDb;
   let migrator: OwnedDb;
@@ -38,7 +37,7 @@ describe.skipIf(!pgUp)("worker maintenance under the runtime account policies", 
   beforeAll(async () => {
     await ground.createFromTemplate();
     const url = ground.url;
-    admin = postgres(url, { max: 1, onnotice: () => {} });
+    admin = connectMaintenanceFixture(url);
     const password = randomBytes(20).toString("hex");
     await admin.begin(async (tx) => {
       await tx.unsafe("create schema if not exists " + READER_SCHEMA);

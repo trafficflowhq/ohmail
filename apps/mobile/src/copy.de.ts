@@ -17,6 +17,7 @@ import { isPinFailure } from "./net/host-pinning";
 import type { Deck } from "./copy.en";
 
 const BOOT_MIGRATING = "Der Mail-Speicher auf diesem Handy wird aktualisiert…";
+const formatCount = new Intl.NumberFormat("de").format;
 
 /** Hoisted for the same reason its English twin is — see `copy.en.ts`. */
 const PIN_CHANGED =
@@ -1136,10 +1137,10 @@ export const DE: Deck = {
   searchAll: "Alle",
   searchFewer: "Weniger",
   searchPeople: "Personen",
-  searchPeopleFrom: (count: number) => `${count.toLocaleString("de")} von`,
-  searchPeopleTo: (count: number) => `${count.toLocaleString("de")} an`,
-  searchPeopleBoth: (from: number, to: number) => `${from.toLocaleString("de")} von · ${to.toLocaleString("de")} an`,
-  searchMailboxTotal: (count: number) => count === 1 ? "1 Nachricht" : `${count.toLocaleString("de")} Nachrichten`,
+  searchPeopleFrom: (count: number) => `${formatCount(count)} von`,
+  searchPeopleTo: (count: number) => `${formatCount(count)} an`,
+  searchPeopleBoth: (from: number, to: number) => `${formatCount(from)} von · ${formatCount(to)} an`,
+  searchMailboxTotal: (count: number) => count === 1 ? "1 Nachricht" : `${formatCount(count)} Nachrichten`,
   searchResults: "Treffer",
   searchSortedBy: (order: string) => `Sortiert nach ${order}`,
   searchNameOrAddress: "Name oder Adresse",
@@ -1242,7 +1243,7 @@ export const DE: Deck = {
   scheduledCount: (n: number) => `Geplant. ${n}`,
   draftListCount: (n: number) => `Entwürfe. ${n}`,
   streamYouAt: (address: string) => `dich (${address})`,
-  streamFreshCount: (count: string) => `${count} neu`,
+  streamFreshCount: (count: number) => `${formatCount(count)} neu`,
   screenApplyShort: (n: number) => `Anwenden ${n}`,
   screenHeldShort: (n: number) => `${n} zurückgehalten`,
   searchResultsHead: (n: number) => (n === 1 ? "Ein Treffer" : `${n} Treffer`),
