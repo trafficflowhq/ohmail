@@ -15,7 +15,7 @@ import { repairLegacyDraftHtml } from "@trafficflow/core/outbound-text";
 import { isRichEmpty, type RichValue } from "./rich-text.js";
 import type { Translator } from "../text/translator.js";
 import { aiRefusalKey, draftFailureKey } from "../text/ai-refusal-copy.js";
-import type { DraftReplyControl, DraftReplyPhase, OwnText } from "./draft-reply-control.js";
+import type { DraftReplyControl, DraftReplyPhase, DraftVersions, OwnText } from "./draft-reply-control.js";
 
 export type { DraftReplyControl, DraftReplyPhase, OwnText } from "./draft-reply-control.js";
 
@@ -86,7 +86,7 @@ export function useDraftReply(opts: {
    * CALLER decides whether it replaces or is appended to whatever is already typed, because
    * only the caller can see the editor. `letter`: a new letter's draft, under the id its press named.
    */
-  onDraft: (draft: DraftedReply, messageId: string, of: "reply" | "letter") => void;
+  onDraft: (draft: DraftedReply, messageId: string, of: "reply" | "letter", versions: DraftVersions | undefined) => void;
   /**
    * The host's draft wire, as its contract answers `draftReply`: the web hands the server client's, the desktop its
    * engine's, a paired browser its host computer's. `none`: this host has no drafter. The hook then answers no
@@ -198,7 +198,6 @@ export function useDraftReply(opts: {
         setPhase("closed");
         /* The new letter it was made for left the composer: no letter takes it, it stays in Drafts, and that is said. */
         if (lands === "letter" && away) {
-          setOwn((all) => without(all, id));
           setNotice(t("draftReply.letterLeft"));
           return;
         }
@@ -214,12 +213,13 @@ export function useDraftReply(opts: {
          * with their reply since the press): the draft is kept with no text of theirs, so it is drafted again as a
          * draft. The old card's confirm hands nothing: its entry is let go.
          */
-        setOwn((all) => typed === null
-          ? without(all, id)
-          : withEntry(all, {
-            messageId: id, yours: letGo || isRichEmpty(typed) ? NO_TEXT : typed, draft: landed, shown: "draft",
-          }));
-        onDraft(landed, id, lands);
+        const versions: DraftVersions | undefined = typed === null ? undefined : {
+          yours: letGo || isRichEmpty(typed) ? NO_TEXT : typed, draft: landed, shown: "draft",
+        };
+        if (lands === "reply") {
+          setOwn((all) => versions === undefined ? without(all, id) : withEntry(all, { ...versions, messageId: id }));
+        }
+        onDraft(landed, id, lands, lands === "letter" ? versions : undefined);
       } catch (err) {
         io.current.busy = false;
         if (io.current.run !== run) return;

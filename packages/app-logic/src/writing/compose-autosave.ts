@@ -19,7 +19,7 @@ import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type { KeptAsNewDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields, ComposeRowHolds } from "./compose.js";
 import { forwardSourcesForSave } from "./forward-selection.js";
-import { COMPOSE_SEND_KEY, composeBufferFingerprint, sendLockOwed, sendNamesRow, writeReplyMeta } from "./mail-send.js";
+import { COMPOSE_SEND_KEY, composeBufferFingerprint, replyLanesOf, sendLockOwed, sendNamesRow, writeReplyMeta } from "./mail-send.js";
 import { holdOf, recordForEndedSend, releaseSendLockForRow, sendRecordNames, sendRecordsNaming, type Hold } from "./send-lock.js";
 import {
   clearComposeDraft, clearKnownComposeCopies, clearSavedComposeCopies, clearEndedComposeCopies, composeBufferMatchesRevision,
@@ -170,6 +170,13 @@ export function reconcileComposeRecovery(
       .find((candidate) => candidate?.session === session);
     return { mailboxId: row.mailboxId, fingerprint: press?.bfp };
   }, includeCurrent);
+  for (const lane of replyLanesOf(owner, "meta")) {
+    if (!lane.startsWith("draft:")) continue;
+    const id = lane.slice("draft:".length);
+    if (id === discarded || engine.confirmedDraft?.(id)?.status === "sent" || tombstoned(engine, id)) {
+      writeReplyMeta(lane, {}, owner);
+    }
+  }
 }
 
 /** Find the confirmed delivery named by this session whose metadata matches the saved copy. */

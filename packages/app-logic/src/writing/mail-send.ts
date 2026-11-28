@@ -43,8 +43,8 @@ import type { ToastFn } from "../press/report.js";
 import { sourcesFromDraft, type ForwardSource } from "./forward-selection.js";
 import {
   clearComposeDraft, clearEndedComposeCopies, composeOrigin, composeSessionId, composeStillHolds, composeWordsFingerprint,
-  readComposeDraft, readComposeRow, recoverComposePress, whenComposerReady,
-  type ComposeHeld, type MailSend,
+  readComposeDraft, readComposeDraftRecovery, readComposeRow, recoverComposePress, whenComposerReady,
+  type ComposeDraftRecovery, type ComposeHeld, type MailSend,
 } from "./compose.js";
 import { durableRemove, durableSet } from "../storage/durable.js";
 import { retiredSignOutStorageHeld } from "../storage/storage-owner.js";
@@ -976,6 +976,8 @@ export interface ReplyEditorMeta {
   forwardParts?: string[];
   /** The original messages still attached to a compose draft on this device. */
   forwardSources?: ForwardSource[];
+  /** Versions and missing picked files kept on this device for a saved compose draft. */
+  recovery?: ComposeDraftRecovery;
 }
 
 /**
@@ -1033,12 +1035,14 @@ export function readReplyMeta(lane: string, owner: StorageScope): ReplyEditorMet
     const envelope = envelopeOf(parsed.envelope);
     const parts = parsed.forwardParts;
     const forwardSources = sourcesFromDraft(parsed.forwardSources);
+    const recovery = readComposeDraftRecovery(parsed.recovery);
     return {
       ...(typeof parsed.subject === "string" ? { subject: parsed.subject } : {}),
       ...(envelope !== null ? { envelope } : {}),
       ...(Array.isArray(parts) && parts.length <= 100 && parts.every((id) => typeof id === "string")
         ? { forwardParts: [...parts] } : {}),
       ...(forwardSources ? { forwardSources } : {}),
+      ...(recovery ? { recovery } : {}),
       ...(typeof row?.id === "string" && typeof row.at === "string"
         ? { row: {
           id: row.id, at: row.at,
@@ -1064,7 +1068,7 @@ export function writeReplyMeta(lane: string, meta: ReplyEditorMeta, owner: Stora
   // A meta with neither field stores nothing — absence IS the resting state, see above.
   const resting = meta.subject === undefined && meta.sig === undefined && meta.row === undefined
     && meta.envelope === undefined && (meta.creates === undefined || meta.creates.length === 0)
-    && meta.forwardParts === undefined && !meta.forwardSources?.length;
+    && meta.forwardParts === undefined && !meta.forwardSources?.length && meta.recovery === undefined;
   const key = replyMetaKey(lane, owner);
   const kept = resting ? durableRemove(key, "reply.meta") : durableSet(key, JSON.stringify(meta), "reply.meta");
   if (owner !== null && !retiredSignOutStorageHeld() && (resting || kept === "stored")) durableRemove(replyMetaKey(lane, null), "reply.meta");

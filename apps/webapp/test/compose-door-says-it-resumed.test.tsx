@@ -174,6 +174,9 @@ describe("the plain compose door, over a message left unfinished", () => {
     await settleFirstPaint();
     expect(subjectField().value, "the reload did not restore the message").toBe("Bis Montag");
     expect(notes(), "the restored message was not said as resumed").toContain(compose.resumedNote);
+    expect(notes()).toContain(
+      "This is the message you left unfinished. Close it to keep the draft, then choose Write to start a new message. Discard deletes this draft.",
+    );
   }, 30_000);
 
   it("CONTROL: an empty composer says nothing about resuming", async () => {

@@ -56,8 +56,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
   const draft = useLetterDraftOffer();
   const drafting = draft?.drafting === true;
   const previewing = draft?.preview !== undefined;
-  const placeholder = draft === null ? t("placeholder") : t("draft.placeholder");
-  /* With Send later open, Mod+Enter is the card's: it schedules, it never sends now. */
+  const placeholder = draft?.control ? t("draft.placeholder") : t("placeholder");
   useLetterKeys(
     keysHere,
     pressable && !previewing && !laterOpen,
@@ -127,7 +126,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
             attach: files.attach,
             format: marks.format,
             emoji: emoji.control,
-            ...(draft === null ? {} : { draft: draft.control }),
+            ...(draft?.control ? { draft: draft.control } : {}),
           }}
           placeholder={unwritten({ text: w.compose.body, html: w.compose.html }) ? placeholder : undefined}
         >
@@ -311,11 +310,13 @@ function useLetterSaveLines(ceiling: boolean, hasFrom: boolean) {
     elsewhere: elsewhereForSave(w.composeElsewhere),
   };
   const saved = tc("draftNote");
+  const filenames = w.compose.missingAttachmentNames?.join(", ");
   return {
     saving: saveLines(state, {
       notSaved: tc("draftNotSaved"),
       resumed: tc("resumedNote"),
       saved: hasFrom ? undefined : saved,
+      reattach: filenames ? tc("reattachAfterRecovery", { filenames }) : undefined,
     }),
     reassurance: hasFrom && canReassure(state) ? saved : undefined,
   };

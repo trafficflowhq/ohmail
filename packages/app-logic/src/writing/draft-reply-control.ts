@@ -48,12 +48,12 @@ export interface DraftReplyControl {
     ((messageId: string, text: string, own: RichValue, fullConversation?: boolean) => boolean) | "none";
   /**
    * A new letter drafted from the person's own words: the words, the address it goes from and its subject, as
-   * {@link fromText} is pressed, kept under {@link NEW_LETTER}. `none` exactly when {@link fromText} is.
+   * {@link fromText} is pressed. `none` exactly when {@link fromText} is.
    */
   letter:
     | ((words: { text: string; mailboxId: string | null; subject: string }, own: RichValue) => boolean)
     | "none";
-  /** {@link NEW_LETTER}: the new letter's `messageId` while its draft is out, and its entry of `own`. */
+  /** {@link NEW_LETTER}: the new letter's `messageId` while its draft is out. */
   letterId: string;
   /**
    * The person's own text in each reply a draft landed over, and that draft: the reply's two tabs, by the letter's
@@ -74,10 +74,13 @@ export interface DraftReplyControl {
   restore: (messageId: string) => void;
 }
 
-/** The person's own text beside the draft that landed over it, and which of the two the reply shows. */
-export interface OwnText {
-  readonly messageId: string;
+/** The person's own text beside the draft that landed over it, and which version is visible. */
+export interface DraftVersions {
   readonly yours: RichValue;
   readonly draft: RichValue;
   readonly shown: "yours" | "draft";
+}
+
+export interface OwnText extends DraftVersions {
+  readonly messageId: string;
 }

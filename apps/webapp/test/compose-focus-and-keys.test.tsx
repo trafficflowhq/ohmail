@@ -41,6 +41,7 @@
  * "Subject", its text the textbox "Message". Every expectation stands as it stood.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -513,17 +514,23 @@ describe("where the caret lands is the first empty field, decided once", () => {
 
   it("with To already answered, reopening lands on Subject; with both answered, in the body", async () => {
     const container = await shell();
+    const reopen = async (subject: string): Promise<void> => {
+      await act(async () => { window.location.hash = "#/drafts"; });
+      const list = await within(container).findByRole("listbox", { name: messages.drafts.title });
+      const saved = await within(list).findByRole("option", { name: `sam@example.com: ${subject}` });
+      await act(async () => saved.click());
+      await waitFor(() => composing(container), "the saved draft did not reopen");
+    };
 
     // First open: To is empty, To gets the caret (asserted above; the premise here).
     await key("c");
     await waitFor(() => composing(container), "`c` did not open Compose");
     await typeInto(toField(container)!, "sam@example.com, ");
 
-    // Leave and reopen — the shell keeps the form, the view remounts, and the decision reruns.
+    // Leave and reopen from Drafts — the view remounts and the decision reruns.
     await key("Escape");
     await waitFor(() => !composing(container), "Escape did not leave Compose");
-    await key("c");
-    await waitFor(() => composing(container), "`c` did not reopen Compose");
+    await reopen(messages.drafts.noSubject);
     expect(
       document.activeElement,
       "with To answered the caret belongs in Subject — the writing resumes where it stopped",
@@ -532,8 +539,7 @@ describe("where the caret lands is the first empty field, decided once", () => {
     await typeInto(subjectField(container)!, "Friday");
     await key("Escape");
     await waitFor(() => !composing(container), "Escape did not leave Compose");
-    await key("c");
-    await waitFor(() => composing(container), "`c` did not reopen Compose");
+    await reopen("Friday");
     // The body focus is the editor's own `autoFocus`, which fires when the editor exists —
     // after `immediatelyRender: false` resolves. Wait for it, then ask where the caret is.
     await waitFor(

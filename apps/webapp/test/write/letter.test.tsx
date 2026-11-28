@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { fireEvent, screen, within } from "@testing-library/react";
 import { setFormatWords } from "@ohmail/app-logic/text";
 import { EMPTY_COMPOSE, readComposeDraft, resetComposerForTest, writeComposeDraft, writeComposeRow } from "@ohmail/app-logic/writing/compose";
+import { goCompose } from "@ohmail/app-logic/writing/compose-door";
 import { COMPOSE_ATTACH_MAX_TOTAL_BYTES, type ImageQualityLevel } from "@ohmail/client-engine";
 import { UNDO_MS } from "@ohmail/app-logic/press";
 import en from "../../messages/en.json";
@@ -498,6 +499,38 @@ describe("the letter's files", () => {
     await rounds(10);
     expect(sends(w)).toBe(1);
     expect(sentFiles(w).map((a) => [a.filename, a.contentBase64])).toEqual([["plan.pdf", b64(bytes(1200, 7))]]);
+
+    await w.unmount();
+    resetComposerForTest();
+    const scope = "attachment-recovery";
+    const open = await mountWriting({ view: true, scope });
+    await typeLetter("lena@example.invalid", "The plans are attached.");
+    const file = (name: string, fill: number) => new File([bytes(100, fill)], name, { type: "text/plain" });
+    await drop(file("plan.txt", 1), file("old.txt", 2), file("notes.txt", 3));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: W.files.remove.replace("{filename}", "old.txt") }));
+    });
+    await open.unmount();
+    resetComposerForTest();
+    const restored = await mountWriting({ view: true, store: open.store, scope });
+    await rounds(8);
+    expect(richText().getText()).toBe("The plans are attached.");
+    expect(screen.getByText("Attach plan.txt, notes.txt again before sending.")).toBeTruthy();
+    await drop(file("plan.txt", 1));
+    expect(screen.getByText("Attach notes.txt again before sending.")).toBeTruthy();
+    await act(async () => goCompose(() => { throw new Error("Write has no composer"); }));
+    await rounds(12);
+    expect(richText().getText()).toBe("");
+    expect(screen.queryByText(/again before sending/)).toBeNull();
+    const kept = restored.engine.read().list<ReturnType<typeof letter>>("draft").find((row) => row.body === "The plans are attached.");
+    expect(kept).toBeDefined();
+    await act(async () => restored.now().openDraft(kept!));
+    await rounds(8);
+    expect(richText().getText()).toBe("The plans are attached.");
+    expect(screen.getByText("Attach notes.txt, plan.txt again before sending.")).toBeTruthy();
+    await drop(file("notes.txt", 3));
+    await drop(file("plan.txt", 1));
+    expect(screen.queryByText(/again before sending/)).toBeNull();
   });
 
   it("the same file twice stays one file, and says so", async () => {
@@ -1086,6 +1119,35 @@ describe("draft from your text, on a new letter", () => {
       yours: true,
       own: "noon ok",
     });
+    await act(async () => { writeText("noon on Friday"); });
+    await w.unmount();
+    resetComposerForTest();
+    const reopened = await mountWriting({ view: true, draftWire: d.wire, store: w.store });
+    await rounds(8);
+    expect(letterText()).toBe("noon on Friday");
+    await act(async () => { fireEvent.click(control(W.draft.draft)); });
+    expect(letterText()).toBe("first draft");
+    await act(async () => { writeText("edited draft"); });
+    await reopened.unmount();
+    resetComposerForTest();
+    const restored = await mountWriting({ view: true, draftWire: d.wire, store: w.store });
+    await rounds(8);
+    expect(letterText()).toBe("edited draft");
+    await act(async () => { fireEvent.click(control(W.draft.yours)); });
+    expect(letterText()).toBe("noon on Friday");
+    await act(async () => { fireEvent.click(control(W.draft.draft)); });
+    await act(async () => goCompose(() => { throw new Error("Write has no composer"); }));
+    await rounds(12);
+    expect(letterText()).toBe("");
+    expect(screen.queryByRole("button", { name: W.draft.yours })).toBeNull();
+    const kept = restored.engine.read().get<typeof own>("draft", own.id);
+    expect(kept?.body).toBe("edited draft");
+    await act(async () => restored.now().openDraft(kept!));
+    await rounds(8);
+    expect(letterText()).toBe("edited draft");
+    await act(async () => { fireEvent.click(control(W.draft.yours)); });
+    expect(letterText()).toBe("noon on Friday");
+    expect(d.asked).toHaveLength(1);
   });
 });
 
