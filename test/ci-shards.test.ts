@@ -470,8 +470,8 @@ describe("a pull request's selected run", () => {
     expect(wf.jobs.plan!["timeout-minutes"]).toBe(20);
     // The whole arms are the map's verbs (the files each job runs when no plan hands them any).
     const suite = wf.jobs.suite!.steps.map((s) => s.run ?? "").join("\n");
-    expect(suite).toMatch(/if \[ -n "\$FILES" \]; then\n\s+list=\$FILES\n\s*else\n\s+list=\$\(node test\/support\/ci-shards\.mjs --shard "\$SHARD"\)/);
-    expect(suite).toContain("node test/support/ci-shards.mjs --needs-dovecot \"$SHARD\"");
+    expect(suite).toMatch(/if \[ -n "\$FILES" \]; then\n\s+list=\$FILES\n\s*else\n\s+list=\$\(node test\/support\/ci-shards\.mjs --shard "\$SHARD" "\$\{SHARD_PART:-\}"\)/);
+    expect(suite).toContain("node test/support/ci-shards.mjs --needs-dovecot \"$SHARD\" \"$SHARD_PART\"");
   });
 
   it("refuses each planted fault by name", () => {
@@ -673,6 +673,20 @@ describe("the map's two rules, on a planted tree", () => {
     expect(verifyReport(2, { testResults: [] }, scratch, map).missing).toEqual(want);
     expect(verifyReport(2, { testResults: [...want, "packages/p/test/f0.test.ts"].map(row) }, scratch, map).extra)
       .toEqual(want.includes("packages/p/test/f0.test.ts") ? [] : ["packages/p/test/f0.test.ts"]);
+  });
+
+  it("runs the two parts of a split shard once each and verifies their reports separately", () => {
+    const cli = join(ROOT, "test/support/ci-shards.mjs");
+    const files = (part: string) =>
+      execFileSync(process.execPath, [cli, "--shard", "12", part], { encoding: "utf8" }).trim().split("\n");
+    const a = files("a");
+    const b = files("b");
+    expect(a.length).toBeGreaterThan(1);
+    expect(b.length).toBeGreaterThan(1);
+    expect([...a, ...b].sort()).toEqual(shardFiles(12).sort());
+    const report = { testResults: a.map((file) => ({ name: join(ROOT, file), startTime: 0, endTime: 1 })) };
+    expect(verifyReport(12, report, ROOT, readMap(), "a")).toEqual({ missing: [], extra: [], gated: [] });
+    expect(verifyReport(12, report, ROOT, readMap(), "b")).toEqual({ missing: b, extra: a, gated: [] });
   });
 
   /* A shard that ran a file as the service gate's stand-in measured nothing in it: every service a CI

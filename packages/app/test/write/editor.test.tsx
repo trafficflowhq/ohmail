@@ -15,6 +15,8 @@ import { TextProvider } from "../../src/text/index.js";
 import type { EditorHandle, WriteEditor } from "../../src/write/ports.js";
 import { richEditor } from "../../src/write/editor/index.js";
 import { EXTENSIONS } from "../../src/write/editor/schema.js";
+import { editorShortcuts, historyChords } from "../../src/write/editor/shortcuts.js";
+import { formatHelpShortcuts, historyHelpShortcuts } from "../../src/write/format-help.js";
 import { LETTER_TEXT, LetterNames } from "../../src/write/editor/letter-names.js";
 import { plainEditor } from "../../src/write/plain/index.js";
 import { useMarks } from "../../src/write/text/Marks.js";
@@ -133,6 +135,11 @@ const type = (m: Mounted, text: string): void =>
   });
 
 describe("the rich editor", () => {
+  it("advertises the editor's actual shortcuts before loading it", () => {
+    expect(Object.entries(formatHelpShortcuts)).toEqual(Object.entries(editorShortcuts));
+    expect(historyHelpShortcuts).toEqual(historyChords());
+  });
+
   it("edits directly from the collapsed quote and resets without changing untouched output", async () => {
     const history = {
       load: async () => ["Earlier message"],

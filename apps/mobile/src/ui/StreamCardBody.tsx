@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { Copy } from "../copy";
 import type { WorldMail } from "../state/live";
@@ -23,9 +23,11 @@ export function StreamCardBody({ m, onRead, children, showFilePrompt = true }: {
   const html = m.protected ? null : stored.html;
   // Measure real wrapping without passing an entire long letter to native Text.
   const preview = text.slice(0, BODY_BLOCK_CHARS);
-  const [textFit, setTextFit] = useState<{ text: string; height: number } | null>(null);
+  // Keep the measurement for this preview without storing its displayed words in state.
+  const textRun = useMemo(() => Symbol(), [preview]);
+  const [textFit, setTextFit] = useState<{ run: symbol; height: number } | null>(null);
   const [htmlFit, setHtmlFit] = useState<{ html: string; clipped: boolean | null } | null>(null);
-  const textClipped = textFit !== null && textFit.text === preview;
+  const textClipped = textFit !== null && textFit.run === textRun;
   const frameClipped = html ? (htmlFit?.html === html ? htmlFit.clipped : true) : null;
   const clipped = frameClipped ?? textClipped;
   const hasMore = (showFilePrompt && m.hasAttachments) || clipped
@@ -38,7 +40,7 @@ export function StreamCardBody({ m, onRead, children, showFilePrompt = true }: {
           const last = lines.length > PREVIEW_LINES ? lines[PREVIEW_LINES - 1] : undefined;
           const next = last ? Math.ceil(last.y + last.height) : null;
           setTextFit((old) => next === null ? null
-            : old?.text === preview && old.height === next ? old : { text: preview, height: next });
+            : old?.run === textRun && old.height === next ? old : { run: textRun, height: next });
         }}>{preview}</Txt>
         {textClipped ? <FadeOut color={t.c.panel} /> : null}
       </View>

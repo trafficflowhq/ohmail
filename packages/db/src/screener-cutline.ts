@@ -224,8 +224,12 @@ export function heldSenderKeysSql(d: Dialect, accountId: string, gone: readonly 
 export function activeSenderKeysSql(
   d: Dialect, accountId: string, set: CutlineSet, gone: readonly string[], candidates?: SQL, messageRows?: SQL,
 ): SQL {
-  const sender = candidates ? sql`and lower(mc.from_address) in (${candidates})` : sql``;
-  return sql`select distinct lower(mc.from_address) as sender ${activeSenderRowsSql(d, accountId, set, gone, sender, messageRows)}`;
+  // Build the activity set independently of the held representatives. PostgreSQL can run the
+  // account scan in parallel when it does not depend on the materialized representatives.
+  const all = sql`select distinct lower(mc.from_address) as sender
+    ${activeSenderRowsSql(d, accountId, set, gone, sql``, messageRows)}`;
+  return candidates === undefined ? all : sql`with activity as materialized (${all})
+    select sender from activity where sender in (${candidates})`;
 }
 
 /** A presented message can make its sender active under the window of its own mailbox. */

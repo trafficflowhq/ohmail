@@ -1501,8 +1501,8 @@ export const accounts = pgTable("accounts", {
    * whichever side wins the row lock, zero rows survive.
    */
   erasedAt: timestamp("erased_at", { withTimezone: true }),
-  erasureProgress: jsonb("erasure_progress").$type<AccountErasureProgress>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  erasureProgress: jsonb("erasure_progress").$type<AccountErasureProgress>(),
 });
 
 export const users = pgTable("users", {

@@ -138,7 +138,13 @@ describe("the projection the sidecar reads matches the table", () => {
     // to the signed-in account's server, like the calendar's other invitation responses.
     expect(everyRoute().get("POST /calendar/proposals")?.route.relay).toBe(true);
     expect(mayRelay("POST", "/calendar/proposals")).toBe(true);
-    expect(RELAY_ALLOWLIST.length).toBe(213);
+    // Calendar-only clients must reach account-bound setup, incremental sync and snapshots.
+    const declared = everyRoute();
+    for (const path of ["/calendar/setup", "/calendar/sync", "/calendar/sync/snapshot"]) {
+      expect(declared.get(`GET ${path}`)?.route).toMatchObject({ relay: true, wire: true, cost: "read" });
+      expect(mayRelay("GET", path)).toBe(true);
+    }
+    expect(RELAY_ALLOWLIST.length).toBe(216);
   });
 
   it("every pattern in the projection is a real route", () => {

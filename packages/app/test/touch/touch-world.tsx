@@ -14,8 +14,8 @@ import type { PaneProps, PlaceEntry } from "../../src/frame/contract.js";
 import type { HostContract } from "../../src/host/index.js";
 import { OhboxAbove, OhboxList, type OhboxBeside } from "../../src/ohbox/index.js";
 import { TextProvider } from "../../src/text/index.js";
-import { beside, WORDS, type Said } from "../ohbox/ohbox-world.js";
-import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
+import { beside, engineWithEmptyReplyMirror, WORDS, type Said } from "../ohbox/ohbox-world.js";
+import { fakeHost } from "../support/fake-host.js";
 import { fakeWindow, ROOMS } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 
@@ -131,7 +131,7 @@ export function touchWorld(
     },
   };
   const made = fakeHost({
-    engine: NO_ENGINE,
+    engine: engineWithEmptyReplyMirror(),
     service: "self",
     scope: "acct-1",
     places: { ohbox: OHBOX },

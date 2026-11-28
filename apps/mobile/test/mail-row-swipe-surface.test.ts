@@ -86,13 +86,18 @@ describe("a swiped row is a clipped, opaque surface", () => {
     const receipts = source(RECEIPTS);
     expect(receipts, "Receipts renders its cards through the virtualized list").toMatch(/<MailList[\s>]/);
     expect(receipts, "Receipt cards carry the swipe surface themselves").toMatch(/surface=\{false\}/);
-    expect(receipts, "The Paper card and other face both open from the receipt row").toMatch(
-      /t\.mail \? <ReceiptPreview m=\{m\} onRead=\{read\} \/> : <MailRow m=\{m\} onPress=\{read\} swipe receipt \/>/,
+    const row = receipts.slice(receipts.indexOf("renderRow="), receipts.indexOf("surface={false}"));
+    expect(row, "The list cell opens its own receipt").toContain("const read = () => openRow(m.id);");
+    const faces = /t\.mail\s*\?\s*\(\s*<ReceiptPreview m=\{m\} onRead=\{read\}\s+render=\{\(preview\) => (<MailRow[^>]*\/>)\} \/>\s*\)\s*:\s*(<MailRow[^>]*\/>)/.exec(row);
+    expect(faces, "The list cell renders the Paper preview and the other face").not.toBeNull();
+    const swipe = "<MailRow m={m} onPress={read} swipe receipt";
+    expect(faces?.[1]?.replace(/\s+/g, " "), "Paper's swipe row receives the preview content").toBe(
+      `${swipe} receiptHead={preview.receiptHead} receiptBody={preview.receiptBody} receiptDetail={preview.receiptDetail} />`,
     );
+    expect(faces?.[2], "The other face uses the same swipe row and open handler").toBe(`${swipe} />`);
     const card = receipts.slice(receipts.indexOf("function ReceiptPreview("));
-    expect(card, "Paper's receipt card uses the same swipe row").toMatch(/<MailRow\s+m=\{m\}\s+onPress=\{onRead\}\s+swipe\s+receipt\s/);
     expect(card, "The Paper card carries its calendar affordances inside the swipe surface").toMatch(
-      /receiptDetail=\{\s*<>\s*<EventCards[^\n]*\/>\s*<MailFoundEvents found=\{found\} \/>/,
+      /return render\(\{[\s\S]*receiptDetail:\s*\(\s*<>\s*<EventCards[^\n]*\/>\s*<MailFoundEvents found=\{found\} \/>/,
     );
   });
 });

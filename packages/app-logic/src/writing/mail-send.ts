@@ -2755,12 +2755,14 @@ export function useMailSend(
             const receipt = recordForEndedSend(record.key, owner.current)?.beforeOutbox;
             const m = receipt?.mutation;
             if (m?.kind !== "mail_send" || m.inReplyTo !== null || sendFingerprint(m) !== record.fp) return;
-            if (sendLockOwed(engine)(record.key)) {
-              writeBeforeOutbox(record.key, undefined, owner.current);
+            const owed = sendLockOwed(engine);
+            if (owed(record.key)) {
+              writeBeforeOutbox(record.key, undefined, owed, owner.current);
               return;
             }
             const result = await engine.mutate(m, {
-              key: record.key, restored: true, onDurable: () => writeBeforeOutbox(record.key, undefined, owner.current),
+              key: record.key, restored: true,
+              onDurable: () => writeBeforeOutbox(record.key, undefined, sendLockOwed(engine), owner.current),
             });
             if (live && result.status !== "queued") adoptForeign.current(result);
           });
@@ -2931,7 +2933,7 @@ export function useMailSend(
       }
       // Closing can interrupt the IndexedDB transaction. Keep the sealed press until it commits.
       if (key === COMPOSE_SEND_KEY) {
-        writeBeforeOutbox(sendKey, { composer: composeOrigin(), mutation: m }, owner.current);
+        writeBeforeOutbox(sendKey, { composer: composeOrigin(), mutation: m }, owed, owner.current);
       }
 
       ownKeys.current.add(sendKey);
@@ -2951,7 +2953,7 @@ export function useMailSend(
         key: sendKey, ...(opts?.andDone ? { andDone: opts.andDone } : {}),
         // The editor lets go once the send is on disk; a refused write never calls it.
         onDurable: () => {
-          if (key === COMPOSE_SEND_KEY) writeBeforeOutbox(sendKey, undefined, owner.current);
+          if (key === COMPOSE_SEND_KEY) writeBeforeOutbox(sendKey, undefined, owed, owner.current);
           if (handOff) { handedOff.current.add(key); bumpLine(); handOff(m); }
         },
       });

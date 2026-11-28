@@ -1525,7 +1525,11 @@ export async function select({ root = ROOT, ctx, changes = null, graph = vitestG
 export function composeOutputs({ indexes, sqliteIndexes, alone, scope = "", scopeWhy = "", selectOutcome = "", plan = null }) {
   const whole = (why) => ({
     scope: "whole", why,
-    shards: indexes.map((shard) => ({ shard })), alone, sqlite: sqliteIndexes.map((shard) => ({ shard })), summary: null,
+    // This shard has repeatedly lost its runner mid-test. Give each half a fresh job and services.
+    shards: indexes.flatMap((shard) => shard === 12
+      ? ["a", "b"].map((part) => ({ shard: `${shard}${part}`, baseShard: shard, part }))
+      : [{ shard }]),
+    alone, sqlite: sqliteIndexes.map((shard) => ({ shard })), summary: null,
   });
   if (scope === "build-only") return { scope, why: scopeWhy, shards: [], alone: [], sqlite: [], summary: null };
   if (scope !== "selected") return whole(scopeWhy || "the scope step said nothing");

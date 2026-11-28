@@ -55,7 +55,8 @@ export interface Plan {
 }
 export interface Outputs {
   scope: Scope["scope"]; why: string;
-  shards: { shard: number; files?: string; dovecot?: string }[]; alone: string[]; sqlite: { shard: number; files?: string }[];
+  shards: { shard: number | `${number}${"a" | "b"}`; baseShard?: number; part?: "a" | "b"; files?: string; dovecot?: string }[];
+  alone: string[]; sqlite: { shard: number; files?: string }[];
   summary: Plan["summary"] | null;
   /** A capped plan's, for its summary. */
   mode?: "capped";

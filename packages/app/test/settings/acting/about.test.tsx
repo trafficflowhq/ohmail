@@ -11,7 +11,7 @@ import {
   type AboutModel,
 } from "../../../src/settings/about/index.js";
 import { FrameContext, type FrameInner } from "../../../src/frame/commands.js";
-import { SHEET_CHORD } from "../../../src/keys/availability.js";
+import { SHEET_CHORD } from "../../../src/frame/keyboard/availability.js";
 import { drawn, said } from "./words.js";
 
 afterEach(cleanup);

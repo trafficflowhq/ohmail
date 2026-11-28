@@ -98,7 +98,7 @@ describe("storage in the signed-in Ohbox", () => {
     await tick(0);
     expect(server.on("POST /api/auth/step-up/totp").map((request) => request.body)).toEqual([{ code: factor }]);
     expect(server.on("POST /api/account/manage-link/change").map((request) => request.body)).toEqual([
-      { lang: "en" }, { lang: "en" },
+      { lang: "en", addon: "storage" }, { lang: "en", addon: "storage" },
     ]);
     expect(page.queryByRole("dialog")).toBeNull();
     expect(left).toEqual([manage]);

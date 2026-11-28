@@ -333,7 +333,11 @@ describe.skipIf(!PG_UP)("on real Postgres — a pairing token is spent exactly o
 
     // The wizard's resend, as the signed-in user — the same endpoint every unverified account
     // reaches — then the mailed link plus the password, verbatim.
-    await svc.resendVerification(ctxFor(before!.id));
+    await svc.resendVerification({
+      ...ctxFor(before!.id),
+      accountId: before!.accountId,
+      db: bindDb(db, { account: before!.accountId }),
+    });
     const token = new URL(spy.only("email_verification").data.verifyUrl).searchParams.get("token")!;
     expect(token.length).toBeGreaterThan(0);
     await svc.verifyEmail(ctxFor(null), { token, password });

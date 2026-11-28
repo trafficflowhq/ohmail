@@ -5,6 +5,7 @@ import { onNotice } from "./notices.js";
 import { pgTlsOptions } from "./pg-tls.js";
 import postgres, { type Sql } from "postgres";
 import { adoptBaseline, adoptReissuedOriginals, type JournalSpec } from "./baseline.js";
+import { validateCalendarSessionScope } from "./calendar-session-scope.js";
 import { assertNoActiveAddressDuplicates } from "./mailbox-dedup.js";
 import { JOURNALS } from "./journal-specs.js";
 import { OLD_HEADS, type ServerJournal } from "./journal-heads.js";
@@ -338,7 +339,10 @@ async function passOver(
     try {
       await adoptBaseline(db, spec, log);
       if (road === "the 1.0 road") await migrateToOldHead(db, spec);
-      else await migrate(db, { migrationsFolder: spec.dir, migrationsSchema: spec.migrationsSchema });
+      else {
+        await migrate(db, { migrationsFolder: spec.dir, migrationsSchema: spec.migrationsSchema });
+        if (spec.name === "mail") await validateCalendarSessionScope(db);
+      }
       // AFTER the pass: a journal entry that exists twice (an original plus its reissue)
       // owes the original's bookkeeping row wherever only the reissue could run — the
       // skipped-window population, whose watermark had already passed the original. See

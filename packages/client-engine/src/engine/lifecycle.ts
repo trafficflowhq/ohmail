@@ -581,7 +581,8 @@ export abstract class EngineLifecycle extends EngineTrash {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    clearTimeout(this.sentReplyExpiry);
+    this.cancelSentReplyCheck?.();
+    this.cancelSentReplyCheck = undefined;
     this.partLane.dropAll();
     this.partReasksDue.clear();
     this.unlistenDisk?.();

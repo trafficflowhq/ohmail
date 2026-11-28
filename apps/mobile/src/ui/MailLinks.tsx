@@ -78,6 +78,8 @@ export function linkedText(
     out.push(
       <Text
         key={link.start}
+        maxFontSizeMultiplier={t.textCap}
+        minimumFontScale={t.textKey}
         accessibilityRole="link"
         accessibilityLabel={label}
         onPress={() => onLink(link.href)}

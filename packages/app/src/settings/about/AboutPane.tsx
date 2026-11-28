@@ -1,5 +1,5 @@
 import { useBinding } from "@ohmail/app-logic/keys";
-import { SHEET_CHORD } from "../../keys/availability.js";
+import { SHEET_CHORD } from "../../frame/keyboard/availability.js";
 import { useContext } from "react";
 import { Button, Sentence } from "@ohmail/ui/base";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
