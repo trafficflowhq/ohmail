@@ -520,6 +520,21 @@ describe("a save that waited offline, then the row was deleted on another device
     await pause(AUTOSAVE_DELAY_MS + 400);
     expect({ creates: creates(), form: subject()?.value ?? null, says: text().includes(compose.deletedElsewhere!) })
       .toEqual({ creates: [], form: "Plans for Friday, maybe saved", says: true });
+
+    await press(within(shell.el).getByRole("button", { name: /^Ohbox\b/ }), "Ohbox");
+    expect(subject()).toBeNull();
+    await press(within(shell.el).getByRole("button", { name: /^Drafts\b/ }), "Drafts");
+    const restore = () => within(document.body).queryByRole("button", { name: compose.restoreDraft! });
+    expect(restore(), "leaving the composer gives a way back to the local edits").not.toBeNull();
+    await reload("#/drafts");
+    await waitFor(() => restore() !== null, "Drafts offers local recovery after reload");
+    shell.remote.push({ ...deletedElsewhere(), op: "create", id: "other", entity: letter({ id: "other", subject: "Another letter" }) });
+    await sync();
+    await press(within(shell.el).getByRole("option", { name: /Another letter/ }), "open a different draft");
+    await waitFor(() => report().includes(drafts.reopenBlockedUnsaved!.replace(/\.$/, "")), "Drafts protects the local edits");
+    await press(restore(), "restore the draft after reloading");
+    expect(subject()?.value).toBe("Plans for Friday, maybe saved");
+    expect(creates()).toEqual([]);
   }, 60_000);
 
   it("still waiting when the tab closed: the words stay, no draft is made until they change, and none is claimed unsaved", async () => {

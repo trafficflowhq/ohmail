@@ -1,5 +1,7 @@
 {
   "drafts": {
+    "restoreDraft": "Restore draft",
+    "deletedDraftLocalEdits": "Changes to a draft deleted on another device are still in this browser.",
     "title": "Drafts",
     "metaCount": "{count, plural, one {# draft} other {# drafts}}",
     "explainer": "Messages you started and haven't sent.",

@@ -4590,6 +4590,8 @@
     "waitingRemovalSlow": "Das Entfernen wartet noch, weil {holder} es noch nicht abgeholt hat · {date}"
   },
   "drafts": {
+    "restoreDraft": "Entwurf wiederherstellen",
+    "deletedDraftLocalEdits": "Änderungen an einem Entwurf, der auf einem anderen Gerät gelöscht wurde, sind noch in diesem Browser.",
     "title": "Entwürfe",
     "metaCount": "{count, plural, one {# Entwurf} other {# Entwürfe}}",
     "explainer": "Nachrichten, die du angefangen und nicht gesendet hast.",
