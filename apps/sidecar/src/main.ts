@@ -3,11 +3,9 @@ import { type Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { blankRepairModeFrom } from "@trafficflow/core/mail";
 import { makeDnsDkimKeys } from "@trafficflow/core/adapters/dkim-keys";
-import {
-  BAKED_ENGINE_VERSION, createSidecar, QuitLeftOpenError, type QuitReport, type Sidecar, type SidecarConfig,
-} from "./engine.js";
+import { QuitLeftOpenError, type QuitReport, type Sidecar, type SidecarConfig } from "./engine-types.js";
 import { armFirstPageGate } from "./first-page-gate.js";
-import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
+import type { CloudSidecar, CloudSidecarConfig } from "./cloud-engine.js";
 import {
   createAdmission, maybeHoldStoodDownPort, maybeStartHostListener, type HostListener,
 } from "./host-listener.js";
@@ -593,6 +591,7 @@ export async function runSidecar(): Promise<void> {
   });
 
   try {
+    const { createSidecar } = await import("./engine.js");
     // The narration is only valid while nothing else writes frames — see `bootPhaseEmitter`.
     // The constructor returns before `serveOverStdio` below is built, which is that window.
     // The power reader and the DKIM key lookup are this entry's to supply: the engine is also the
@@ -740,6 +739,10 @@ export async function runCloudSidecar(): Promise<void> {
   };
 
   try {
+    const [{ createCloudSidecar }, { BAKED_ENGINE_VERSION }] = await Promise.all([
+      import("./cloud-engine.js"),
+      import("./engine-classifiers.js"),
+    ]);
     // Same single-voiced window as the local door's — see `bootPhaseEmitter`.
     cloud = await createCloudSidecar({
       ...cloudConfigFromEnv(), log, onPhase: bootPhaseEmitter(stdout),

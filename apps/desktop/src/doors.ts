@@ -2169,10 +2169,10 @@ export async function standingEngine(): Promise<EngineStatus | null> {
 }
 
 /** Ask the shell what it is doing, and say honestly when there is no shell to ask. */
-export async function readShell(): Promise<Shell> {
+export async function readShell(initialStatus?: Promise<EngineStatus>): Promise<Shell> {
   if (!bridgeAvailable()) return { kind: "none" };
   try {
-    return { kind: "status", status: await engineStatus() };
+    return { kind: "status", status: await (initialStatus ?? engineStatus()) };
   } catch (err) {
     return { kind: "unreachable", reason: sentence(err) };
   }

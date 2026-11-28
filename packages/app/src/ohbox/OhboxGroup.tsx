@@ -29,6 +29,7 @@ export interface OhboxGroupProps {
   displayOnly?: boolean;
   /** The group's name, said by its heading and its listbox. */
   name: string;
+  counts?: boolean;
   /** Every row of the group, for its count and its dot. */
   rows: readonly OhboxRow[];
   /** The rows drawn now: the window's share, or all. */
@@ -47,6 +48,7 @@ export function OhboxGroup({
   model,
   beside,
   displayOnly = false,
+  counts = true,
   name,
   rows,
   from,
@@ -90,7 +92,7 @@ export function OhboxGroup({
     <>
       {heading ? (
         <div className="ob-heading" data-index={headingIndex}>
-          <GroupHeading count={String(rows.length)} hot={hot}>
+          <GroupHeading count={counts ? String(rows.length) : undefined} hot={hot}>
             {name}
           </GroupHeading>
         </div>
@@ -106,7 +108,7 @@ export function OhboxGroup({
               squaresBelow={frame?.plan.device === "fold"}
               row={row}
               index={rowBase === undefined ? undefined : rowBase + from + k}
-              place={{ at: from + k + 1, of: rows.length }}
+              place={counts ? { at: from + k + 1, of: rows.length } : undefined}
               onMenu={(at, anchor) => setMenu({ row, at, anchor })}
               onContact={ScreenContact && model.picked.size === 0 ? showScreening : undefined}
               words={t}
@@ -152,7 +154,7 @@ interface OhboxRowItemProps {
   beside: OhboxBeside;
   row: OhboxRow;
   index: number | undefined;
-  place: { at: number; of: number };
+  place?: { at: number; of: number };
   onMenu: NonNullable<Parameters<typeof Row>[0]["onMenu"]>;
   onContact?: (letter: EngineMessage, anchor: HTMLElement) => void;
   words: ReturnType<typeof useText>;

@@ -40,11 +40,13 @@ export function OhboxHead({
   plan,
   onMarkAllRead,
   displayOnly = false,
+  counts = true,
 }: {
   model: OhboxListModel;
   beside: OhboxBeside;
   plan: LayoutPlan;
   displayOnly?: boolean;
+  counts?: boolean;
   /** Mark every unread letter of the Ohbox read; absent where the shell has no such verb. */
   onMarkAllRead: ((ids: string[]) => void) | null;
 }) {
@@ -73,7 +75,12 @@ export function OhboxHead({
           <>
             <OhboxDoor model={model} beside={beside} />
             {markAll !== null && plan.pointer !== "coarse" ? (
-              <Button kind="quiet" size="s" onPress={markAll} label={all("aria", { count: unread })}>
+              <Button
+                kind="quiet"
+                size="s"
+                onPress={markAll}
+                label={counts ? all("aria", { count: unread }) : all("label")}
+              >
                 {all("label")}
               </Button>
             ) : null}
