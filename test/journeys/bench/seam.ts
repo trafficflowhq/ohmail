@@ -81,6 +81,8 @@ export interface Person {
   /** Take this window offline after its current requests settle. */
   goOffline(): Promise<void>;
   goOnline(): Promise<void>;
+  /** Deliver a browser reconnection notification without interrupting its requests. */
+  signalReconnect(): Promise<void>;
   /** Open Settings with its script response held and return to the previous place offline. */
   goOfflineWhileOpeningSettings(): Promise<void>;
   /** Wait for the language the window declares to its screen reader. */
@@ -136,6 +138,8 @@ export interface Person {
   keep(key: string, value: string): Promise<void>;
   /** Does anything this window draws show these words (a letter's words that must not reach another account)? */
   shows(words: string): Promise<boolean>;
+  /** Stop the driven clock near its current time, so a notice cannot expire by itself. */
+  pauseClock(): Promise<void>;
   /**
    * TIME PASSES FOR THIS WINDOW: its clock moves `ms` forward at once and every timer due in that span runs (an
    * autosave's delay, a window that closes). Never a wait. Refused where the window's clock is not driven
