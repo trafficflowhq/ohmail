@@ -98,6 +98,22 @@ function dateCases(calendar: OpenCalendar) {
     20_000,
   );
 
+  it("saves a phone event edit while the previous change offers Undo", async () => {
+    const page = await calendar("month", 390, "day=2026-11-12&undo");
+    try {
+      const undo = page.getByRole("button", { name: "Undo", exact: true });
+      await expect(undo).toBeVisible();
+      await page.getByRole("button", { name: /Dentist/ }).click();
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      const editor = page.getByRole("dialog", { name: "Edit event" });
+      await editor.getByRole("textbox", { name: "Event title" }).fill("Dentist follow-up");
+      await editor.getByRole("button", { name: "Save", exact: true }).click({ timeout: 2500 });
+      await expect(page.locator("body")).toHaveAttribute("data-written-title", "Dentist follow-up");
+    } finally {
+      await page.close();
+    }
+  }, 20_000);
+
   it("says who sets the time on an invitation", async () => {
     const page = await calendar("week", 1440, "day=2026-11-20");
     try {

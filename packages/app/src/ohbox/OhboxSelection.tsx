@@ -15,7 +15,15 @@ import type { OhboxBeside } from "./beside.js";
 import { OhboxMoveAsk } from "./OhboxMoveAsk.js";
 import { pickVerbs, selectionHint } from "./selection-verbs.js";
 
-export function OhboxSelection({ model, beside }: { model: OhboxListModel; beside: OhboxBeside }) {
+export function OhboxSelection({
+  model,
+  beside,
+  phone,
+}: {
+  model: OhboxListModel;
+  beside: OhboxBeside;
+  phone: boolean;
+}) {
   const t = useText("ohbox");
   const reader = useText("reader");
   const mod = useModGlyph();
@@ -99,6 +107,7 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
         </MenuItem>
       </Menu>
       <Menu
+        portal={phone}
         open={panel?.kind === "delete"}
         onClose={close}
         anchor={foot}

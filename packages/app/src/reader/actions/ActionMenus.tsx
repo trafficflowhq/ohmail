@@ -95,6 +95,7 @@ export function useReaderMore(
 }
 
 interface ActionMenusProps {
+  phone: boolean;
   words: ActionWords;
   anchor: RefObject<HTMLElement | null>;
   menu: OpenPanel;
@@ -112,6 +113,7 @@ interface ActionMenusProps {
 }
 
 export function ActionMenus({
+  phone,
   anchor,
   words,
   menu,
@@ -138,6 +140,7 @@ export function ActionMenus({
   return (
     <>
       <ResurfaceMenu
+        phone={phone}
         open={menu === "resurface"}
         onClose={close}
         anchor={anchor}
