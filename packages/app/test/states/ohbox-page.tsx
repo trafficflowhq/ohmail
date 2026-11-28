@@ -20,7 +20,7 @@ import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
 import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { Frame } from "../../src/frame/Frame.js";
-import { useRailModel, useReport } from "../../src/frame/commands.js";
+import { useRailModel, useReport, useSelectionBar } from "../../src/frame/commands.js";
 import type { PaneProps, PlaceEntry, RailModel } from "../../src/frame/contract.js";
 import { OhboxAbove, OhboxList, ohboxPlace, type OhboxBeside } from "../../src/ohbox/index.js";
 import { readerEntry, type ReaderFile, type ReaderFiles } from "../../src/reader/index.js";
@@ -381,6 +381,7 @@ const RAIL: RailModel = {
 /** The list as the frame mounts it, feeding the rail the way today's views do. */
 function List(props: PaneProps) {
   useRailModel(RAIL);
+  useSelectionBar(!open && show === "pick" && q.has("undo"));
   return <OhboxList {...props} />;
 }
 /* The Ohbox's registration without its seat and its rail count, which read the mail ground: this page stands the
@@ -443,10 +444,20 @@ const beside: OhboxBeside = {
   },
 };
 
-function RecoveryOffer() {
+function FixtureReport() {
   const report = useReport();
   useEffect(() => {
-    report("A draft was recovered", { action: "Restore draft", onAction: () => {} });
+    if (q.has("undo")) {
+      report(open ? "Reminder set" : "Moved to News", {
+        action: "Undo",
+        actionUntilPressed: true,
+        onAction: () => {
+          document.body.dataset.undone = "yes";
+        },
+      });
+    } else {
+      report("A draft was recovered", { action: "Restore draft", onAction: () => {} });
+    }
   }, [report]);
   return null;
 }
@@ -482,7 +493,10 @@ function Page() {
     onAddTag: () => undefined,
     onMarkAllRead: () => undefined,
     bulk: {
-      run: () => true,
+      run: (act) => {
+        if (q.has("undo")) document.body.dataset.bulkAction = act;
+        return true;
+      },
       tag: () => undefined,
       screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }),
       screen: () => true,
@@ -591,14 +605,15 @@ const { host } = fakeHost({
   scope: "mila",
   places: { ohbox },
   reader,
-  above: q.has("recovery")
-    ? ({ children }) => (
-        <>
-          <RecoveryOffer />
-          {children}
-        </>
-      )
-    : undefined,
+  above:
+    q.has("recovery") || q.has("undo")
+      ? ({ children }) => (
+          <>
+            <FixtureReport />
+            {children}
+          </>
+        )
+      : undefined,
   /* The account's two mailboxes: the letters are in the studio's, which each reading head names. */
   mailboxes: async () => [
     {

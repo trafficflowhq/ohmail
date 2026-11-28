@@ -151,6 +151,7 @@ export function ActionBar({
         />
       )}
       <ActionMenus
+        phone={room === "phone"}
         anchor={anchor}
         words={words}
         menu={menu}

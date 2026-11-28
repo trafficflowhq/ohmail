@@ -6,12 +6,13 @@
  * `calrest-world.ts`. A settings pane stands alone in the sheet's place under its name: Settings' menu lists the
  * calendar's panes once its registration names them, and is compared then.
  */
+import { useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { calendar } from "../../src/calendar/entry.js";
 import { calendarAccountsPane, calendarViewPane } from "../../src/calsettings/index.js";
 import { SetupPortProvider } from "../../src/calsetup/index.js";
 import { Frame } from "../../src/frame/Frame.js";
-import { useFrame } from "../../src/frame/commands.js";
+import { useFrame, useReport } from "../../src/frame/commands.js";
 import type { CalendarEntry, PaneProps, PlaceEntry } from "../../src/frame/contract.js";
 import {
   PANE_IDS,
@@ -187,11 +188,25 @@ if (q.has("record-times")) {
         : act.kind === "calendar_event_create"
           ? act.event
           : null;
-    if (fields) document.body.dataset.writtenTimes = JSON.stringify({ start: fields.start, end: fields.end });
+    if (fields) {
+      document.body.dataset.writtenTimes = JSON.stringify({ start: fields.start, end: fields.end });
+      if (fields.title !== undefined) document.body.dataset.writtenTitle = fields.title;
+    }
     return { key: "write" };
   };
 }
-const entry: CalendarEntry = { ...calendar, places: { ...calendar.places, calsettings: paneAlone() } };
+const entry: CalendarEntry = {
+  ...calendar,
+  places: { ...calendar.places, calsettings: paneAlone() },
+  Above: q.has("undo")
+    ? ({ children }) => (
+        <calendar.Above>
+          <PreviousEventReport />
+          {children}
+        </calendar.Above>
+      )
+    : calendar.Above,
+};
 const look = {
   face: q.get("face") === "ohmarchy" ? "ohmarchy" : "paper",
   scheme: q.get("scheme") === "dark" ? "dark" : "light",
@@ -205,6 +220,14 @@ if (q.has("viewport")) {
   resize();
   window.addEventListener("resize", resize);
 }
+function PreviousEventReport() {
+  const report = useReport();
+  useEffect(() => {
+    report("Event updated", { action: "Undo", actionUntilPressed: true, onAction: () => {} });
+  }, [report]);
+  return null;
+}
+
 const made = fakeHost({
   engine: world.engine,
   service: "managed",

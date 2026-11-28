@@ -135,6 +135,63 @@ it.each([
   15_000,
 );
 
+it.each([
+  { device: "desktop", viewport: { width: 1440, height: 1000 }, hasTouch: false },
+  { device: "phone", viewport: { width: 390, height: 844 }, hasTouch: true },
+])(
+  "keeps the next Trash action reachable with Undo in $device Ohbox",
+  async ({ device, viewport, hasTouch }) => {
+    const page = await browser!.newPage({ viewport, hasTouch, reducedMotion: "reduce" });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+      await page.goto(`${ORIGIN}/?open=none&show=pick&device=${device}&undo`);
+      const undo = page.getByRole("button", { name: "Undo", exact: true });
+      await undo.waitFor();
+      const more = page
+        .getByRole("toolbar", { name: "Selection" })
+        .getByRole("button", { name: "More", exact: true });
+      const press = (control: typeof more) =>
+        hasTouch ? control.tap({ timeout: 2000 }) : control.click({ timeout: 2000 });
+      await press(more);
+      const nextAction = page.getByRole("menuitem", { name: "Delete", exact: true });
+      await nextAction.waitFor({ timeout: 2000 });
+      if (!hasTouch) {
+        expect(await page.locator("body").getAttribute("data-undone")).toBeNull();
+        return;
+      }
+      await press(nextAction);
+      await press(page.getByRole("menuitem", { name: "Move", exact: true }));
+      expect(await page.locator("body").getAttribute("data-bulk-action")).toBe("delete");
+      expect(await page.locator("body").getAttribute("data-undone")).toBeNull();
+      expect(await undo.isVisible()).toBe(true);
+    } finally {
+      await page.close();
+    }
+  },
+  15_000,
+);
+
+it("accepts a reminder date while the previous reminder offers Undo on a phone", async () => {
+  const page = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  try {
+    await page.clock.setFixedTime(new Date(2026, 10, 28, 12));
+    await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+    await page.goto(`${ORIGIN}/?open=ben-kiln&device=phone&undo`);
+    const undo = page.getByRole("button", { name: "Undo", exact: true });
+    await undo.waitFor();
+    await page.getByRole("toolbar").getByRole("button", { name: "More", exact: true }).tap({ timeout: 3000 });
+    await page.getByRole("menuitem", { name: "Resurface", exact: true }).tap({ timeout: 2000 });
+    await page.getByRole("menuitem", { name: "Pick a date", exact: true }).tap({ timeout: 2000 });
+    const picker = page.getByRole("menu", { name: "Pick a date" });
+    await picker.getByRole("button", { name: "Next month" }).tap({ timeout: 2000 });
+    await picker.getByRole("button").filter({ hasText: /^15$/ }).tap({ timeout: 2000 });
+    await picker.waitFor({ state: "hidden", timeout: 2000 });
+    expect(await page.locator("body").getAttribute("data-undone")).toBeNull();
+  } finally {
+    await page.close();
+  }
+}, 15_000);
+
 describe("a long conversation's row in a real browser", () => {
   it("stands a run of its squares inside the row: the time drawn, the squares in the row, most of the sender kept", async () => {
     const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });

@@ -102,6 +102,12 @@
   bottom: calc(var(--edge) + var(--s4) + var(--h-xl) + var(--s3));
 }
 
+/* A phone editor scrolls its Save button to the foot of the sheet. Keep the earlier report above it. */
+:root[data-product="cal"][data-device="phone"] .fr-frame:has(.cal-edit-fields) .fr-report {
+  top: var(--s2);
+  bottom: auto;
+}
+
 .cal-event-panel[data-call] {
   display: flex;
   align-items: center;

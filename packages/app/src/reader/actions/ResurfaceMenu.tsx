@@ -46,6 +46,7 @@ function sixWeeks(year: number, month: number): { id: string; inMonth: boolean; 
 }
 
 interface ResurfaceMenuProps {
+  phone: boolean;
   open: boolean;
   onClose: () => void;
   anchor: RefObject<HTMLElement | null>;
@@ -56,7 +57,7 @@ interface ResurfaceMenuProps {
   store?: ((hhmm: string) => Promise<unknown>) | null;
 }
 
-export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: ResurfaceMenuProps) {
+export function ResurfaceMenu({ phone, open, onClose, anchor, act, stored, store }: ResurfaceMenuProps) {
   const t = useText("reader");
   const locale = useLocale();
   const [at, setAt] = useState(() => hhmm(stored ?? DEFAULT_RESURFACE_TIME));
@@ -90,6 +91,7 @@ export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: Res
   if (picking)
     return (
       <PickDay
+        phone={phone}
         open={open}
         onClose={onClose}
         anchor={anchor}
@@ -104,6 +106,7 @@ export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: Res
 
   return (
     <Menu
+      portal={phone}
       open={open}
       onClose={onClose}
       anchor={anchor}
@@ -141,6 +144,7 @@ export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: Res
 
 /** Pick a date: a month to find the day in, floored at the first day the time is still ahead; the keys open on that day. */
 function PickDay({
+  phone,
   open,
   onClose,
   anchor,
@@ -151,6 +155,7 @@ function PickDay({
   onPick,
   onBack,
 }: {
+  phone: boolean;
   open: boolean;
   onClose: () => void;
   anchor: RefObject<HTMLElement | null>;
@@ -188,6 +193,7 @@ function PickDay({
     });
   return (
     <Menu
+      portal={phone}
       open={open}
       onClose={onClose}
       anchor={anchor}

@@ -215,7 +215,7 @@ function EditorContents({
   const latest = current?.exception ?? current?.record;
   return (
     <>
-      <div inert={blocked}>
+      <div className="cal-edit-fields" inert={blocked}>
         <DraftTimeNotice issue={issue} />
         {!ordinaryOnly && provider === "caldav" && !calendar.autoSchedule && (
           <RefusalLine start>{t("edit.noInvitations")}</RefusalLine>

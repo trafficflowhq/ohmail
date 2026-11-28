@@ -286,7 +286,9 @@ function OhboxPresentation({
         />
       )}
       {held ? null : <SelectionStatus count={model.pickedRowCount} />}
-      {!held && model.picked.size > 0 ? <OhboxSelection model={model} beside={beside} /> : null}
+      {!held && model.picked.size > 0 ? (
+        <OhboxSelection model={model} beside={beside} phone={plan.device === "phone"} />
+      ) : null}
     </div>
   );
 }
