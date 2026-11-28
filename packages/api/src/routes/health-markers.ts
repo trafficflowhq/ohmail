@@ -920,6 +920,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["cal_calendars", "read_owner"],
   ["cal_events", "google_exclusion_sources"],
   ["cal_events", "provider_modified_at"],
+  // Draft reads select the full row, including the messages to forward.
+  ["drafts", "forward_sources"],
 ] as const;
 
 /**
@@ -1361,7 +1363,7 @@ export const MAIL_EXPECTED_MARKERS =
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
 // mail 0220_caldav_host_retry resets poll times without changing the schema.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0233_account_erasure_progress";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0234_draft_forward_sources";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {
