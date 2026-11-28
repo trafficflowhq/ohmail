@@ -97,14 +97,16 @@ export function Removal({
             ]}
             onChange={(v) => model.removal.choose(v === "erase")}
           />
-          <SettingNote>{say({ key: "removeEraseWhat" })}</SettingNote>
           {erase ? (
-            <Field
-              label={say({ key: "removeEraseTypeLabel" })}
-              value={typed}
-              onChange={model.removal.type}
-              autoComplete="off"
-            />
+            <>
+              <SettingNote>{say({ key: "removeEraseWhat" })}</SettingNote>
+              <Field
+                label={say({ key: "removeEraseTypeLabel" })}
+                value={typed}
+                onChange={model.removal.type}
+                autoComplete="off"
+              />
+            </>
           ) : null}
         </>
       ) : null}

@@ -146,6 +146,20 @@ describe("remove, behind the one dialog", () => {
 });
 
 describe("erase, behind the same dialog", () => {
+  it("warns about erasing the copy only while Erase is selected", async () => {
+    const { pane } = await removing({});
+    expect(screen.getByText(M.removeCopyStays)).toBeTruthy();
+    expect(screen.queryByText(M.removeEraseWhat)).toBeNull();
+
+    fireEvent.click(screen.getByRole("radio", { name: M.removeEraseChoice }));
+    expect(screen.getByText(M.removeEraseWhat)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("radio", { name: M.removeKeepChoice }));
+    expect(screen.getByText(M.removeCopyStays)).toBeTruthy();
+    expect(screen.queryByText(M.removeEraseWhat)).toBeNull();
+    expect(pane.writes()).toEqual([]);
+  });
+
   it("sends the address as it was typed, never filled in, and the same body again after the factor", async () => {
     const { pane } = await removing({
       erase: [
