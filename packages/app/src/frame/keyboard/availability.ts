@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useFrameElement } from "../frame/FrameRoot.js";
+import { useFrameElement } from "../FrameRoot.js";
 
 export const SHEET_CHORD = "?";
 export const TOUCH_ONLY = "(pointer: coarse) and (hover: none)";

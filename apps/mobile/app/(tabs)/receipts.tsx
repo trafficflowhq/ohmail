@@ -8,7 +8,7 @@
  * chain above the row is zero and it answers each row where it really stands.
  * The rows are a window, never the whole stream.
  */
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ComponentProps, type ReactNode } from "react";
 import { AppState, View } from "react-native";
 import { useSeenRun } from "../../src/ui/stream-seen";
 import { useStreamPreview } from "../../src/ui/stream-preview";
@@ -155,7 +155,11 @@ function ReceiptsBody() {
             <>
               {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
               <View style={t.mail ? paperStreamCardStyle : { marginBottom: 12 }}>
-                {t.mail ? <ReceiptPreview m={m} onRead={read} /> : <MailRow m={m} onPress={read} swipe receipt />}
+                {t.mail ? (
+                  <ReceiptPreview m={m} onRead={read}
+                    render={(preview) => <MailRow m={m} onPress={read} swipe receipt
+                      receiptHead={preview.receiptHead} receiptBody={preview.receiptBody} receiptDetail={preview.receiptDetail} />} />
+                ) : <MailRow m={m} onPress={read} swipe receipt />}
               </View>
             </>
           );
@@ -212,24 +216,24 @@ function ReceiptsBody() {
   );
 }
 
-function ReceiptPreview({ m, onRead }: { m: WorldMail; onRead: () => void }) {
+type ReceiptContent = Pick<ComponentProps<typeof MailRow>, "receiptHead" | "receiptBody" | "receiptDetail">;
+
+function ReceiptPreview({ m, onRead, render }: {
+  m: WorldMail;
+  onRead: () => void;
+  render: (content: ReceiptContent) => ReactNode;
+}) {
   const world = useWorld();
   useFilesStamp([m.id]);
   const found = useMailFoundEvents(m);
-  return (
-    <MailRow
-      m={m}
-      onPress={onRead}
-      swipe
-      receipt
-      receiptHead={<StreamCardHead m={m} onRead={onRead} receipt />}
-      receiptBody={<StreamCardBody m={m} onRead={onRead} showFilePrompt={(found?.rows.length ?? 0) > 0} />}
-      receiptDetail={
-        <>
-          <EventCards events={world.eventsOf(m.id)} style={{ marginBottom: 0 }} />
-          <MailFoundEvents found={found} />
-        </>
-      }
-    />
-  );
+  return render({
+    receiptHead: <StreamCardHead m={m} onRead={onRead} receipt />,
+    receiptBody: <StreamCardBody m={m} onRead={onRead} showFilePrompt={(found?.rows.length ?? 0) > 0} />,
+    receiptDetail: (
+      <>
+        <EventCards events={world.eventsOf(m.id)} style={{ marginBottom: 0 }} />
+        <MailFoundEvents found={found} />
+      </>
+    ),
+  });
 }

@@ -277,8 +277,13 @@
   z-index: var(--oh-layer-over);
   left: calc(var(--edge) + var(--fr-rail) + var(--gap) + var(--s3));
   width: calc(var(--fr-listw) - 2 * var(--s3));
-  bottom: calc(var(--edge) + var(--s3));
+  bottom: calc(var(--edge) + var(--s3) + var(--fr-report-selection-clearance, 0px));
   pointer-events: none;
+}
+
+/* Wide layouts also need room above the selected messages' toolbar. */
+.fr-frame:not([data-rail="dock"]):has(.fr-list :is(.ob-foot, .pl-selection-foot)) .fr-report {
+  --fr-report-selection-clearance: var(--h-xl);
 }
 
 .fr-report > * {

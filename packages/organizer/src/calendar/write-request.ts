@@ -13,7 +13,7 @@ import {
   CONTINUED_FIELDS, isAttendeeCopy, sharedCopyNeedsProtection, verifiedOrganizer, writeActRefusal, writeRowOf, type CalendarWriteContinuation, type CalendarWritePayload, type CalendarWriteRowFacts,
   type ContinuedField,
 } from "@trafficflow/db/calendar";
-import { personalSeriesOf, confirmedDeleteAudience } from "@ohmail/cal-providers/series";
+import { personalSeriesOf, confirmedDeleteAudience, unscheduledSeriesOf } from "@ohmail/cal-providers/series";
 import { draftRepeatSupported, seriesEditShape } from "@ohmail/cal-providers/repeat-shapes";
 import { timeOfKey } from "./map.js";
 
@@ -278,7 +278,9 @@ export function writeCallOf(o: {
     if (caldav && source.partial) return { kind: "refuse", reason: "read_only" };
     if (from.personalSeries && (!o.place?.startsWith("caldav:") || !personalSeriesOf(source.original))) return { kind: "refuse", reason: "version_stale" };
     // A new series goes out under the series' own organizer. An attendee copy cannot be carried on.
-    if (isAttendeeCopy(source, o.owners, o.access) || sharedCopyNeedsProtection(source, o.owners, o.access)) return { kind: "refuse", reason: "read_only" };
+    if (isAttendeeCopy(source, o.owners, o.access) ||
+      (sharedCopyNeedsProtection(source, o.owners, o.access) &&
+        !(caldav && from.confirmed && unscheduledSeriesOf(source.original, o.zones)))) return { kind: "refuse", reason: "read_only" };
     const cut = timeOfKey(from.at);
     if (draft.rule === null || cut === null) return { kind: "refuse", reason: "content_refused" };
     if (source.versionTag === null || source.versionTag === "") return { kind: "refuse", reason: "version_unknown" };
@@ -302,7 +304,8 @@ export function writeCallOf(o: {
   if (personal && (!o.place?.startsWith("caldav:") || o.event.myAnswer !== null || !personalSeriesOf(o.event.original))) return { kind: "refuse", reason: "version_stale" };
   // What the door refuses on this row as it stands is not sent either: a row recorded before a check of the door's. An attendee copy takes
   // only the account's answer.
-  const why = writeActRefusal(o.event, act, o.event.changedDays, o.owners, o.access, o.exception !== undefined);
+  const unscheduled = seriesEdit && caldav && o.access === "writer" && unscheduledSeriesOf(o.event.original, o.zones);
+  const why = writeActRefusal(o.event, act, o.event.changedDays, o.owners, o.access, o.exception !== undefined, unscheduled);
   if (why !== null) return { kind: "refuse", reason: why.word };
   // A series is written only where its own repeat, from its own start, is a shape the provider was proven to keep.
   const stored = writeRowOf(o.event) === "series" ? parseRRule(o.event.repeatRule!) : null;
@@ -319,9 +322,10 @@ export function writeCallOf(o: {
   }
   if (writeRowOf(o.event) === "series") {
     const cloud = o.place === "google" || o.place === "microsoft";
-    const checkingStoredCloudSeries = cloud && (act.kind === "calendar_event_answer" || (act.kind === "calendar_event_move" && act.audience !== undefined));
+    const checkingStoredSeries = (cloud && act.kind === "calendar_event_answer") ||
+      (act.kind === "calendar_event_move" && act.audience !== undefined && (cloud || (caldav && !act.copyThenRemove)));
     const reviewedDelete = act.kind === "calendar_event_delete" && act.audience !== undefined;
-    if (stored === null || first === null || (!reviewedDelete && (checkingStoredCloudSeries
+    if (stored === null || first === null || (!reviewedDelete && (checkingStoredSeries
       ? !seriesEditShape(o.place, stored, first, o.zones, o.now)
       : unproven(stored, first)))) return { kind: "refuse", reason: "repeat_unsupported" };
     if (act.kind === "calendar_event_delete" &&
@@ -374,7 +378,7 @@ export function writeCallOf(o: {
   switch (act.kind) {
     case "calendar_event_update": {
       const event = o.event;
-      const sharedCopy = sharedCopyNeedsProtection(event, o.owners, o.access);
+      const sharedCopy = !unscheduled && sharedCopyNeedsProtection(event, o.owners, o.access);
       const existingAddress = event.organizer?.trim().toLowerCase();
       const noGuests = event.deleteGuests?.every(({ address }) => address.trim().toLowerCase() === existingAddress);
       if (sharedCopy) {

@@ -131,6 +131,7 @@ const device = (q: string) => (q.trim().length < 2 ? [] : Array.from({ length: 1
 const overview = vi.hoisted(() => ({
   owner: null as object | null,
   people: [] as { person: { address: string; name: string; count: number }; from: number; to: number }[],
+  deviceQueries: [] as string[],
   reads: [] as { session: object; counts: boolean }[],
   totals: new Map<object, Promise<{ messageCount: number }[]>>(),
   fixtureCounts: [3 ** 8, 7],
@@ -147,7 +148,11 @@ vi.mock("../src/state/world", () => ({
   useWorld: () => ({
     folders: { list: [] },
     search: {
-      warm: () => undefined, query: (q: string) => ({ items: q.includes("@") ? [] : device(q), similar: [], indexing: false }),
+      warm: () => undefined,
+      query: (q: string) => {
+        overview.deviceQueries.push(q);
+        return { items: q.includes("@") ? [] : device(q), similar: [], indexing: false };
+      },
       people: overview.people,
       address: (_a: string, d: "any" | "from" | "to") => ({ items: around[d], counts: { any: 2, from: 1, to: 1 }, indexing: false }),
     },
@@ -183,6 +188,8 @@ const { readerHeldNow } = await import("../src/ui/reader-held");
 
 let screen: ReturnType<typeof mount> | null = null;
 beforeEach(() => {
+  vi.stubGlobal("requestIdleCallback", vi.fn(() => 1));
+  vi.stubGlobal("cancelIdleCallback", vi.fn());
   list.offset = 0; list.total = 0; list.stack = []; list.props = null;
   store.ready = false; store.length = 0;
   archive.asked = [];
@@ -190,7 +197,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   appearance.paper = false; screen?.unmount(); screen = null; nav.pushed = []; nav.path = "/more"; nav.folder = undefined;
-  overview.owner = null; overview.people = []; overview.reads = []; overview.totals.clear();
+  vi.unstubAllGlobals();
+  overview.owner = null; overview.people = []; overview.deviceQueries = []; overview.reads = []; overview.totals.clear();
   setActiveLocale("en");
 });
 
@@ -199,6 +207,16 @@ const answer = (length: number): void => { store.ready = true; store.length = le
 const dragTo = (y: number): void => { list.props!.onScrollBeginDrag?.(); list.offset = y; };
 const topOf = (key: string): number => list.stack.find((c) => c.key === key)!.top;
 const fixtureTotal = overview.fixtureCounts.reduce((total, count) => total + count, 0);
+
+it("opens the resting people view before querying the device index", () => {
+  appearance.paper = true;
+  overview.deviceQueries = [];
+  screen!.render(h(SearchScreen));
+  expect(overview.deviceQueries).toEqual([]);
+
+  type("project");
+  expect(overview.deviceQueries).toContain("project");
+});
 
 it.each([
   { locale: "en", other: "de", noun: "messages", heading: "People. 6", direction: "20 from · 10 to", all: "All", fewer: "Fewer" },

@@ -11,6 +11,7 @@ export interface CalendarEventFace extends CalendarEventView {
   readonly recordId: string;
   readonly people: readonly string[];
   readonly notes: string | null;
+  readonly viewOnlyReason?: "busy" | "subscription" | "permission";
   readonly conflict?: boolean;
   readonly replyUnconfirmed?: boolean;
   readonly retryWriteId?: string;
@@ -79,6 +80,7 @@ export function faceOf(
       state: "plain",
       repeats: null,
       viewOnly: true,
+      viewOnlyReason: "busy",
       waits: false,
       status: null,
       second: null,
@@ -88,6 +90,12 @@ export function faceOf(
   }
   const connection = connections.get(o.calendar.connectionId);
   const viewOnly = viewOnlyOf(o.calendar, connection);
+  const viewOnlyReason =
+    connection?.provider === "ics" || o.calendar.subscribed
+      ? "subscription"
+      : o.calendar.access === "reader"
+        ? "permission"
+        : undefined;
   const { waiting, refusal, refusedWriteId } = o.writes;
   const conflict = refusal === "version_stale";
   const replyUnconfirmed = refusal === "answer_unconfirmed";
@@ -118,6 +126,7 @@ export function faceOf(
     state: stateOf(o, answer),
     repeats: o.occurrence.source === "override" ? "apart" : o.occurrence.source === "rule" ? "series" : null,
     viewOnly,
+    viewOnlyReason,
     timeEditable:
       !viewOnly &&
       !failedCreate &&

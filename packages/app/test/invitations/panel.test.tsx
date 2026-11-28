@@ -381,6 +381,21 @@ describe("the invitations' panel", () => {
     expect(within(panel()).getByText(/This calendar can be looked at, not changed/)).toBeTruthy();
   });
 
+  it.each(["google", "microsoft"] as const)(
+    "withholds invitation answers while %s is failing",
+    (provider) => {
+      const m = mirror(() => null);
+      m.put("calendar_connection", connection.id, { ...connection, provider, status: "failing" });
+      m.put("calendar", studio.id, studio);
+      m.put("calendar_event", "a", invitation("a", "Tech check", "20261118"));
+      mount(m, "#/cal/week/2026-11-18/e/a?panel=invitations");
+      const row = within(rowOf("Tech check"));
+      expect(row.queryByRole("button", { name: "Yes" })).toBeNull();
+      expect(within(panel()).getByText(eventEn.event.refusal.connection)).toBeTruthy();
+      expect(m.pressed).toEqual([]);
+    },
+  );
+
   it("says nothing while an answer is owed, and the row says it waits on this device", async () => {
     const m = mirror(() => null);
     m.put("calendar", studio.id, studio);

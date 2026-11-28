@@ -12,12 +12,13 @@ import { useWorld } from "../state/world";
 import type { PileKind } from "../state/model";
 import { tagHueOf } from "../theme/palette";
 import { Rule, Section, TagDot, TapRow, Txt } from "./base";
+import { DrawerTapRow } from "./DrawerTapRow";
 import { DrawerGroup } from "./DrawerGroup";
 import { FoldersGroup } from "./FoldersGroup";
 import { Icon, NavigationIcon, type IconName, type NavigationIconName } from "./Icon";
 import { morePaneKeyOf, type MoreHref } from "./pane-routes";
 
-export function MoreNav({ onNavigate, foot = true, selected, onPick, drawer = false }: {
+export function MoreNav({ onNavigate, foot = true, selected, onPick, onPush, drawer = false }: {
   onNavigate?: () => void;
   drawer?: boolean;
   /** Settings and the pairing door at the end; the drawer pins them itself ({@link MoreNavFoot}). */
@@ -25,15 +26,16 @@ export function MoreNav({ onNavigate, foot = true, selected, onPick, drawer = fa
   /** More's pair (two panes): the open destination's key, and the pick that opens one beside the rows. */
   selected?: string | null;
   onPick?: (key: string) => void;
+  onPush?: (path: Href) => void;
 }) {
   const w = useWorld();
   const t = useTheme();
   const pileCountOf = (kind: PileKind) => drawer && !w.boot.settled
     ? undefined : w.piles.find((p) => p.kind === kind)?.items.length ?? 0;
   const pile = (kind: PileKind): Href => ({ pathname: "/triage", params: { pile: kind } });
-  const { go, at } = moreRows(onNavigate, selected, onPick);
+  const { go, at } = moreRows(onNavigate, selected, onPick, onPush);
 
-  const search = <Nav label={Copy.search} drawer={drawer} drawerIcon="search"
+  const search = <Nav label={Copy.search} drawer={drawer} nativeFeedback={drawer} drawerIcon="search"
     selected={at("/search")} onPress={() => go("/search")} chevron={!drawer} />;
 
   return (
@@ -134,7 +136,7 @@ export function MoreNav({ onNavigate, foot = true, selected, onPick, drawer = fa
         ) : null}
 
         {drawer ? (
-          <Nav label={Copy.settings} drawer drawerIcon="settings"
+          <Nav label={Copy.settings} drawer nativeFeedback drawerIcon="settings"
             selected={at("/settings") || selected?.startsWith("settings:")} onPress={() => go("/settings")} />
         ) : search}
       </View>
@@ -160,14 +162,14 @@ export function MoreNavFoot({ onNavigate, selected, onPick }: {
 }
 
 /** A row's press (picked beside More's rows, else pushed) and whether its destination is the one open. */
-function moreRows(onNavigate?: () => void, selected?: string | null, onPick?: (key: string) => void) {
+function moreRows(onNavigate?: () => void, selected?: string | null, onPick?: (key: string) => void, push = router.push) {
   return {
     go: (path: Href) => {
       onNavigate?.();
       if (onNavigate && selected != null && morePaneKeyOf(path as MoreHref) === selected) return;
       const key = onPick ? morePaneKeyOf(path as MoreHref) : null;
       if (onPick && key !== null) onPick(key);
-      else router.push(path);
+      else push(path);
     },
     at: (path: Href) => selected != null && morePaneKeyOf(path as MoreHref) === selected,
   };
@@ -178,6 +180,7 @@ export function Nav({
   icon,
   drawer = false,
   drawerIcon,
+  nativeFeedback,
   disabled,
   sub,
   dot,
@@ -190,6 +193,7 @@ export function Nav({
   icon?: IconName;
   drawer?: boolean;
   drawerIcon?: NavigationIconName;
+  nativeFeedback?: boolean;
   disabled?: boolean;
   /** The rail's own second line, where the browser carries one (`rail.historyTitle`). */
   sub?: string;
@@ -202,13 +206,14 @@ export function Nav({
   onPress: () => void;
 }) {
   const t = useTheme();
+  const Row = nativeFeedback && !disabled ? DrawerTapRow : TapRow;
   const badge = drawer && !count ? undefined : count;
   const activeTag = drawer && selected && dot !== undefined ? mailColors(t) : null;
   const selectedDot = drawer && selected && dot === undefined ? (
     <View style={{ width: 6, height: 6, borderRadius: t.radius.pill, backgroundColor: t.c.ink }} />
   ) : null;
   return (
-    <TapRow
+    <Row
       onPress={onPress}
       disabled={disabled}
       selected={t.mail ? undefined : selected}
@@ -259,6 +264,6 @@ export function Nav({
         </Txt>
       ) : null}
       {chevron ? <Icon name="chev" size={13} color={t.c.ink3} /> : null}
-    </TapRow>
+    </Row>
   );
 }

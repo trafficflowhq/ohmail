@@ -79,7 +79,7 @@ function withBudget(signal: AbortSignal, ms: number): { readonly signal: AbortSi
   };
 }
 
-async function sharedWriteAccess(s: Session, id: string, fallback: boolean): Promise<boolean> {
+async function collectionWriteAccess(s: Session, id: string, fallback: boolean): Promise<boolean> {
   if (s.signal.aborted) return fallback;
   const asked = await ask(s, "PROPFIND", id, "0", COLLECTION_ACCESS);
   if (!asked.ok) return fallback;
@@ -117,8 +117,9 @@ export async function calendarsOf(s: Session, home: string, principal: string): 
     const id = addressOf(response.href, asked.url);
     if (id === null || !isUnder(scope, id)) continue;
     const type = propOf(response, DAV, "resourcetype");
-    // A scheduling inbox, a folder and a list someone else publishes are collections and no calendars.
-    if (type === null || childOf(type, CALDAV, "calendar") === null) continue;
+    if (type === null) continue;
+    const subscribed = childOf(type, CALENDARSERVER, "subscribed") !== null;
+    if (!subscribed && childOf(type, CALDAV, "calendar") === null) continue;
     // A calendar that says what it takes and does not take events is a list of tasks. One that does not say takes everything.
     const takes = propOf(response, CALDAV, "supported-calendar-component-set");
     if (takes !== null && !childrenOf(takes, CALDAV, "comp").some((c) => c.attributes.get("name")?.toUpperCase() === "VEVENT")) continue;
@@ -127,19 +128,22 @@ export async function calendarsOf(s: Session, home: string, principal: string): 
     const ownerHref = propOf(response, DAV, "owner");
     const owner = ownerHref && childOf(ownerHref, DAV, "href");
     const ownerUrl = owner && addressOf(owner.text.trim(), asked.url);
-    const owned = ownerUrl !== null && isSelf(scopeOf(principal), ownerUrl);
+    const owned = !subscribed && (ownerUrl !== null
+      ? isSelf(scopeOf(principal), ownerUrl)
+      : childOf(type, CALENDARSERVER, "shared-owner") !== null);
     const share = shareAccess(response);
     const privilege = writePrivilege(response);
     const shared = share !== null || (ownerUrl !== null && !owned) || childOf(type, CALENDARSERVER, "shared") !== null;
-    if (shared && share !== false && privilege !== true) needsAccess.add(id);
+    if (!subscribed && (owned || shared) && share !== false && privilege !== true) needsAccess.add(id);
     // When the server gives no access data, let it decide each write as before.
-    const canWrite = share !== false && (privilege ?? share ?? true);
+    const canWrite = !subscribed && share !== false && (privilege ?? share ?? true);
     calendars.push({
       id,
       name: name !== "" && name.length <= MAX_CALENDAR_NAME_CHARS ? name : null,
       color: COLOUR.test(colour) ? colour.slice(0, 7).toLowerCase() : null,
       writable: canWrite,
       ...(owned && { owned: true as const }),
+      ...(subscribed && { subscribed: true as const }),
       byToken: textOf(response, DAV, "sync-token") !== "",
       zone: zoneOf(response),
     });
@@ -151,7 +155,7 @@ export async function calendarsOf(s: Session, home: string, principal: string): 
     try {
       for (let i = 0; i < shared.length; i += 4) {
         await Promise.all(shared.slice(i, i + 4).map(async ({ cal, index }) => {
-          const writable = await sharedWriteAccess(probe, cal.id, cal.writable);
+          const writable = await collectionWriteAccess(probe, cal.id, cal.writable);
           calendars[index] = { ...cal, writable };
         }));
       }
@@ -166,10 +170,8 @@ export async function calendarsOf(s: Session, home: string, principal: string): 
       const answer = await schedulingAnswer(s, cal.id, options);
       const autoSchedule = !answer.arrived || answer.status < 200 || answer.status >= 300
         ? null : offersScheduling(davCapabilities(answer)) || undefined;
-      const nativeMove = cal.owned
-        ? (!options.arrived || options.status < 200 || options.status >= 300
-          ? null : offersMove(options) || undefined)
-        : undefined;
+      const nativeMove = !options.arrived || options.status < 200 || options.status >= 300
+        ? null : offersMove(options) || undefined;
       calendars[i + index] = {
         ...cal,
         ...(autoSchedule !== undefined && { autoSchedule }),

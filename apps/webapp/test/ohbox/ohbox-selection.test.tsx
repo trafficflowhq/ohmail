@@ -298,7 +298,8 @@ describe("a set has no reply verbs — at one, and at seven", () => {
          this loop exists for: switching to the single-message vocabulary at count 1 would be
          the app changing its mind about what you selected. */
       expect(labels, "Reply appeared on the selection pill").not.toContain("Reply");
-      expect(labels, "Forward appeared on the selection pill").not.toContain("Forward");
+      if (n === 1) expect(labels, "Forward appeared on a one-message selection").not.toContain("Forward");
+      else expect(labels, "Forward was missing from the multi-message selection").toContain("Forward");
     });
   }
 

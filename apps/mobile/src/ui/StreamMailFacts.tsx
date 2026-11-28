@@ -4,7 +4,6 @@ import { design } from "@ohmail/tokens/design";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { distinctDeliveryLabel } from "@ohmail/app-logic/reader/mailbox-label";
 import { Copy } from "../copy";
-import { activeLocale } from "../i18n/locale";
 import type { WorldMail } from "../state/live";
 import { useWorld } from "../state/world";
 import { useTheme } from "../theme";
@@ -137,7 +136,7 @@ export function StreamListTools({ settled, fresh, children }: {
   return (
     <View style={{ marginLeft: "auto", marginRight, flexDirection: "row", alignItems: "center", gap: 8 }}>
       {settled && fresh > 0 ? (
-        <Txt variant="caption" tone="ink2" tabular accessibilityLabel={Copy.metaNew(fresh)}>{Copy.streamFreshCount(fresh.toLocaleString(activeLocale()))}</Txt>
+        <Txt variant="caption" tone="ink2" tabular accessibilityLabel={Copy.metaNew(fresh)}>{Copy.streamFreshCount(fresh)}</Txt>
       ) : null}
       {children}
     </View>

@@ -126,6 +126,7 @@ export default defineConfig({
       { find: "@trafficflow/core/rule-order", replacement: r("./packages/core/src/rule-order.ts") },
       { find: "@trafficflow/core/conversation-fold", replacement: r("./packages/core/src/conversation-fold.ts") },
       { find: "@trafficflow/core/reader-refusal", replacement: r("./packages/core/src/reader-refusal.ts") },
+      { find: "@trafficflow/core/attachment-limits", replacement: r("./packages/core/src/attachment-limits.ts") },
       { find: "@trafficflow/core/outbound-text", replacement: r("./packages/core/src/outbound-text.ts") },
       { find: "@trafficflow/core/model-name", replacement: r("./packages/core/src/model-name.ts") },
       { find: "@trafficflow/core/screener-acknowledgements", replacement: r("./packages/core/src/screener-acknowledgements.ts") },

@@ -22,6 +22,41 @@ export const QUOTED_HISTORY_ATTRIBUTE = "data-quoted-history";
 export const hasEditedQuotedHistory = (html: unknown): boolean =>
   typeof html === "string" && html.includes(`<blockquote ${QUOTED_HISTORY_ATTRIBUTE}="edited">`);
 
+type DraftForwardSource = { id: string; filename: string; sender: string; subject: string; sha256?: string };
+
+/** Object key order is not stable across databases. The attachment order is. */
+export function draftForwardSourceTuples(sources: readonly DraftForwardSource[]): string[][] {
+  return sources.map(({ id, filename, sender, subject, sha256 }) => [id, filename, sender, subject, sha256 ?? ""]);
+}
+
+/** The authored fields covered by a draft revision, in their stable order. */
+export function draftRevisionInput(row: {
+  mailboxId: string;
+  inReplyToMessageId: string | null;
+  forwardOfMessageId?: string | null;
+  forwardParts?: readonly string[] | null;
+  forwardSources?: readonly DraftForwardSource[] | null;
+  subject: string;
+  body: string;
+  html: string | null;
+  to: unknown;
+  cc: unknown;
+  bcc: unknown;
+}): string {
+  // Tuples preserve the digest even when a database changes the key order of stored addresses.
+  const addrs = (xs: unknown): Array<[string, string | null]> =>
+    (Array.isArray(xs) ? (xs as Array<{ address?: string; name?: string | null }>) : [])
+      .map((a) => [a?.address ?? "", a?.name ?? null]);
+  return JSON.stringify([
+    row.mailboxId, row.inReplyToMessageId ?? null, row.subject, row.body, row.html ?? null,
+    addrs(row.to), addrs(row.cc), addrs(row.bcc),
+    // Omitting fields when unset preserves the revision of drafts with no forward.
+    ...(row.forwardOfMessageId ? [["forwardOf", row.forwardOfMessageId]] : []),
+    ...(row.forwardOfMessageId && row.forwardParts ? [["forwardParts", [...new Set(row.forwardParts)].sort()]] : []),
+    ...(row.forwardSources?.length ? [["forwardSources", draftForwardSourceTuples(row.forwardSources)]] : []),
+  ]);
+}
+
 /** The two halves of one message, derived together and never separately. */
 export interface PromotedBody {
   /** The markup half. `""` when the source has no words in it — then there is nothing to promote. */

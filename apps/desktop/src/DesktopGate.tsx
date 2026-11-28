@@ -22,7 +22,7 @@
  */
 
 import { useWindowReport } from "@ohmail/app/frame";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { Button } from "@ohmail/ui";
 
@@ -41,6 +41,9 @@ import {
   unknownSpeaks, type HostConnection,
 } from "@ohmail/app-logic/doors/host-connection";
 import { BootStatus } from "./BootStatus.js";
+import { useTranslations } from "use-intl";
+import { OhboxStartupContext, SavedOhboxList, type OhboxStartup } from "@ohmail/app/mail";
+import { forgetStartList, keepStartList, openStartList } from "./start-list.js";
 import { WindowOpening } from "../../webapp/app/shell/BootSkeleton";
 import {
   bridgeAvailable,
@@ -112,21 +115,11 @@ import {
 import { desktopSendSurface, stagesAttachments } from "./desktop-send-surface.js";
 import { forgetErasedWindowScopes, forgetWindowScopes, rememberCloudScope, rememberedCloudDisclosureOwner, rememberedCloudScope } from "./window-sweep.js";
 
-// Start the editor load while the native engine is opening its profile.
-const writingReady = prepareWriting().catch(() => {});
-
 /** How much of a refused address the one-line toast shows. The host is at the front. */
 const ADDRESS_SHOWN = 80;
 
-/**
- * How often the window re-asks while the engine is on its way up.
- *
- * Every millisecond between the engine serving and the next poll is a millisecond of skeleton
- * over a mailbox that is ready — at the old 1000 this was most of a healthy launch, whose
- * engine-side cost is a few hundred milliseconds. 250 matches the settle loop in `doors.ts`,
- * and the poll exists only while the engine is starting, so the steady state still costs zero.
- */
-const SETTLING_POLL_MS = 250;
+/** Readiness and boot narration while the native engine is between runs. */
+const SETTLING_POLL_MS = 50;
 
 /**
  * How often the window re-asks the shell what the engine is doing ONCE IT HAS SETTLED. The ask
@@ -271,22 +264,27 @@ function lifecycleMark(shell: Shell): string {
   ]);
 }
 
+export const DesktopBootStatus = createContext<Promise<EngineStatus> | undefined>(undefined);
+
 /**
  * THE GATE, AND THE ASK A HELD LINK PRESS PUTS OVER WHICHEVER SCREEN IT SHOWS (`LinkAsk.tsx`): the
  * shell may hold a marked link's press on any of them, so the ask stands outside them all.
  */
 export function DesktopGate() {
+  const initialStatus = useContext(DesktopBootStatus);
   const [ask, setAsk] = useState<HeldPress | null>(null);
   return (
     <>
-      <GateScreens onLinkAsk={setAsk} />
+      <GateScreens onLinkAsk={setAsk} initialStatus={initialStatus} />
       {ask ? <LinkAsk key={ask.token} ask={ask} onClose={() => setAsk(null)} /> : null}
       <PreviewMark />
     </>
   );
 }
 
-function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => void }) {
+function GateScreens({
+  onLinkAsk: showAsk, initialStatus,
+}: { onLinkAsk: (ask: HeldPress) => void; initialStatus?: Promise<EngineStatus> }) {
   const [shell, setShell] = useState<Shell | null>(null);
   /* The door chooser, opened from Settings over a working install. Distinct from the chooser a
      fresh install lands on: this one is cancellable, because there is something to go back to. */
@@ -307,30 +305,35 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * happened yet. Record, then paint.
    */
   const delivered = useRef<string | null>(null);
+  const statusInFlight = useRef<Promise<Shell> | null>(null);
 
-  const refresh = useCallback(async () => {
-    let next = await readShell();
-    /* A SWITCH THIS WINDOW DID NOT START. A mount's first answer can only find a pairing a previous
-       window left unanswered (a reload mid-pairing), and its answer is never coming: the door it
-       replaced comes back before anything is drawn over it. */
-    if (delivered.current === null && next.kind === "status" && next.status.switchPending === true) {
-      next = await restorePairingSwitch().then((status): Shell => ({ kind: "status", status }), () => next);
+  const refresh = useCallback(async (firstStatus?: Promise<EngineStatus>) => {
+    const request = readShell(firstStatus);
+    statusInFlight.current = request;
+    try {
+      let next = await request;
+      if (statusInFlight.current !== request) return;
+      /* A mount's first answer can find a pairing a previous window left unanswered.
+         Restore the replaced door before drawing it. */
+      if (delivered.current === null && next.kind === "status" && next.status.switchPending === true) {
+        next = await restorePairingSwitch().then((status): Shell => ({ kind: "status", status }), () => next);
+        if (statusInFlight.current !== request) return;
+      }
+      const mark = lifecycleMark(next);
+      const moved = delivered.current !== null && delivered.current !== mark;
+      delivered.current = mark;
+      const snapshot = JSON.stringify(next);
+      setShell((previous) => JSON.stringify(previous) === snapshot ? previous : next);
+      // A different engine or lifecycle state needs its own hosted auth answer.
+      if (moved) setAuthEpoch((n) => n + 1);
+    } finally {
+      if (statusInFlight.current === request) statusInFlight.current = null;
     }
-    const mark = lifecycleMark(next);
-    /* `null` is "nothing delivered yet", which is the first answer of the launch and not a
-       change — the window has no previous run to have been describing. */
-    const moved = delivered.current !== null && delivered.current !== mark;
-    delivered.current = mark;
-    setShell(next);
-    /* A DIFFERENT RUN, OR THE SAME ONE IN A DIFFERENT STATE: whatever /health said describes an
-       engine that has gone. Re-key so the door's auth state is earned again from the engine now
-       behind the bridge, exactly as every other lifecycle act here does. */
-    if (moved) setAuthEpoch((n) => n + 1);
   }, []);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    void refresh(initialStatus);
+  }, [initialStatus, refresh]);
 
   /* ONE OWNER OF THE LIFECYCLE, TWO CADENCES. Fast while the engine is coming up — every
      millisecond there is a millisecond of skeleton over a mailbox that is ready, and this is
@@ -343,7 +346,9 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
     shell?.kind === "status" && (shell.status.state === "starting" || shell.status.state === "restarting");
   useEffect(() => {
     if (!bridgeAvailable()) return;
-    const timer = setInterval(() => void refresh(), settling ? SETTLING_POLL_MS : LIFECYCLE_POLL_MS);
+    const timer = setInterval(() => {
+      if (statusInFlight.current === null) void refresh();
+    }, settling ? SETTLING_POLL_MS : LIFECYCLE_POLL_MS);
     return () => clearInterval(timer);
   }, [settling, refresh]);
 
@@ -451,6 +456,8 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   const onStatus = useCallback((
     next: EngineStatus, stillListedFrom: EngineStatus | null = null, waiting: SignedOut["waiting"] = null,
   ) => {
+    // An explicit door result supersedes any read still awaiting its earlier answer.
+    statusInFlight.current = null;
     /* RECORDED, THEN PAINTED, as `refresh` does: a delivery painted without its record read as a
        lifecycle move at the next poll, which re-keyed the gate and remounted the mail a pairing had
        just opened. */
@@ -879,14 +886,6 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * hands the screen back at once.
    */
   const [writingSettled, setWritingSettled] = useState(false);
-  useEffect(() => {
-    let mounted = true;
-    void writingReady.then(() => {
-      if (mounted) setWritingSettled(true);
-    });
-    return () => { mounted = false; };
-  }, []);
-
   const [adoption, setAdoption] = useState(false);
   const adoptionHeld = adoption && !(mount.kind === "engine" && (authKey === null || hostedAuthKnown) && writingSettled);
   useEffect(() => {
@@ -900,6 +899,16 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * writing imports settle.
    */
   const [pairing, setPairing] = useState<"none" | "held" | "entered">("none");
+  const finishingSetup = adoption || pairing === "entered";
+  useEffect(() => {
+    // Ordinary launches warm writing after the first list frame. Setup can hand off to it directly.
+    if (!finishingSetup || writingSettled) return;
+    let mounted = true;
+    void prepareWriting().catch(() => {}).then(() => {
+      if (mounted) setWritingSettled(true);
+    });
+    return () => { mounted = false; };
+  }, [finishingSetup, writingSettled]);
   const pairingHeld = pairing === "held" ||
     (pairing === "entered" && (!writingSettled || (authKey !== null && !hostedAuthKnown)));
   useEffect(() => {
@@ -927,6 +936,27 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
     accountDoor && mount.kind === "opening" && accessRefused === null,
     (facts) => setAccessRefused((held) => held ?? facts),
   );
+  const startingStatus = shell?.kind === "status" ? shell.status : null;
+  const startKey = startingStatus?.startupListKey;
+  const warming = !overlay && routeNow.view === "ohbox" && routeNow.messageId === null && !routeNow.firstRun;
+  const retired = Boolean(accessRefused || accountEnded || hostedSessionGone
+    || hostedPreAuth || startingStatus?.state === "no_key" || startingStatus?.state === "not_configured");
+  const savedAtLaunch = useMemo(
+    () => warming && !retired && startKey && served.current === null ? openStartList(startKey) : null,
+    [startKey, warming, retired],
+  );
+  useLayoutEffect(() => {
+    if (retired) forgetStartList();
+  }, [retired]);
+  const held = useMemo(() => savedAtLaunch ? {
+    launch: { saved: savedAtLaunch, pressed: null }, save: () => undefined,
+  } : null, [savedAtLaunch]);
+  const liveScope = mount.kind === "engine" ? mount.key : null;
+  const startup = useMemo(() => startKey && liveScope && !retired
+    ? keepStartList(startKey, liveScope, accountDoor ? liveScope : null, warming && savedAtLaunch?.scope === liveScope ? held : null)
+    : null, [startKey, liveScope, accountDoor, retired, warming, held, savedAtLaunch]);
+  const kept = warming && !retired && held?.launch.saved && (liveScope === null || savedAtLaunch?.scope === liveScope)
+    ? <DesktopStartList startup={held} /> : null;
   // One window, one composer, across restarts — see `setComposerScope`.
   setComposerScope("window");
   // The hosted door stages a large send's bytes through the engine; no other door has storage.
@@ -1151,7 +1181,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   if (authKey !== null && !hostedAuthKnown) {
     return (
       <>
-        <WindowOpening>
+        <WindowOpening kept={kept}>
           <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} />
         </WindowOpening>
         {/* AND THE DOOR SOMEBODY IS STANDING IN, KEPT. This branch is reached DURING a door
@@ -1355,14 +1385,14 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
       ? { sentence: isManagedDoor(status) ? DOOR_COPY.cloudUnreachableTitle : DOOR_COPY.serverUnreachableTitle }
       : {};
     return (
-      <WindowOpening>
+      <WindowOpening kept={kept}>
         <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} {...outage} />
       </WindowOpening>
     );
   }
 
   /* The Cloud door withholds mail until the account verdict or its bound. */
-  if (firstPaint === "asking") return <WindowOpening />;
+  if (firstPaint === "asking") return <WindowOpening kept={kept} />;
 
   return (
     <>
@@ -1380,44 +1410,46 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
          * commit over A's engine.
          */
         <EngineProvider key={shellKey} demo={false} engine={engine}>
-          <DesktopFrame
-            engine={engine}
-            status={status}
-            session={hostedSession}
-            /* THE CONNECTION NOTICE YIELDS for a refused session: the card says why. */
-            sessionRefused={readers !== null && !readers.strip}
-            sealFailed={hostedSealFailed}
-            hostedConnection={hostedAuthKnown ? hostedAuth.session : null}
-            hostedCheckedAt={hostedAuthKnown ? hostedAuth.checkedAt : null}
-            hostedAddress={hostedAddress}
-            paired={paired}
-            hostLabel={hostLabel}
-            freshness={freshness}
-            account={hostedAccountId}
-            storage={accountDoor ? storage : null}
-            aiCredits={aiCredits}
-            mayLinkOut={mayLinkOut}
-            lifecycleState={lifecycleState}
-            manageOffered={manageOffered}
-            withdrawManage={withdrawManage}
-            rereadAccess={rereadAccess}
-            reuseSweeps={accountDoor ? reuseSweeps : NO_SWEEPS}
-            recheckSweeps={recheckHostedSession}
-            ai={ai}
-            setAi={setAi}
-            onStatus={onStatus}
-            openOverlay={setOverlay}
-            takeOver={beginTakeover}
-            firstRunOpen={routeNow.firstRun}
-            firstRun={firstRun}
-            takesMailLinks={!isPreview()}
-            scope={shellKey}
-            liveNoticeScope={storageOwner}
-            onUnread={onUnread}
-            liveBody={liveBodyOverBridge}
-            links={links}
-            connection={connectionFeed}
-          />
+          <OhboxStartupContext.Provider value={startup}>
+            <DesktopFrame
+              engine={engine}
+              status={status}
+              session={hostedSession}
+              /* THE CONNECTION NOTICE YIELDS for a refused session: the card says why. */
+              sessionRefused={readers !== null && !readers.strip}
+              sealFailed={hostedSealFailed}
+              hostedConnection={hostedAuthKnown ? hostedAuth.session : null}
+              hostedCheckedAt={hostedAuthKnown ? hostedAuth.checkedAt : null}
+              hostedAddress={hostedAddress}
+              paired={paired}
+              hostLabel={hostLabel}
+              freshness={freshness}
+              account={hostedAccountId}
+              storage={accountDoor ? storage : null}
+              aiCredits={aiCredits}
+              mayLinkOut={mayLinkOut}
+              lifecycleState={lifecycleState}
+              manageOffered={manageOffered}
+              withdrawManage={withdrawManage}
+              rereadAccess={rereadAccess}
+              reuseSweeps={accountDoor ? reuseSweeps : NO_SWEEPS}
+              recheckSweeps={recheckHostedSession}
+              ai={ai}
+              setAi={setAi}
+              onStatus={onStatus}
+              openOverlay={setOverlay}
+              takeOver={beginTakeover}
+              firstRunOpen={routeNow.firstRun}
+              firstRun={firstRun}
+              takesMailLinks={!isPreview()}
+              scope={shellKey}
+              liveNoticeScope={storageOwner}
+              onUnread={onUnread}
+              liveBody={liveBodyOverBridge}
+              links={links}
+              connection={connectionFeed}
+            />
+          </OhboxStartupContext.Provider>
         </EngineProvider>
       )}
       {doorOverlay}
@@ -1446,6 +1478,11 @@ const NO_SWEEPS: readonly never[] = [];
 function ConnectionValue({ feed, value }: { feed: ReturnType<typeof createFeed<HostConnectionState | null>>; value: HostConnectionState | null }) {
   useLayoutEffect(() => feed.set(value), [feed, value]);
   return null;
+}
+
+function DesktopStartList({ startup }: { startup: OhboxStartup }) {
+  const t = useTranslations("ohbox");
+  return startup.launch.saved && <SavedOhboxList saved={startup.launch.saved} title={t("title")} startup={startup} />;
 }
 
 function ScopeShown({ scope, cloud, disclosureOwner, into }: {

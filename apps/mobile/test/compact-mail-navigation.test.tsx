@@ -3,12 +3,19 @@ import { act, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { mount, styleOf } from "./_rendered-dom";
 
+type TabRoute = { name: string; params?: Record<string, unknown>; state?: unknown };
+
 const fixture = vi.hoisted(() => ({
   width: 360,
   pathname: "/history",
   scheme: "light" as "light" | "dark",
   push: vi.fn(),
   dismissTo: vi.fn(),
+  goBack: vi.fn(),
+  dispatch: vi.fn(),
+  stackRoutes: [] as string[],
+  touchHandlers: [] as unknown[],
+  beneath: null as TabRoute | null,
   pull: vi.fn(),
   setTheme: vi.fn(),
 }));
@@ -20,8 +27,31 @@ vi.mock("react-native", async () => ({
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
+vi.mock("react-native-gesture-handler", () => ({
+  GestureDetector: ({ children }: { children: ReactNode }) => children,
+  useManualGesture: (options: { onTouchesDown?: () => void }) => {
+    if (options.onTouchesDown) fixture.touchHandlers.push(options.onTouchesDown);
+    return {};
+  },
+}));
+vi.mock("react-native-reanimated", () => ({
+  default: { createAnimatedComponent: (component: unknown) => component },
+  useAnimatedStyle: (read: () => unknown) => read(),
+  useSharedValue: <T,>(value: T) => ({ value }),
+}));
 vi.mock("expo-router", () => ({
   router: { push: fixture.push, dismissTo: fixture.dismissTo },
+  useNavigation: () => ({
+    getState: () => ({
+      key: "main", type: "stack", routeNames: fixture.stackRoutes,
+      ...(fixture.beneath === null ? { index: 0, routes: [{ name: "search" }] } : {
+        index: 1,
+        routes: [{ name: "(tabs)", state: { index: 0, routes: [fixture.beneath] } }, { name: "search" }],
+      }),
+    }),
+    goBack: fixture.goBack,
+    dispatch: fixture.dispatch,
+  }),
   usePathname: () => fixture.pathname,
   useLocalSearchParams: () => ({}),
 }));
@@ -112,6 +142,28 @@ describe("compact mail navigation", () => {
     } finally { r.unmount(); }
   });
 
+  it.each([
+    { beneath: { name: "index" }, returns: true },
+    { beneath: { name: "index", params: {} }, returns: true },
+    { beneath: { name: "index", params: { open: "message" } }, returns: false },
+    { beneath: { name: "index", state: { routes: [] } }, returns: false },
+    { beneath: { name: "reads" }, returns: false },
+  ])("reuses the tab underneath Search when it matches the destination ($returns)", ({ beneath, returns }) => {
+    fixture.pathname = "/search";
+    fixture.beneath = beneath;
+    fixture.goBack.mockClear();
+    fixture.dismissTo.mockClear();
+    const r = mount(<MailPlaceDock><div>Search field</div></MailPlaceDock>);
+    try {
+      act(() => control(r.el, "Ohbox, 3")?.click());
+      expect(fixture.goBack).toHaveBeenCalledTimes(returns ? 1 : 0);
+      expect(fixture.dismissTo.mock.calls).toEqual(returns ? [] : [["/"]]);
+    } finally {
+      r.unmount();
+      fixture.beneath = null;
+    }
+  });
+
   it("opens the same drawer destinations with counts, a working pull, and the account footer", () => {
     const close = vi.fn();
     const r = mount(<MailPlacesDrawer open active="history" onClose={close} onPlace={vi.fn()} onCompose={vi.fn()} />);
@@ -136,6 +188,32 @@ describe("compact mail navigation", () => {
       act(() => control(r.el, "Dark")?.click());
       expect(fixture.setTheme).toHaveBeenLastCalledWith("dark");
     } finally { r.unmount(); }
+  });
+
+  it("paints the six compact drawer destinations on the native touch path", () => {
+    fixture.touchHandlers.length = 0;
+    const r = mount(<MailPlacesDrawer open active="index" onClose={vi.fn()} onPlace={vi.fn()} onCompose={vi.fn()} />);
+    try {
+      expect(fixture.touchHandlers).toHaveLength(6);
+    } finally { r.unmount(); }
+  });
+
+  it.each(["Search", "Settings"])("opens %s through the Android stack that owns it", (label) => {
+    const name = label.toLowerCase();
+    fixture.stackRoutes = [name];
+    fixture.push.mockClear();
+    fixture.dispatch.mockClear();
+    const close = vi.fn();
+    const r = mount(<MailPlacesDrawer open active="index" onClose={close} onPlace={vi.fn()} onCompose={vi.fn()} />);
+    try {
+      act(() => control(r.el, label)?.click());
+      expect(close).toHaveBeenCalledOnce();
+      expect(fixture.dispatch).toHaveBeenCalledWith({ type: "PUSH", target: "main", payload: { name } });
+      expect(fixture.push).not.toHaveBeenCalled();
+    } finally {
+      r.unmount();
+      fixture.stackRoutes = [];
+    }
   });
 
   it("uses the German drawer labels and offers Light from Dark", () => {

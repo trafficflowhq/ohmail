@@ -14,6 +14,7 @@ import { useMemo } from "react";
 import { Platform } from "react-native";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { PostureCanvas, PostureProvider, WindowControlsInsets } from "../src/ui/posture";
 import { NavRail } from "../src/ui/nav-rail";
@@ -61,6 +62,7 @@ export default function RootLayout() {
   const kv = useMemo(secureKV, []);
   return (
     /* Every touch, seen as it bubbles and never claimed: it ends an idle drain spacing. */
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaProvider onTouchStart={noteActivity}>
       <WindowControlsInsets>
       {/* The posture sits above every screen: one derivation (window + the fold API + the
@@ -91,6 +93,7 @@ export default function RootLayout() {
       </PostureProvider>
       </WindowControlsInsets>
     </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 

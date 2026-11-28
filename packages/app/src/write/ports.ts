@@ -10,6 +10,7 @@ import type { ComposeAttachment, EngineDraft, EngineMessage } from "@ohmail/wire
 import type { ComponentType } from "react";
 import type { FromOption, SignatureState } from "@ohmail/client-engine";
 import type { ComposeFields, ComposePlan } from "@ohmail/app-logic/writing/compose";
+import type { ForwardSource } from "@ohmail/app-logic/writing";
 import type { SupportSeed } from "@ohmail/app-logic/writing/composer-types";
 import type { SendState, ShowSend } from "@ohmail/app-logic/writing/mail-send";
 import type { ComposeElsewhere } from "@ohmail/app-logic/writing/compose-autosave";
@@ -229,11 +230,18 @@ export interface Writing {
   readonly composeSaveRefused: boolean;
   /** The letter came back from the last session. */
   readonly composeResumed: boolean;
+  readonly restoreClosedCompose?: () => void;
   readonly composeWaitNote: string | null;
   readonly composeCloseRefusal: string | null;
   readonly composeHistoryTarget?: { readonly messageId: string; readonly forward: boolean } | null;
   readonly loadQuotedHistory?: (messageId: string, forward: boolean) => Promise<readonly string[]>;
   readonly composeForwardFiles: WriteForwardFiles | null;
+  readonly composeForwardSelection?: {
+    readonly pending: readonly ForwardSource[];
+    readonly note: string;
+    readonly remove: (id: string) => void;
+    readonly retry?: () => void;
+  } | null;
   /** Send now, or at `sendAt` (an ISO instant). The composition's gate decides; a press is never "sent". */
   readonly sendCompose: (sendAt?: string) => void;
   readonly closeCompose: () => void;
@@ -273,6 +281,10 @@ export interface Writing {
   readonly sendReplyAndDone: (messageId: string) => (() => void) | null;
   readonly openReply: (messageId: string, all?: boolean) => void;
   readonly openForward: (messageId: string, seed?: EngineMessage) => void;
+  readonly forwardSelection?: (
+    messages: readonly EngineMessage[],
+    conversations?: readonly string[],
+  ) => Promise<boolean>;
   readonly confirmForward: () => void;
   readonly forwardAsk: string | null;
   readonly closeReply: () => void;

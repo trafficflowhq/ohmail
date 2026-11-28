@@ -2822,7 +2822,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
               />{" "}
               {t("removeEraseChoice")}
             </label>
-            <p className="acct-fine">{t("removeEraseWhat")}</p>
+            {eraseChosen ? <p className="acct-fine">{t("removeEraseWhat")}</p> : null}
           </fieldset>
           {eraseChosen ? (
             <>

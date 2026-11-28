@@ -32,7 +32,7 @@ export const TAIL_SECTION_PLAN = [
   { name: "html_words_backfill", passes: ["html_words_backfill"] },
   { name: "search_index_backfill", passes: ["search_index_backfill"] },
   { name: "gone_letter_tidy", passes: ["gone_letter_tidy"] },
-  { name: "mailbox_erasure", passes: ["mailbox_erasure"] },
+  { name: "mailbox_erasure", passes: ["account_erasure", "mailbox_erasure"] },
   { name: "global_maintenance", passes: ["global_maintenance"] },
 ] as const;
 

@@ -75,6 +75,66 @@ describe("the Ohbox's list window in a real browser", () => {
   }, 60_000);
 });
 
+it("checks for new mail from phone Ohbox actions while a Restore draft notice stands", async () => {
+  const page = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+    );
+    await page.goto(`${ORIGIN}/?open=none&device=phone&recovery`);
+    await page.getByRole("button", { name: "Restore draft" }).waitFor();
+    await page.getByRole("button", { name: "Ohbox actions" }).tap();
+    const pull = page.getByRole("menuitem", { name: "Pull new mail" });
+    await pull.tap({ position: { x: 45, y: 20 }, timeout: 2000 });
+    expect(await page.locator("body").getAttribute("data-mail-check")).toBe("started");
+    expect(await page.getByRole("button", { name: "Restore draft" }).isVisible()).toBe(true);
+  } finally {
+    await page.close();
+  }
+}, 15_000);
+
+it.each([
+  { device: "desktop", viewport: { width: 1440, height: 1000 }, hasTouch: false },
+  { device: "phone", viewport: { width: 390, height: 844 }, hasTouch: true },
+])(
+  "keeps a second Mark all read press off the list or dock on $device",
+  async ({ device, viewport, hasTouch }) => {
+    const page = await browser.newPage({ viewport, hasTouch });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) =>
+        route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+      );
+      await page.goto(`${ORIGIN}/?open=none&device=${device}`);
+      await page.getByRole("button", { name: "Ohbox actions" }).click();
+      const markAll = page.getByRole("menuitem", { name: "Mark all read" });
+      await markAll.waitFor();
+      const row = (await markAll.boundingBox())!;
+      const x = row.x + row.width / 2;
+      const y = row.y + row.height / 2;
+
+      await page.evaluate(() => {
+        document.addEventListener("click", (event) => {
+          if (!(event.target as Element).closest('[role="menu"]'))
+            document.body.dataset.pressedBehindMenu = "yes";
+        });
+      });
+      const press = () => (hasTouch ? page.touchscreen.tap(x, y) : page.mouse.click(x, y));
+      await press();
+      await markAll.waitFor({ state: "hidden" });
+      await page.waitForTimeout(120);
+      await press();
+
+      expect(await page.locator("body").getAttribute("data-pressed-behind-menu")).toBeNull();
+
+      await press();
+      expect(await page.locator("body").getAttribute("data-pressed-behind-menu")).toBe("yes");
+    } finally {
+      await page.close();
+    }
+  },
+  15_000,
+);
+
 describe("a long conversation's row in a real browser", () => {
   it("stands a run of its squares inside the row: the time drawn, the squares in the row, most of the sender kept", async () => {
     const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });

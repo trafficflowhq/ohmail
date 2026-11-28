@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Platform, useWindowDimensions, View } from "react-native";
-import { router, useLocalSearchParams, usePathname } from "expo-router";
+import { router, useLocalSearchParams, useNavigation, usePathname } from "expo-router";
 import { Copy } from "../copy";
 import { useWorld } from "../state/world";
 import { GlassDock } from "./glass/GlassDock";
 import { dockFold } from "./glass/fold";
 import { MailPlacesDrawer } from "./MailPlacesDrawer";
 import { morePaneKeyOf } from "./pane-routes";
+import { usePushMailPlace } from "./place-navigation";
 import { usePosture } from "./posture";
 import { scaffoldPlan } from "./scaffold/plan";
 
@@ -20,6 +21,8 @@ export function MailPlaceDock({ onSearch, children }: {
   const posture = usePosture();
   const { width } = useWindowDimensions();
   const world = useWorld();
+  const navigation = useNavigation();
+  const pushPlace = usePushMailPlace();
   const pathname = usePathname();
   const { id, pile, pane } = useLocalSearchParams<{ id?: string; pile?: string; pane?: string }>();
   const [drawer, setDrawer] = useState(false);
@@ -41,7 +44,17 @@ export function MailPlaceDock({ onSearch, children }: {
   const active = keyedPlace ? (id ? `${keyedPlace}:${id}` : null) : morePaneKeyOf({ pathname, params: { pile, pane } });
   const go = (place: string) => {
     const path = tabs[place as keyof typeof tabs];
-    if (path) router.dismissTo(path);
+    if (!path) return;
+    const state = navigation.getState();
+    const previous = state?.routes[state.index - 1];
+    const underneath = previous?.name === "(tabs)" ? previous.state : undefined;
+    const selected = underneath?.routes[underneath.index ?? 0];
+    // Reveal the existing tab when the destination needs no route state changes.
+    if (selected?.name === place && Object.keys(selected.params ?? {}).length === 0 && !selected.state) {
+      navigation.goBack();
+    } else {
+      router.dismissTo(path);
+    }
   };
   const compose = () => router.push("/compose");
   return (
@@ -50,7 +63,7 @@ export function MailPlaceDock({ onSearch, children }: {
         {children}
         <GlassDock items={items} activeId={searchCurrent ? null : "more"}
           onItemPress={(id) => id === "more" ? setDrawer(true) : go(id)}
-          search={{ label: Copy.search, current: searchCurrent, onPress: onSearch ?? (() => router.push("/search")) }}
+          search={{ label: Copy.search, current: searchCurrent, onPress: onSearch ?? (() => pushPlace("/search")) }}
           compose={{ label: Copy.mailWrite, onPress: compose }} />
       </View>
       <MailPlacesDrawer open={drawer} active={active} onClose={() => setDrawer(false)} onPlace={go} onCompose={compose} />

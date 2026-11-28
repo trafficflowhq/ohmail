@@ -117,3 +117,57 @@ describe("a send resumed under its standing key", () => {
     expect(engine.pendingMutations().length, "a send under another key was retired").toBe(2);
   });
 });
+
+describe("a restored press whose first save did not reach disk", () => {
+  it.each(["vacant", "a save wins the race", "the receipt is too old", "the server gave no proof"])(
+    "uses the first save's key only within a proven window when %s",
+    async (scenario) => {
+      const requests: Array<{ key: string; mutation: EngineMutation }> = [];
+      const saved = { id: "first-draft", revision: "first-revision" };
+      let reads = 0;
+      const engine = new OhmailEngine({
+        store: new MemoryMirrorStore(),
+        now: () => NOW,
+        adapter: {
+          sync: async () => ({
+            changes: { creates: [], updates: [], moves: [], deletes: [] },
+            cursor: "1", hasMore: false, serverTime: NOW.toISOString(),
+          }),
+          fetchBody: async () => null,
+          draftFromCreate: async (key) => {
+            expect(key).toBe("first-save-key");
+            if (scenario === "the server gave no proof") return undefined;
+            reads += 1;
+            return reads === 1 ? null : saved;
+          },
+          mutate: async (mutation, { idempotencyKey }) => {
+            requests.push({ key: idempotencyKey, mutation });
+            if (mutation.kind === "draft_save") {
+              if (scenario === "a save wins the race") {
+                throw new MutationRejectedError("The earlier save used the key", { code: "idempotency_replay", status: 409, retryable: false });
+              }
+              return { changes: [], seq: null, entityId: saved.id, revision: saved.revision };
+            }
+            return { changes: [], seq: null, entityId: saved.id };
+          },
+        },
+      });
+      await engine.start();
+      const press = reply("The final words.") as Extract<EngineMutation, { kind: "mail_send" }>;
+      const answer = await engine.mutate({
+        ...press, draftCreateKey: "first-save-key",
+        draftCreateAt: NOW.getTime() - (scenario === "the receipt is too old" ? 25 * 60 * 60 * 1000 : 1_000),
+      }, { key: "send-key", restored: true });
+      if (scenario === "the receipt is too old" || scenario === "the server gave no proof") {
+        expect(answer.error?.code).toBe("draft_unsaved");
+        expect(requests).toEqual([]);
+      } else {
+        expect(answer.status).toBe("confirmed");
+        expect(requests).toMatchObject([
+          { key: "first-save-key", mutation: { kind: "draft_save", draftId: null, body: press.body } },
+          { key: "send-key", mutation: { kind: "mail_send", draftId: saved.id, body: press.body, ifContentRevision: saved.revision } },
+        ]);
+      }
+    },
+  );
+});

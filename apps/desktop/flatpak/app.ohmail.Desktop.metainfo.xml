@@ -78,6 +78,19 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.12" date="2026-11-28">
+      <description>
+        <ul>
+          <li>Writable CalDAV calendars stay usable while a connection retries</li>
+          <li>Write starts a fresh message and sent drafts stay gone</li>
+          <li>Compose offers Restore only for drafts with unsent content</li>
+          <li>Forward several messages together</li>
+          <li>Clearer warnings in Mailboxes and Screener</li>
+          <li>Quicker navigation between phone mail lists</li>
+          <li>Unfinished letters keep both versions after a reload</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.11" date="2026-11-27">
       <description>
         <ul>
@@ -125,40 +138,6 @@
           <li>Phone reader, subscription and draft fixes</li>
           <li>Hosted alerts measure the serving API</li>
           <li>First mail import reports when mail is still missing</li>
-        </ul>
-      </description>
-    </release>
-    <release version="2.0.7" date="2026-11-25">
-      <description>
-        <ul>
-          <li>Billing remembers the add-on you chose</li>
-          <li>Sign in on a phone through the browser</li>
-          <li>Calendar invitations follow the selected calendar</li>
-          <li>Calendar moves and compact mail</li>
-          <li>ohcal keeps only calendar data on the phone</li>
-          <li>ohcal on phones</li>
-          <li>Scroll all of Calendar Settings on narrow screens</li>
-          <li>Easier returns to Mail</li>
-          <li>Cloud signup links to the Terms of Service and Privacy Policy</li>
-          <li>Read sender details and return to the Screener on narrow screens</li>
-          <li>Phone writing stays above the keyboard</li>
-          <li>Keep the latest words when leaving the composer</li>
-          <li>Retry browser sign-in when ohmail Cloud is temporarily unavailable</li>
-          <li>Keep invitation replies and calendar answers in step</li>
-          <li>Mail opens in the new design</li>
-          <li>Keep writing controls in reach on long letters</li>
-          <li>Mailbox ports and phone reading</li>
-          <li>Mail lists and Settings on phones</li>
-          <li>Trash moves show when they are pending</li>
-          <li>AI replies keep their line breaks</li>
-          <li>AI replies keep your words and tone</li>
-          <li>Android Back returns to the Screener list</li>
-          <li>Search keeps your place when you switch to Calendar</li>
-          <li>Self-host sign-in and the web demo</li>
-          <li>Keep all sending addresses reachable in the composer</li>
-          <li>Signup shows the plan or trial you chose</li>
-          <li>News and Receipts scroll behind the action pill</li>
-          <li>Subscription shows the billing interval and one-time history suggestions</li>
         </ul>
       </description>
     </release>

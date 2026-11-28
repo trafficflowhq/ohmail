@@ -8,9 +8,9 @@
  * its own. An empty mailbox renders an honest empty state, never sample mail.
  * The rows go through `MailList`, which mounts a window of them, not the mailbox.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AppState, View } from "react-native";
-import { router, useFocusEffect, useIsFocused, useNavigation } from "expo-router";
+import { router, useIsFocused, useNavigation } from "expo-router";
 import { OHBOX_UNSCREENED_MESSAGES_MAX } from "@ohmail/client-engine";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
@@ -21,7 +21,7 @@ import {
 import { heldWhileHidden } from "../../src/state/held-while-hidden";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
-import { useEngineQueuesAsk, useWorld, type World, type WorldMail, type WorldUnscreened } from "../../src/state/world";
+import { useWorld, type World, type WorldMail, type WorldUnscreened } from "../../src/state/world";
 import {
   firstSyncReadingSaid, ohboxVisitStep, type FiledSince, type OhboxVisitEvent, type OhboxVisitState,
 } from "../../src/state/live";
@@ -50,6 +50,7 @@ import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 import { pressThreadPlace, stripOf, threadPlaceOf, useThreadPlace } from "../../src/state/thread-place";
 import { railItemsOf } from "../../src/ui/reader-marks";
+import { useRetainedList } from "../../src/ui/use-retained-list";
 
 export default function OhboxScreen() {
   return (
@@ -65,8 +66,6 @@ function OhboxBody() {
   useLocale();
   const w = useWorld();
   const t = useTheme();
-  // The offer and the doorbell come from the engine's queue reads, asked when this screen is shown.
-  useFocusEffect(useEngineQueuesAsk());
   const pull = usePullToSync();
   useOhboxVisit(w.actions.markOhboxVisit);
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
@@ -76,9 +75,11 @@ function OhboxBody() {
   const { open, openRow, close } = useListDetail((id) => `/message/${id}?member=thread`);
   /* Under a pushed reader this screen is hidden: it keeps what it showed (`held-while-hidden.ts`). */
   const focused = useIsFocused();
-  const kept = useRef<{ ohbox: World["ohbox"]; doorbell: World["doorbell"] } | null>(null);
-  const shown = heldWhileHidden(focused, kept.current, () => ({ ohbox: w.ohbox, doorbell: w.doorbell }));
-  kept.current = shown;
+  const kept = useRef<{ worldKey: World["worldKey"]; ohbox: World["ohbox"]; doorbell: World["doorbell"] } | null>(null);
+  const shown = heldWhileHidden(focused, kept.current?.worldKey === w.worldKey ? kept.current : null, () => ({
+    worldKey: w.worldKey, ohbox: w.ohbox, doorbell: w.doorbell,
+  }));
+  useLayoutEffect(() => { kept.current = shown; }, [shown]);
   const { resurfaced, fresh, seen, total, meta } = shown.ohbox;
   /* THE ROW FOLLOWS THE READER: the conversation an Ohbox reader showed last carries its squares,
      ringed where the reader is or stopped. A press jumps the reader beside the list; with none
@@ -220,12 +221,14 @@ function OhboxBody() {
     </Screen>
   );
 
+  const shownList = useRetainedList(list, focused, w.worldKey);
+
   return (
     <ListDetail
       open={open}
       onClose={close}
       toRoute={(id) => `/message/${id}?member=thread`}
-      list={list}
+      list={shownList}
       renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} wholeThread onClose={ctx.onClose} />}
     />
   );

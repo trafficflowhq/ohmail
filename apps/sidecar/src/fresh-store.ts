@@ -19,15 +19,18 @@ import { PGLITE_TRANSPORT_NAMES, syncDirectory } from "./pglite-transport.js";
 const MAKER = `
 const { parentPort, workerData } = require("node:worker_threads");
 const { mkdirSync, writeFileSync } = require("node:fs");
+const { readFile } = require("node:fs/promises");
 const { join } = require("node:path");
 (async () => {
-  const { PGlite } = await import(workerData.pglite);
-  const pg = new PGlite();
+  const [{ PGlite }, wasmModule] = await Promise.all([
+    import(workerData.pglite),
+    readFile(new URL("postgres.wasm", workerData.pglite)).then((bytes) => WebAssembly.compile(bytes)),
+  ]);
+  const pg = new PGlite({ wasmModule });
   await pg.waitReady;
   await pg.close();
   const FS = pg.Module.FS;
   let version = null;
-  let files = 0;
   const copy = (from, to) => {
     mkdirSync(to, { recursive: true, mode: 0o700 });
     for (const name of FS.readdir(from)) {
@@ -39,13 +42,12 @@ const { join } = require("node:path");
       const bytes = FS.readFile(path);
       if (from === workerData.pgdata && name === "PG_VERSION") { version = bytes; continue; }
       writeFileSync(join(to, name), bytes, { mode: 0o600 });
-      files += 1;
     }
   };
   copy(workerData.pgdata, workerData.to);
   if (version === null) throw new Error("the made store has no PG_VERSION");
   writeFileSync(join(workerData.to, "PG_VERSION"), version, { mode: 0o600 });
-  parentPort.postMessage({ files: files + 1 });
+  parentPort.postMessage({ wasmModule });
 })().catch((err) => parentPort.postMessage({ error: String((err && err.message) || err) }));
 `;
 
@@ -62,21 +64,24 @@ function pgliteModuleUrl(): string {
 }
 
 /**
- * Write a fresh cluster into `pgDataDir`, which must be absent or empty. Resolves with the number
- * of files written; rejects on any failure or past `boundMs`, with the worker stopped either way,
- * so the caller can remove what was written and fall back.
+ * Write a fresh cluster into `pgDataDir`, which must be absent or empty. Return the compiled
+ * PostgreSQL module so opening the new cluster can reuse it. On failure or past `boundMs`,
+ * stop the worker before the caller clears the partial cluster and falls back.
  */
-export async function makeStoreInMemory(pgDataDir: string, boundMs: number = FRESH_STORE_BOUND_MS): Promise<number> {
+export async function makeStoreInMemory(
+  pgDataDir: string,
+  boundMs: number = FRESH_STORE_BOUND_MS,
+): Promise<WebAssembly.Module> {
   const worker = new Worker(MAKER, {
     eval: true,
     workerData: { pglite: pgliteModuleUrl(), pgdata: PGDATA, to: pgDataDir, skip: [...PGLITE_TRANSPORT_NAMES] },
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await new Promise<number>((resolve, reject) => {
+    return await new Promise<WebAssembly.Module>((resolve, reject) => {
       timer = setTimeout(() => reject(new Error(`the store was not made in memory within ${boundMs} ms`)), boundMs);
-      worker.once("message", (m: { files?: unknown; error?: unknown }) => {
-        if (typeof m?.files === "number") resolve(m.files);
+      worker.once("message", (m: { wasmModule?: unknown; error?: unknown }) => {
+        if (m?.wasmModule instanceof WebAssembly.Module) resolve(m.wasmModule);
         else reject(new Error(typeof m?.error === "string" ? m.error : "the store maker answered nothing"));
       });
       worker.once("error", reject);

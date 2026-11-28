@@ -193,8 +193,8 @@ for (const major of PG_MAJORS) {
       try {
         expect((await lockCensus(sql)).sort()).toEqual(ungrantedLines());
         const [t] = await sql<Array<{ n: number }>>`select count(*)::int as n from pg_tables where schemaname = 'public'`;
-        // The public table inventory includes the new account-scoped Screener learning table.
-        expect(t!.n).toBe(112);
+        // The catalog also includes the worker's operations table for the verified shard width.
+        expect(t!.n).toBe(113);
       } finally {
         await sql.end({ timeout: 5 });
       }
@@ -1596,12 +1596,52 @@ for (const major of PG_MAJORS) {
     }
     const typedIndexes = (): string[] => Object.entries(INDEX_READS).map(([n, r]) => `${r.table}.${n}`).sort();
 
+    async function proveMaintenanceIndexReads(db: string): Promise<void> {
+      const own = "00000000-0000-4000-8000-0000000005f1";
+      const other = "00000000-0000-4000-8000-0000000005f2";
+      const entity = "00000000-0000-4000-8000-0000000005f3";
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        await mig.unsafe("insert into accounts (id) values ($1), ($2)", [own, other]);
+        await mig.unsafe("insert into threads (account_id, subject) values ($1, 'same subject'), ($2, 'same subject')", [own, other]);
+        await mig.unsafe(`insert into change_log (account_id, seq, entity_type, entity_id, op)
+          values ($1, 1, 'message', $3, 'delete'), ($2, 1, 'message', $3, 'delete')`, [own, other, entity]);
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+      const worker = ground.connectAs(db, "ohmail_worker");
+      try {
+        await worker.begin(async (tx) => {
+          await tx.unsafe(BINDER_SQL, [own, ""]);
+          const tombstones = `select account_id::text as account from change_log
+            where entity_type = 'message' and entity_id = $1 and op = 'delete' and seq <= 2`;
+          const seeds = `select account_id::text as account from threads
+            order by account_id, left(subject, 64), md5(subject), id limit 2`;
+          expect(await tx.unsafe(tombstones, [entity])).toEqual([{ account: own }]);
+          expect(await tx.unsafe(seeds)).toEqual([{ account: own }]);
+
+          // Show the available index paths on this two-account fixture, where sequential scans
+          // and a sort can otherwise cost less than reading an index.
+          await tx.unsafe("set local enable_seqscan = off");
+          await tx.unsafe("set local enable_sort = off");
+          const plan = async (query: string, params: string[] = []) =>
+            (await tx.unsafe<Array<{ "QUERY PLAN": string }>>(`explain (costs off) ${query}`, params))
+              .map((row) => row["QUERY PLAN"]).join("\n");
+          expect(await plan(tombstones, [entity])).toContain("change_log_account_entity_deleted_idx");
+          expect(await plan(seeds)).toContain("threads_account_subject_key_idx");
+        });
+      } finally {
+        await worker.end({ timeout: 5 });
+      }
+    }
+
     it("every expression, predicate or GIN index on a locked table has its row in the lock's typed table of index reads, and every row its index; a new one is red", async () => {
       const unread = (catalog: readonly string[]): { rowless: string[]; indexless: string[] } => ({
         rowless: catalog.filter((n) => !typedIndexes().includes(n)), indexless: typedIndexes().filter((n) => !catalog.includes(n)),
       });
       expect(unread(await expressionIndexes("ground"))).toEqual({ rowless: [], indexless: [] });
       const db = await ground.clone("ground", "index_reads_new");
+      await proveMaintenanceIndexReads(db);
       await plantAndCensus(db, ["create index riso_tags_lower_idx on public.tags (account_id, lower(name))",
         "create index riso_drafts_open_idx on public.drafts (account_id) where status = 'draft'"]);
       expect(unread(await expressionIndexes(db))).toEqual({ rowless: ["drafts.riso_drafts_open_idx", "tags.riso_tags_lower_idx"], indexless: [] });

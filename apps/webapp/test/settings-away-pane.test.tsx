@@ -365,7 +365,7 @@ describe("the away responder's end date", () => {
     /* `aria-disabled`, not the `disabled` ATTRIBUTE: the picker keeps an out-of-range day
        focusable and refuses its press, so a filter on `.disabled` accepts every cell in the grid
        — including the ones before `min`, which is how this case first picked a day in August. */
-    const grid = within(host).getByRole("dialog", { name: messages.away.untilPick });
+    const grid = within(host.ownerDocument.body).getByRole("dialog", { name: messages.away.untilPick });
     const cells = within(grid).getAllByRole<HTMLButtonElement>("gridcell")
       .filter((b) => b.getAttribute("aria-disabled") === null);
     expect(cells.length, "the picker drew no pickable day").toBeGreaterThan(0);

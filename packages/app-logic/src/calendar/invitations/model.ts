@@ -5,7 +5,7 @@
  */
 import { momentOrUtc, type ZoneSource } from "@ohmail/cal-core";
 import type { CalendarConnectionRecord, CalendarEventRecord } from "@ohmail/wire";
-import { viewOnlyOf } from "../offers.js";
+import { connectionAllowsCalendarWrites, viewOnlyOf } from "../offers.js";
 import { dayOfIso } from "../grid/days.js";
 import { addDays, daySpanOf } from "../spans/days.js";
 import { occurrencesIn, type OccurrenceInput, type ShownOccurrence } from "../window.js";
@@ -63,7 +63,7 @@ function rowOf(o: ShownOccurrence, input: InvitationsInput): InvitationRow {
     refusal: writes.refusal,
     refusedWriteId: writes.refusedWriteId,
     viewOnly: viewOnlyOf(calendar, connection),
-    connectionStopped: connection !== undefined && connection.status !== "active",
+    connectionStopped: connection !== undefined && !connectionAllowsCalendarWrites(connection),
     when: daySpanOf(o.occurrence, input.zone, input.zones),
     place: record.place,
   };

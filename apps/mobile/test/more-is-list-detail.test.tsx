@@ -69,6 +69,7 @@ vi.mock("../src/ui/glass", () => ({ GlassRail: () => null, GlassSidebar: () => n
 vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
 vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));
 vi.mock("../src/ui/FoldersGroup", () => ({ FoldersGroup: () => null }));
+vi.mock("../src/ui/DrawerTapRow", async () => ({ DrawerTapRow: (await import("./_rendered-dom")).rnDom.Pressable }));
 vi.mock("../src/ui/reader-rail", () => ({ useReaderRail: () => null }));
 vi.mock("../src/engine/ui-marks", () => ({ beginMark: () => undefined }));
 vi.mock("../src/state/live", () => ({ phoneBannerLines: () => ({ head: "", why: "" }) }));

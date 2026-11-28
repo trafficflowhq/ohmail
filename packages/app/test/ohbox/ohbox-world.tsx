@@ -23,6 +23,25 @@ import frameDe from "../../messages/frame.de.json" with { type: "json" };
 import frameEn from "../../messages/frame.en.json" with { type: "json" };
 import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
 
+/** The fixture has no sent replies awaiting a mailbox copy. Other engine reads stay guarded. */
+export function engineWithEmptyReplyMirror() {
+  const store = {
+    stampOf(kind: string) {
+      if (kind !== "message" && kind !== "view_meta") throw new Error(`unexpected mirror stamp for ${kind}`);
+      return 0;
+    },
+    entries(kind: string) {
+      if (kind !== "view_meta") throw new Error(`unexpected mirror rows for ${kind}`);
+      return [];
+    },
+  };
+  return new Proxy(NO_ENGINE, {
+    get(engine, key) {
+      return key === "store" ? store : Reflect.get(engine, key);
+    },
+  });
+}
+
 export const WORDS: Record<"en" | "de", Messages> = {
   en: { ...frameEn, ...ohboxEn, ...sharedEn } as Messages,
   de: { ...frameDe, ...ohboxDe, ...sharedDe } as Messages,
@@ -231,7 +250,7 @@ export function ohbox(
     return <Ohbox input={props} side={side} plan={opts.plan ?? DESKTOP} open={opts.open ?? null} />;
   }
   const { host } = fakeHost({
-    engine: NO_ENGINE,
+    engine: engineWithEmptyReplyMirror(),
     service: "self",
     scope: "a",
     places: {

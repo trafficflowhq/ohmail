@@ -259,9 +259,13 @@ describe("the built page in a browser", () => {
     refuseName?: string;
     withoutRandomUUID?: boolean;
     timezoneId?: string;
+    rememberKeptWords?: boolean;
   };
-  type MailCopy = { accountId: string; subject: string };
-  type Feeds = { snapshot: MailCopy[]; updates?: MailCopy[] };
+  type MailCopy = {
+    accountId: string; subject: string; sender?: string;
+    threadId?: string; messageIdHeader?: string; sent?: boolean; local?: boolean;
+  };
+  type Feeds = { snapshot: MailCopy[]; updates?: MailCopy[]; sentCopy?: { pendingId: string; landed: MailCopy } };
 
   /** The native side as the page sees it: answers by kind, records every kind and every http path asked. */
   function nativeDouble({ config, kept, settings, feeds, nativeHttp, replies }: {
@@ -276,14 +280,14 @@ describe("the built page in a browser", () => {
     const reply = (message: object) => {
       setTimeout(() => { for (const l of listeners) l({ data: JSON.stringify(message) }); }, 0);
     };
-    const changesOf = (rows: MailCopy[], start: number) => rows.map(({ accountId, subject }, index) => {
+    const changesOf = (rows: MailCopy[], start: number) => rows.map(({ accountId, subject, sender, threadId, messageIdHeader, sent, local }, index) => {
       const seq = start + index;
       const id = `message-${seq}`;
       const date = new Date().toISOString();
       return { type: "message", op: "create", seq, id, updatedAt: date, entity: {
-        id, accountId, mailboxId: "mailbox", threadId: null, messageIdHeader: null,
-        from: { name: "Fixture sender", address: ["sender", "example.invalid"].join("@") },
-        to: [], cc: [], date, subject, snippet: "Preview", folder: "INBOX", unread: true,
+        id, accountId, mailboxId: "mailbox", threadId: threadId ?? null, messageIdHeader: messageIdHeader ?? null, local,
+        from: { name: sender ?? "Fixture sender", address: ["sender", "example.invalid"].join("@") },
+        to: [], cc: [], date, subject, snippet: "Preview", folder: sent ? "Sent" : "INBOX", unread: !sent,
         hasAttachments: false, attachmentCount: 0, triage: null, labels: [], remoteContent: "none", updatedAt: date,
         sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
       } };
@@ -296,10 +300,15 @@ describe("the built page in a browser", () => {
       for (const receive of listeners) receive({ data: JSON.stringify(event) });
     };
     let holdAcknowledgement = false;
+    let sentCopyLanded = false;
     let finishAcknowledgement: (() => void) | undefined;
     let finishExit: (() => void) | undefined;
     w.__native = {
       asked,
+      landSentCopy: () => {
+        sentCopyLanded = true;
+        emit({ type: "wake", epoch: "e1", why: "push" });
+      },
       back: (askId: number, delay = false) => {
         holdAcknowledgement = delay;
         emit({ type: "ask", epoch: "e1", askId, what: "back" });
@@ -309,9 +318,22 @@ describe("the built page in a browser", () => {
     };
     w.ohmailShell = {
       postMessage(text: string) {
-        const m = JSON.parse(text) as (typeof asked)[number] & { id: number; epoch: string; act?: string };
+        const m = JSON.parse(text) as (typeof asked)[number] & { id: number; epoch: string; act?: string; key: string; value: string | null };
         asked.push({ kind: m.kind, path: m.path, method: m.method, act: m.act, place: m.place, to: m.to, do: m.do, distributor: m.distributor, mailboxId: m.mailboxId, name: m.name, took: m.took, askId: m.askId });
         const envelope = { id: m.id, epoch: m.epoch, ok: true };
+        if (settings.rememberKeptWords && (m.kind === "keep" || m.kind === "kept")) {
+          const stored = "test.kept-words";
+          const words = new Map<string, string>(JSON.parse(sessionStorage.getItem(stored) ?? "[]"));
+          if (m.kind === "kept") {
+            reply({ ...envelope, words: [...words], refused: [] });
+          } else {
+            if (m.value === null) words.delete(m.key);
+            else words.set(m.key, m.value);
+            sessionStorage.setItem(stored, JSON.stringify([...words]));
+            reply({ ...envelope, kept: true });
+          }
+          return;
+        }
         if (m.kind === "http" && nativeHttp) {
           const ask = w.__askNativeHttp as (request: object) => Promise<object>;
           void ask(m).then((answer) => {
@@ -321,11 +343,25 @@ describe("the built page in a browser", () => {
         }
         if (m.kind === "http" && (names || feeds)) {
           const [path, query] = m.path?.split("?") ?? [];
+          if (path?.endsWith("/live-body") && new URLSearchParams(query).get("format") === "eml") {
+            if (feeds?.sentCopy && path === `/messages/${feeds.sentCopy.pendingId}/live-body`) {
+              reply({ ...envelope, status: 404, headers: [["content-type", "application/json"]],
+                body: { as: "text", text: '{"error":{"code":"not_found"}}' } });
+              return;
+            }
+            const raw = "Subject: Fixture letter\r\n\r\nOriginal words.\r\n";
+            reply({ ...envelope, status: 200, headers: [["content-type", "application/octet-stream"]],
+              body: { as: "b64", b64: btoa(raw) } });
+            return;
+          }
           const body = { text: "The fixture letter body" };
+          const landed = sentCopyLanded ? feeds?.sentCopy : undefined;
           const response = path === "/sync/snapshot"
             ? { asOfSeq: 7, changes: changesOf(feeds?.snapshot ?? [], 1), nextCursor: null }
             : path === "/sync"
-              ? { changes: { creates: changesOf(feeds?.updates ?? [], 8), updates: [], deletes: [], moves: [] }, cursor: "OA", hasMore: false, serverTime: new Date().toISOString() }
+              ? { changes: { creates: changesOf(landed ? [landed.landed] : feeds?.updates ?? [], 8), updates: [],
+                deletes: landed ? [{ type: "message", op: "delete", seq: 9, id: landed.pendingId, updatedAt: new Date().toISOString() }] : [], moves: [] },
+                cursor: landed ? "OQ" : "OA", hasMore: false, serverTime: new Date().toISOString() }
               : path === "/messages/bodies"
                 ? { items: (new URLSearchParams(query).get("ids") ?? "").split(",").map((messageId) => ({ messageId, ...body })) }
                 : path?.endsWith("/body") ? body : null;
@@ -528,6 +564,110 @@ describe("the built page in a browser", () => {
       await browserExpect(page.getByText("The fixture letter body", { exact: true })).toBeVisible();
       const actions = page.getByRole("toolbar", { name: "Actions", exact: true });
       await browserExpect(actions.getByRole("button", { name: "Reply", exact: true })).toBeVisible();
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("forwards the phone's selection in one composer with removable message attachments", async () => {
+    const second = { ...mail, subject: "Another letter for this phone" };
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/ohbox" }, [], undefined, undefined, {}, {
+      snapshot: [mail, second],
+    });
+    try {
+      for (const subject of [mail.subject, second.subject]) {
+        const row = page.getByRole("option", { name: `Fixture sender: ${subject}`, exact: true });
+        await browserExpect(row).toBeVisible();
+        await page.locator(".oh-row-slot").filter({ has: row }).getByRole("button", { name: "Select the message" }).click();
+      }
+      await page.getByRole("button", { name: "Forward", exact: true }).click();
+      await browserExpect(page.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: 2 messages");
+      const first = page.getByRole("button", { name: `Remove Fixture sender — ${mail.subject}.eml`, exact: true });
+      const other = page.getByRole("button", { name: `Remove Fixture sender — ${second.subject}.eml`, exact: true });
+      await browserExpect(first).toBeVisible();
+      await browserExpect(other).toBeVisible();
+      await first.click();
+      await browserExpect(first).toHaveCount(0);
+      await browserExpect(other).toBeVisible();
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it.each(["restores the remaining original after a reload", "shows the subjects at phone width", "omits picture quality for message attachments"])(
+    "%s when forwarding a selection",
+    async (check) => {
+      const sender = "Workshop correspondence and programme office";
+      const letters = ["Morning plans", "Afternoon plans"].map((subject) => ({ ...mail, sender, subject }));
+      const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/ohbox" }, [], undefined,
+        { width: 390, height: 844 }, { rememberKeptWords: true }, { snapshot: letters });
+      try {
+        for (const { subject } of letters) {
+          const row = page.getByRole("option", { name: new RegExp(subject) });
+          await browserExpect(row).toBeVisible();
+          await page.locator(".oh-row-slot").filter({ has: row }).getByRole("button", { name: "Select the message" }).click();
+        }
+        await page.getByRole("button", { name: "Forward", exact: true }).click();
+        const chips = page.locator(".oh-files .oh-file");
+        await browserExpect(chips).toHaveCount(2);
+        if (check === "restores the remaining original after a reload") {
+          await chips.filter({ hasText: letters[0]!.subject }).getByRole("button", { name: /^Remove/ }).click();
+          await browserExpect(chips).toHaveCount(1);
+          await page.reload();
+          await browserExpect(page.getByRole("navigation", { name: "Places" })).toBeVisible();
+          await page.evaluate(() => { window.location.hash = "#/compose"; });
+          await browserExpect(page.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: 2 messages");
+          await browserExpect(chips).toHaveCount(1);
+          await browserExpect(chips.first().getByRole("button", { name: /Preview.*Afternoon plans/ })).toBeVisible();
+        } else if (check === "shows the subjects at phone width") {
+          for (const { subject } of letters) {
+            const title = chips.getByText(subject, { exact: true });
+            await browserExpect(title).toBeVisible();
+            expect(await title.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+          }
+        } else {
+          await browserExpect(page.getByRole("button", { name: "Picture quality" })).toHaveCount(0);
+        }
+      } finally {
+        await close();
+      }
+    }, 120_000,
+  );
+
+  it("waits for the Sent copy and then forwards the whole selected conversation", async () => {
+    const original = { ...mail, subject: "Workshop plans", threadId: "workshop" };
+    const sent = { ...original, subject: "Re: Workshop plans", sender: "Workshop coordinator", sent: true,
+      messageIdHeader: ["reply", "example.invalid"].join("@") };
+    const pendingId = "message-2";
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/ohbox" }, [], undefined,
+      { width: 390, height: 844 }, {}, {
+        snapshot: [original, { ...sent, local: true, messageIdHeader: `<${sent.messageIdHeader}>` }],
+        sentCopy: { pendingId, landed: sent },
+      });
+    const forward = page.getByRole("button", { name: "Forward", exact: true });
+    const subject = page.getByRole("textbox", { name: "Subject", exact: true });
+    const paths = () => page.evaluate(() => {
+      const native = (window as unknown as { __native: { asked: { path?: string }[] } }).__native;
+      return native.asked.flatMap(({ path }) => path ? [path.split("?")[0]] : []);
+    });
+    try {
+      const row = page.getByRole("option", { name: /Workshop plans/ });
+      await browserExpect(row).toBeVisible();
+      await page.locator(".oh-row-slot").filter({ has: row }).getByRole("button", { name: "Select the message" }).click();
+      await forward.click();
+      await browserExpect(page.getByText(/^Waiting for the mailbox copy\.?$/)).toBeVisible();
+      await browserExpect(subject).toHaveCount(0);
+      expect((await paths()).filter((path) => path.endsWith("/live-body"))).toEqual([]);
+
+      const syncs = (await paths()).filter((path) => path === "/sync").length;
+      await page.evaluate(() => (window as unknown as { __native: { landSentCopy(): void } }).__native.landSentCopy());
+      await browserExpect.poll(async () => (await paths()).filter((path) => path === "/sync").length, { timeout: 15_000 }).toBeGreaterThan(syncs);
+      await forward.click();
+      await browserExpect(subject).toHaveValue("Fwd: 2 messages");
+      await browserExpect(page.getByRole("button", { name: /Remove.*Re: Workshop plans\.eml/ })).toBeVisible();
+      expect((await paths()).filter((path) => path.endsWith("/live-body"))).toEqual([
+        "/messages/message-1/live-body", "/messages/message-8/live-body",
+      ]);
     } finally {
       await close();
     }

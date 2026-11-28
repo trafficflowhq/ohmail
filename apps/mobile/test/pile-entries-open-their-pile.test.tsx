@@ -37,6 +37,7 @@ vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
 vi.mock("../src/ui/Skeleton", () => ({ SkeletonList: () => null }));
 vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
 vi.mock("../src/ui/FoldersGroup", () => ({ FoldersGroup: () => null }));
+vi.mock("../src/ui/DrawerTapRow", async () => ({ DrawerTapRow: (await import("./_rendered-dom")).rnDom.Pressable }));
 vi.mock("../src/state/pull", () => ({ usePullToSync: () => undefined }));
 const route = vi.hoisted(() => ({ params: {} as Record<string, string>, push: vi.fn(), dismissTo: vi.fn() }));
 vi.mock("expo-router", () => ({

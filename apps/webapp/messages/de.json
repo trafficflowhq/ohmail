@@ -1203,6 +1203,7 @@
     "bulkSpam": "{count} nach Spam",
     "wholeDomain": "die ganze Domain {domain}",
     "unsubOffered": "Abmeldung angeboten",
+    "unsubIfOffered": "Abmeldung, falls angeboten",
     "unsubscribe": "Abmelden",
     "unsubSending": "Wird gesendet …",
     "unsubSent": "Abmeldung wurde gesendet.",
@@ -1754,10 +1755,11 @@
     "cancelUnreachable": "Der Server war zum Abbrechen nicht erreichbar. ohmail fragt weiter nach und sendet das nicht noch einmal.",
     "discardHeld": "Nicht gelöscht: Ihr Versand ist nicht bestätigt, darum bleibt die Nachricht in den Entwürfen.",
     "discardUnknown": "Nicht gelöscht: Dieser Browser kann nicht erkennen, ob ihr Versand noch läuft, darum bleibt die Nachricht in den Entwürfen.",
-    "resumedNote": "Das ist die Nachricht, die du nicht fertig geschrieben hast. Verwirf sie, um eine neue zu beginnen.",
+    "resumedNote": "Das ist die Nachricht, die du nicht fertig geschrieben hast. Schließe sie, um den Entwurf zu behalten. Wähle dann Schreiben für eine neue Nachricht. Mit Verwerfen löschst du diesen Entwurf.",
     "closeNotSaved": "Dieser Entwurf konnte nicht gespeichert werden und bleibt hier offen.",
     "closeNotSavedReason": "Dieser Entwurf konnte nicht gespeichert werden: {reason}. Er bleibt hier offen.",
     "recoveredFromClosedTab": "Eine Nachricht aus einem unerwartet geschlossenen Tab ist wieder da, unter Schreiben.",
+    "restoreDraft": "Entwurf wiederherstellen",
     "keyLeave": "Als Entwurf behalten",
     "keyCloseConfirm": "Weiterschreiben",
     "keySend": "Senden",
@@ -1799,6 +1801,7 @@
     "sendLaterFilesTooFar": "Eine Nachricht mit Dateien lässt sich höchstens {days, plural, one {# Tag} other {# Tage}} im Voraus planen. Wähle eine frühere Zeit.",
     "sendLaterThisComputer": "Sie geht zu dieser Zeit raus, wenn ohmail auf diesem Computer geöffnet ist, sonst beim nächsten Öffnen von ohmail, bis zu einem Tag später.",
     "filesNotKept": "{count, plural, one {Diese Nachricht war mit einer Datei geplant, die nicht aufbewahrt wurde. Hänge sie vor dem Senden erneut an.} other {Diese Nachricht war mit # Dateien geplant, die nicht aufbewahrt wurden. Hänge sie vor dem Senden erneut an.}}",
+    "reattachAfterRecovery": "Hänge {filenames} vor dem Senden erneut an.",
     "toastScheduled": "{when}",
     "keySchedule": "Versand planen"
   },
@@ -7123,6 +7126,12 @@
       "repeatUnavailable": "Dieser Serientermin kann hier nicht geändert werden",
       "repeatReadOnly": "Dieser Kalender ist schreibgeschützt",
       "readOnlyCalendar": "Nur ansehen",
+      "access": "Zugriff",
+      "readOnlyReason": {
+        "permission": "Dein Kalenderanbieter erlaubt nur das Ansehen.",
+        "subscription": "Dieser Kalender ist abonniert.",
+        "busy": "Dieser Kalender zeigt nur belegte Zeiten."
+      },
       "changeSeries": "{title} ändern",
       "changedScope": "{repeat} · Dieser und folgende ersetzt die Änderungen an diesem Termin. Alle Termine behält seine übrigen Änderungen bei",
       "changedFirstScope": "{repeat} · Beide Optionen für die Serie behalten die übrigen Änderungen an diesem Termin bei",
@@ -7517,8 +7526,17 @@
     "history": {
       "show": "Zitierte Nachrichten anzeigen",
       "hide": "Zitierte Nachrichten ausblenden",
-      "restore": "Original wiederherstellen",
+      "edit": "Bearbeiten",
+      "restore": "Zurücksetzen",
       "unavailable": "Zitierte Nachrichten sind nicht verfügbar"
+    },
+    "forwardSelection": {
+      "subject": "{count} Nachrichten",
+      "sensitive": "Leite vertrauliche Nachrichten einzeln weiter.",
+      "count": "Wähle höchstens {count} Nachrichten zum Weiterleiten aus.",
+      "loading": "Originalnachrichten werden gelesen…",
+      "unavailable": "Einige Originalnachrichten konnten nicht gelesen werden. Versuche es erneut oder entferne sie vor dem Senden.",
+      "retry": "Erneut versuchen"
     },
     "held": {
       "sendAgain": "Noch einmal senden",

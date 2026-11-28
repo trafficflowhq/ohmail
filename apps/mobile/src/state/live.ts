@@ -756,8 +756,11 @@ const listRows = new WeakMap<EngineMessage, {
   day: string; tags: unknown; mailboxes: unknown; own: unknown; pile: WorldPileState; thread: number; pendingReplyCopy: boolean; row: WorldMail;
 }>();
 
-export function toListRow(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail {
-  const day = `${zonedDayNumber(v.now, v.zone)}|${v.zone}|${v.locale ?? "en"}`;
+function listDay(v: WorldView): string {
+  return `${zonedDayNumber(v.now, v.zone)}|${v.zone}|${v.locale ?? "en"}`;
+}
+
+export function toListRow(reader: EntityReader, m: EngineMessage, v: WorldView, day = listDay(v)): WorldMail {
   const pile = pileOf(reader, m);
   const thread = conversationSize(reader, m);
   const pendingReplyCopy = awaitsReplyCopy(v.replyStore, m.id);
@@ -1506,13 +1509,14 @@ export function liveFolder(
   const rows = pres
     .list<EngineMessage>("message")
     .filter((m) => m.mailboxId === folder.mailboxId && m.folder === (folder.name as Folder))
-    .sort((a, b) => {
-      const at = a.date ? new Date(a.date).getTime() : 0;
-      const bt = b.date ? new Date(b.date).getTime() : 0;
-      return bt - at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
-    });
-  const fresh = rows.filter((m) => m.unread).map((m) => toListRow(pres, m, v));
-  const seen = rows.filter((m) => !m.unread).map((m) => toListRow(pres, m, v));
+    .map((message) => ({ message, time: message.date ? new Date(message.date).getTime() : 0 }))
+    .sort((a, b) => b.time - a.time || (a.message.id < b.message.id ? 1 : a.message.id > b.message.id ? -1 : 0));
+  const fresh: WorldMail[] = [];
+  const seen: WorldMail[] = [];
+  const day = listDay(v);
+  for (const { message } of rows) {
+    (message.unread ? fresh : seen).push(toListRow(pres, message, v, day));
+  }
   return { fresh, seen, unread: fresh.length, total: rows.length };
 }
 

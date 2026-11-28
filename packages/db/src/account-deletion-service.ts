@@ -305,7 +305,12 @@ export async function releaseAcceptedErasure(
   });
   if (billing !== "claimed") return billing;
   let outcome: ReleaseOutcome;
-  try { outcome = await release(ctx.accountId); } catch { outcome = "cancel_failed"; }
+  try {
+    outcome = await release(ctx.accountId);
+  } catch {
+    // Record the failure below so the next billing pass can retry after the backoff.
+    outcome = "cancel_failed";
+  }
   await db.transaction(async (tx) => {
     await tx.execute(ERASURE_LOCK_TIMEOUT);
     const [row] = await tx.select({ progress: accounts.erasureProgress }).from(accounts)

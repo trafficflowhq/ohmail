@@ -12,13 +12,15 @@
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { createRoot } from "react-dom/client";
 import type { ResurfacedThreadRow, ThreadMark } from "@ohmail/client-engine";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
 import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { Frame } from "../../src/frame/Frame.js";
-import { useRailModel } from "../../src/frame/commands.js";
+import { useRailModel, useReport } from "../../src/frame/commands.js";
 import type { PaneProps, PlaceEntry, RailModel } from "../../src/frame/contract.js";
 import { OhboxAbove, OhboxList, ohboxPlace, type OhboxBeside } from "../../src/ohbox/index.js";
 import { readerEntry, type ReaderFile, type ReaderFiles } from "../../src/reader/index.js";
@@ -426,7 +428,12 @@ const beside: OhboxBeside = {
     own === "notorganizing"
       ? { every: true, mailboxes: [{ id: MAILBOX, address: PEOPLE.mila.address }] }
       : null,
-  pull: { busy: show === "pull", run: () => undefined },
+  pull: {
+    busy: show === "pull",
+    run: () => {
+      document.body.dataset.mailCheck = "started";
+    },
+  },
   keysShown: false,
   go: {
     screener: () => undefined,
@@ -435,6 +442,14 @@ const beside: OhboxBeside = {
     organize: () => undefined,
   },
 };
+
+function RecoveryOffer() {
+  const report = useReport();
+  useEffect(() => {
+    report("A draft was recovered", { action: "Restore draft", onAction: () => {} });
+  }, [report]);
+  return null;
+}
 
 function Page() {
   const input: OhboxListInput = {
@@ -576,6 +591,14 @@ const { host } = fakeHost({
   scope: "mila",
   places: { ohbox },
   reader,
+  above: q.has("recovery")
+    ? ({ children }) => (
+        <>
+          <RecoveryOffer />
+          {children}
+        </>
+      )
+    : undefined,
   /* The account's two mailboxes: the letters are in the studio's, which each reading head names. */
   mailboxes: async () => [
     {
@@ -602,7 +625,9 @@ const { host } = fakeHost({
 createRoot(document.getElementById("root")!).render(
   <TextProvider locale={lang} messages={words} timeZone="Europe/Zurich">
     <PresentedMirrorContext.Provider value={mail.engine.read()}>
-      <Page />
+      <portalRenderer.Provider value={createPortal}>
+        <Page />
+      </portalRenderer.Provider>
     </PresentedMirrorContext.Provider>
   </TextProvider>,
 );

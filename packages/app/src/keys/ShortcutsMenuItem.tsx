@@ -2,7 +2,7 @@ import { useContext, type KeyboardEvent } from "react";
 import { chordMatches, useBinding } from "@ohmail/app-logic/keys";
 import { MenuItem } from "@ohmail/ui/base";
 import { FrameContext } from "../frame/commands.js";
-import { SHEET_CHORD } from "./availability.js";
+import { SHEET_CHORD } from "../frame/keyboard/availability.js";
 import { useText } from "../text/index.js";
 
 /** Menus consume letter keys. The menu item and its key take the same local path to the sheet. */

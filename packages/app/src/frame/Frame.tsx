@@ -9,7 +9,7 @@
  * Nothing above the columns is mounted or unmounted by a place change; only another scope mounts it again, and
  * under a scope the frame refuses none of it mounts.
  */
-import { ShortcutHints } from "../keys/ShortcutHints.js";
+import { ShortcutHints } from "./keyboard/ShortcutHints.js";
 import { useFrameStores } from "./frame-stores.js";
 import {
   useCallback,

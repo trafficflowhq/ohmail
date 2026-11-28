@@ -225,7 +225,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: ${{ needs.plan.outputs.pool == 'self-hosted' && 6 || 3 }}
-      # Whole: {shard} for each map shard. Selected: {shard, files, dovecot}, the plan's own packing.
+      # Whole: use baseShard and part for a split cell's assignment. Selected: {shard, files, dovecot}.
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.shards) }}
     # Every image by digest, the same ones docker-compose.yml runs: Postgres from our mirror
@@ -256,7 +256,8 @@ jobs:
       TF_REQUIRE_PG: "1"
       TF_REQUIRE_GREENMAIL: "1"
       TF_REQUIRE_RUSTFS: "1"
-      SHARD: ${{ matrix.shard }}
+      SHARD: ${{ matrix.baseShard || matrix.shard }}
+      SHARD_PART: ${{ matrix.part }}
       FILES: ${{ matrix.files }}
       DOVECOT: ${{ matrix.dovecot }}
     steps:
@@ -342,7 +343,7 @@ jobs:
           if [ -n "$FILES" ]; then
             if [ "$DOVECOT" = yes ]; then echo "needed=yes"; else echo "needed=no"; fi >> "$GITHUB_OUTPUT"
           else
-            echo "needed=$(node test/support/ci-shards.mjs --needs-dovecot "$SHARD")" >> "$GITHUB_OUTPUT"
+            echo "needed=$(node test/support/ci-shards.mjs --needs-dovecot "$SHARD" "$SHARD_PART")" >> "$GITHUB_OUTPUT"
           fi
 
       # Dovecot is the CONDSTORE server. It reads its configuration from the checkout, which a
@@ -382,7 +383,7 @@ jobs:
           if [ -n "$FILES" ]; then
             list=$FILES
           else
-            list=$(node test/support/ci-shards.mjs --shard "$SHARD")
+            list=$(node test/support/ci-shards.mjs --shard "$SHARD" "${SHARD_PART:-}")
             # Record the guest's memory budget before this long-running shard starts.
             if [ "$SHARD" = 12 ] && [ "${RUNNER_ENVIRONMENT:-}" = self-hosted ]; then
               awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ { print }' /proc/meminfo || true
@@ -392,7 +393,7 @@ jobs:
           mapfile -t files <<< "$list"
           echo "shard $SHARD runs ${#files[@]} file(s)"
           mkdir -p build
-          npx vitest run --reporter=default --reporter=json --outputFile="build/ci-suite-$SHARD.json" "${files[@]}"
+          npx vitest run --reporter=default --reporter=json --outputFile="build/ci-suite-$SHARD${SHARD_PART:-}.json" "${files[@]}"
 
       # vitest runs the paths it can match and says nothing of one it cannot, so the report is
       # read back: every file the shard named ran, and nothing else did.
@@ -405,7 +406,7 @@ jobs:
             printf '%s\n' "$FILES" > "build/ci-list-$SHARD.txt"
             node test/support/ci-shards.mjs --verify-list "selected shard $SHARD" "build/ci-list-$SHARD.txt" "build/ci-suite-$SHARD.json"
           else
-            node test/support/ci-shards.mjs --verify-report "$SHARD" "build/ci-suite-$SHARD.json"
+            node test/support/ci-shards.mjs --verify-report "$SHARD" "build/ci-suite-$SHARD$SHARD_PART.json" "$SHARD_PART"
           fi
 
       # A whole run's only: a selected shard is not the map's, and its durations would mislead a pack.

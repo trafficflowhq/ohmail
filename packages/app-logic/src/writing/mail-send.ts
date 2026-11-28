@@ -40,17 +40,18 @@ import type {
   EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
 } from "@ohmail/client-engine";
 import type { ToastFn } from "../press/report.js";
+import { sourcesFromDraft, type ForwardSource } from "./forward-selection.js";
 import {
-  clearComposeDraft, composePlan, composeSessionId, composeStillHolds, readComposeDraft,
-  readComposeRow,
-  type ComposeHeld, type MailSend,
+  clearComposeDraft, clearEndedComposeCopies, composeOrigin, composeSessionId, composeStillHolds, composeWordsFingerprint,
+  readComposeDraft, readComposeDraftRecovery, readComposeRow, recoverComposePress, whenComposerReady,
+  type ComposeDraftRecovery, type ComposeHeld, type MailSend,
 } from "./compose.js";
 import { durableRemove, durableSet } from "../storage/durable.js";
 import { retiredSignOutStorageHeld } from "../storage/storage-owner.js";
 import {
   allSendLocks, attachSendLockDraft, claimSendLock, holdOf, markSendLockUnverified, recordForEndedSend,
   releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
-  sendSubjects, unverifiedSendIntents, type Hold, type SendIntent, type SendLockOwed,
+  sendSubjects, unverifiedSendIntents, writeBeforeOutbox, type Hold, type SendIntent, type SendLockOwed,
 } from "./send-lock.js";
 import { scopeSuffix, usePinnedScope, type StorageScope } from "../storage/scope.js";
 import { displayAddress } from "../text/idn.js";
@@ -566,10 +567,15 @@ export function standingSendRow(engine: OhmailEngine, lane: string): string | nu
 
 /** Whether a send of this lane still on its way (queued, on the wire or on disk) goes from this row. */
 export function sendNamesRow(engine: OhmailEngine, lane: string, row: string): boolean {
-  const names = (m: { kind?: string } | undefined): boolean => m?.kind === "mail_send"
-    && sendKeyOf(m as unknown as MailSend) === lane && (m as unknown as MailSend).draftId === row;
+  const names = (m: { kind?: string } | undefined): boolean => {
+    if (m?.kind !== "mail_send") return false;
+    const send = m as MailSend;
+    if (sendKeyOf(send) !== lane) return false;
+    return send.draftId === row || (send.draftCreateKey !== undefined
+      && engine.createdDraftOf?.(send.draftCreateKey)?.id === row);
+  };
   const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
-  if ([...engine.pendingMutations(), ...wire].some((p) => names(p.mutation))) return true;
+  if ([...engine.pendingMutations(), ...wire].some((p) => p.confirmed !== true && names(p.mutation))) return true;
   const disk = typeof engine.read === "function" ? engine.read().list(OUTBOX_TYPE) : [];
   // …or the row its own save made, which the mutation does not name.
   return (disk as ReadonlyArray<OutboxRow>).some((r) => pendingSendRow(r)
@@ -838,13 +844,7 @@ export const COMPOSE_SEND_KEY = "compose";
  * would otherwise latch on somebody else's record and refuse a press it has no business refusing.
  */
 export function composeBufferFingerprint(scope: StorageScope): string | null {
-  const fields = readComposeDraft(scope);
-  const empty = fields.to.trim().length === 0
-    && fields.subject.trim().length === 0
-    && fields.body.trim().length === 0;
-  if (empty) return null;
-  const plan = composePlan(fields, fields.fromMailboxId ?? null);
-  return sendFingerprint(plan.mutation as unknown as MailSend);
+  return composeWordsFingerprint(readComposeDraft(scope));
 }
 
 /**
@@ -974,6 +974,10 @@ export interface ReplyEditorMeta {
   creates?: string[];
   /** A forward lane's kept files once one was removed (`forward-files.ts`); absent: every file. */
   forwardParts?: string[];
+  /** The original messages still attached to a compose draft on this device. */
+  forwardSources?: ForwardSource[];
+  /** Versions and missing picked files kept on this device for a saved compose draft. */
+  recovery?: ComposeDraftRecovery;
 }
 
 /**
@@ -1030,11 +1034,15 @@ export function readReplyMeta(lane: string, owner: StorageScope): ReplyEditorMet
     const row = parsed.row;
     const envelope = envelopeOf(parsed.envelope);
     const parts = parsed.forwardParts;
+    const forwardSources = sourcesFromDraft(parsed.forwardSources);
+    const recovery = readComposeDraftRecovery(parsed.recovery);
     return {
       ...(typeof parsed.subject === "string" ? { subject: parsed.subject } : {}),
       ...(envelope !== null ? { envelope } : {}),
       ...(Array.isArray(parts) && parts.length <= 100 && parts.every((id) => typeof id === "string")
         ? { forwardParts: [...parts] } : {}),
+      ...(forwardSources ? { forwardSources } : {}),
+      ...(recovery ? { recovery } : {}),
       ...(typeof row?.id === "string" && typeof row.at === "string"
         ? { row: {
           id: row.id, at: row.at,
@@ -1060,7 +1068,7 @@ export function writeReplyMeta(lane: string, meta: ReplyEditorMeta, owner: Stora
   // A meta with neither field stores nothing — absence IS the resting state, see above.
   const resting = meta.subject === undefined && meta.sig === undefined && meta.row === undefined
     && meta.envelope === undefined && (meta.creates === undefined || meta.creates.length === 0)
-    && meta.forwardParts === undefined;
+    && meta.forwardParts === undefined && !meta.forwardSources?.length && meta.recovery === undefined;
   const key = replyMetaKey(lane, owner);
   const kept = resting ? durableRemove(key, "reply.meta") : durableSet(key, JSON.stringify(meta), "reply.meta");
   if (owner !== null && !retiredSignOutStorageHeld() && (resting || kept === "stored")) durableRemove(replyMetaKey(lane, null), "reply.meta");
@@ -2212,6 +2220,9 @@ export function useMailSend(
         // and releasing the lane would delete the record saying an earlier message may already
         // have been delivered — see `releaseSendLock`.
         const fp = sendFingerprint(m);
+        if (res.status === "confirmed" && key === COMPOSE_SEND_KEY) {
+          clearEndedComposeCopies(held, owner.current, recordForEndedSend(res.key, owner.current)?.savedDraft);
+        }
         if (next.phase !== "unverified") releaseEnded(key, fp, res.key);
         // DURABLY, because the phase below is component state: reopening the draft, a reload or
         // another tab all start from `idle`, and each of those is a way back to a send that may
@@ -2254,7 +2265,9 @@ export function useMailSend(
         const p = pressKey.current.get(key);
         const earlier = res.firstSend !== undefined && !(p?.minted === true && p.key === res.key);
         const note = sentCopyNoteOf(res);
-        settle(key, m, res.andDone, earlier && res.earlierWordsKept === true, earlier, note === null ? null : { sendKey: res.key, note });
+        const row = m.draftId ?? res.sentDraftId ?? res.entityId;
+        const delivered = key === COMPOSE_SEND_KEY && row ? { ...m, draftId: row } : m;
+        settle(key, delivered, res.andDone, earlier && res.earlierWordsKept === true, earlier, note === null ? null : { sendKey: res.key, note });
       } else {
         /* AND THE LANES THAT WILL NEVER CONFIRM SAY SO. A failed, duplicate or unverified send
            is the end of this press; an arm still waiting on it would wait for ever. `queued` is
@@ -2388,6 +2401,10 @@ export function useMailSend(
       ? { draftId: null, session: record.session ?? null }
       : undefined;
     if (res.status === "confirmed") {
+      const row = record.draftId ?? res.sentDraftId ?? res.entityId ?? null;
+      if (recordHeld !== undefined) {
+        clearEndedComposeCopies({ ...recordHeld, draftId: row }, owner.current, record.savedDraft);
+      }
       /* THE INTENT IT WAS PRESSED WITH, from the send's own row: the door reads the release now,
          whichever surface is on screen, because the release is about the source, not the composer. */
       const copy = sentCopyNoteOf(res);
@@ -2459,7 +2476,7 @@ export function useMailSend(
         } as unknown as MailSend, owner.current, true);
       }
       settledRef.current(record.lane, {
-        kind: "mail_send", draftId: res.entityId ?? record.draftId ?? null,
+        kind: "mail_send", draftId: row,
       } as unknown as MailSend,
       /* THIS PASS'S OWN VERDICT, WHICH IS THE SAME QUESTION — `speaksForScreen` above is
          `composeStillHolds` read off the record instead of off a press, and a settlement
@@ -2727,6 +2744,43 @@ export function useMailSend(
    */
   const ownKeys = useRef(new Set<string>());
 
+  useEffect(() => {
+    let live = true;
+    let composerReady = false;
+    let scanning = false;
+    const recover = async (): Promise<void> => {
+      if (!live || !composerReady || scanning || (engine.drainsCompleted?.() ?? 0) === 0) return;
+      scanning = true;
+      try {
+        for (const record of allSendLocks(Date.now(), sendLockOwed(engine), owner.current)) {
+          if (record.lane !== COMPOSE_SEND_KEY || !record.beforeOutbox || ownKeys.current.has(record.key)) continue;
+          await recoverComposePress(record.beforeOutbox.composer, async () => {
+            if (!live) return;
+            const receipt = recordForEndedSend(record.key, owner.current)?.beforeOutbox;
+            const m = receipt?.mutation;
+            if (m?.kind !== "mail_send" || m.inReplyTo !== null || sendFingerprint(m) !== record.fp) return;
+            const owed = sendLockOwed(engine);
+            if (owed(record.key)) {
+              writeBeforeOutbox(record.key, undefined, owed, owner.current);
+              return;
+            }
+            const result = await engine.mutate(m, {
+              key: record.key, restored: true,
+              onDurable: () => writeBeforeOutbox(record.key, undefined, sendLockOwed(engine), owner.current),
+            });
+            if (live && result.status !== "queued") adoptForeign.current(result);
+          });
+        }
+      } finally {
+        scanning = false;
+      }
+    };
+    const scan = (): void => { void recover().catch(() => { /* leave the press for the next drain */ }); };
+    const off = engine.subscribe(scan);
+    const stop = whenComposerReady(() => { composerReady = true; scan(); }, owner.current);
+    return () => { live = false; off(); stop(); };
+  }, [engine]);
+
   /**
    * The latch: which message this compose was holding when the session began. Taken when a compose session first
    * becomes visible to this hook and NOT re-derived while it lasts — the whole mechanism, not an optimisation: at
@@ -2862,8 +2916,12 @@ export function useMailSend(
       const sendKey = standing ?? resumed ?? crypto.randomUUID();
       pressKey.current.set(key, { key: sendKey, minted: standing === null && resumed === null });
       if (sendKey !== resumed) {
+        const source = key === COMPOSE_SEND_KEY && m.draftId ? engine.confirmedDraft?.(m.draftId) : undefined;
+        const savedDraft = source?.status === "draft" && source.contentRevision && source.contentRevision === m.ifContentRevision
+          ? { id: source.id, mailboxId: source.mailboxId, contentRevision: source.contentRevision } : undefined;
         claimSendLock({
           v: SEND_LOCK_FORMAT, lane: key, key: sendKey, at: now, draftId: m.draftId ?? null, fp,
+          ...(savedDraft ? { savedDraft } : {}),
           // Recorded at the press, from the mutation AS SENT — the same value `canSend` compares
           // against, so the UI and the wire cannot come to disagree about which message this is.
           ...(subject !== undefined ? { subject } : {}),
@@ -2876,6 +2934,10 @@ export function useMailSend(
           // reload can recompute. See `SendLock.bfp`; `fp` above is not recomputable there.
           ...(key === COMPOSE_SEND_KEY && bufferFp !== null ? { bfp: bufferFp } : {}),
         }, owed, owner.current);
+      }
+      // Closing can interrupt the IndexedDB transaction. Keep the sealed press until it commits.
+      if (key === COMPOSE_SEND_KEY) {
+        writeBeforeOutbox(sendKey, { composer: composeOrigin(), mutation: m }, owed, owner.current);
       }
 
       ownKeys.current.add(sendKey);
@@ -2891,13 +2953,17 @@ export function useMailSend(
       // ACKNOWLEDGE FIRST, WORK SECOND — see {@link afterPaint}. The lock and the durable claim
       // above are synchronous and stay that way: they are what make a second press impossible,
       // and a yield in front of either would open the window they exist to close.
-      void afterPaint()
-        .then(() => engine.mutate(m, {
-          key: sendKey, ...(opts?.andDone ? { andDone: opts.andDone } : {}),
-          // The editor lets go once the send is on disk; a refused write never calls it.
-          ...(handOff ? { onDurable: () => { handedOff.current.add(key); bumpLine(); handOff(m); } } : {}),
-        }))
-        .then((res) => {
+      const persist = () => engine.mutate(m, {
+        key: sendKey, ...(opts?.andDone ? { andDone: opts.andDone } : {}),
+        // The editor lets go once the send is on disk; a refused write never calls it.
+        onDurable: () => {
+          if (key === COMPOSE_SEND_KEY) writeBeforeOutbox(sendKey, undefined, owed, owner.current);
+          if (handOff) { handedOff.current.add(key); bumpLine(); handOff(m); }
+        },
+      });
+      // A first-save dependency already delays dispatch. Record the press before the tab can close.
+      const send = m.draftCreateKey !== undefined ? persist() : afterPaint().then(persist);
+      void send.then((res) => {
           absorb(key, m, res);
           if (res.status === "queued") arm();
         })

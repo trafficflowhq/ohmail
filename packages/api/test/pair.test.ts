@@ -270,6 +270,9 @@ describe("POST /pair/redeem — anonymous, and the handler owns its envelope", (
     const probe = await handle(req("GET", "/calendar/sync"));
     expect(probe.status).toBe(401);
     expect(probe.headers.get("x-ohmail-calendar-pairing")).toBe("1");
+    for (const path of ["/calendar/setup", "/calendar/sync/snapshot?phase=calendar"]) {
+      expect((await handle(req("GET", path))).status, path).toBe(401);
+    }
     expect((await H(req("GET", "/mailboxes", { bearer: owner.token }), deps)).status).toBe(200);
     const minted = await (await H(mintReq(owner.token, { grant: "device-pair" }), deps)).json();
     const paired = await handle(req("POST", "/pair/redeem", {

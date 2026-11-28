@@ -18,7 +18,7 @@ vi.mock("../../src/fresh-store.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../src/fresh-store.js")>();
   return {
     ...real,
-    makeStoreInMemory: async (pgDataDir: string, boundMs?: number): Promise<number> => {
+    makeStoreInMemory: async (pgDataDir: string, boundMs?: number): Promise<WebAssembly.Module> => {
       if (!maker.fail) return real.makeStoreInMemory(pgDataDir, boundMs);
       mkdirSync(join(pgDataDir, "global"), { recursive: true });
       writeFileSync(join(pgDataDir, "postgresql.conf"), "");

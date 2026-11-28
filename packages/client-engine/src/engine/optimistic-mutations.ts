@@ -42,7 +42,7 @@ import {
 } from "./mutation-views.js";
 import {
   abortControllerOrNull, MODELLED_WAIT_CODES, noAnswerWithin, OUTBOX_BACKOFF_BASE_MS, OUTBOX_BACKOFF_CAP_MS,
-  OUTBOX_MAX_SERVER_FAILURES, OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, OUTBOX_UNREACHABLE_CEILING_MS,
+  OUTBOX_MAX_SERVER_FAILURES, OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, OUTBOX_UNKEYED_CREATE_TTL_MS, OUTBOX_UNREACHABLE_CEILING_MS,
 } from "./options.js";
 import {
   type AbandonedMutation, andDoneOf, byAtN, explicitRead, filingMutation, isCreatedRow, isPersistedOutboxEntry, NO_QUEUED,
@@ -54,6 +54,8 @@ import {
 interface MutateOptions {
   key?: string;
   andDone?: SendAndDonePlan;
+  /** A press inherited after its original composer went away. */
+  restored?: true;
   /** Called once, after the outbox write committed and before the dispatch; never on a refused write. */
   onDurable?: () => void;
   /** An actual settled attempt, including a retry. Never called merely because a write queued. */
@@ -69,7 +71,7 @@ interface DispatchOptions {
 export abstract class EngineOptimisticMutations extends EngineAttachments {
   // ── optimistic mutations ─────────────────────────────────────────────────
 
-  protected sentReplyExpiry?: ReturnType<typeof setTimeout>;
+  protected cancelSentReplyCheck?: () => void;
 
   /**
    * Whether the server's copy of draft `id` may hold formatting: the overlaid row, the row the
@@ -338,6 +340,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     const pending: PendingMutation = {
       id, key, mutation: filingMutation(enriched), at: this.now().getTime(), n: this.outboxSeq++,
       ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
+      ...(opts.restored ? { restored: true } : {}),
       ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
       ...(superseded.createAttempted ? { createAttempted: true } : {}),
       ...(superseded.createdRow !== undefined ? { createdRow: superseded.createdRow }
@@ -1631,6 +1634,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
       ...(words.threadId === undefined && was?.threadId ? { threadId: was.threadId } : {}),
       ...(words.inReplyToMessageId === undefined && was?.inReplyToMessageId ? { inReplyToMessageId: was.inReplyToMessageId } : {}),
       ...(words.forwardOfMessageId === undefined && was?.forwardOfMessageId ? { forwardOfMessageId: was.forwardOfMessageId } : {}),
+      ...(words.forwardSources === undefined && was?.forwardSources ? { forwardSources: was.forwardSources } : {}),
     });
     const q: PendingMutation = {
       id: this.uuid(), key: this.uuid(), mutation: create, at: p.at, n: p.n, restored: true,
@@ -1737,6 +1741,50 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     return true;
   }
 
+  /** Bind a Send pressed before the first autosave answered, including after an outbox replay. */
+  protected async bindFirstDraft(p: PendingMutation): Promise<void> {
+    const m = p.mutation;
+    if (m.kind !== "mail_send" || m.draftId !== undefined || m.draftCreateKey === undefined) return;
+    const key = m.draftCreateKey;
+    let saved = this.createdDraftOf(key) ?? await this.adapter.draftFromCreate?.(key);
+    if (!saved && (this.awaitingTurn.has(key) || this.queue.some((entry) => entry.key === key))) {
+      throw new MutationRejectedError("The first draft save is still waiting.", { code: "network", retryable: true });
+    }
+    if (saved === null && Number.isFinite(m.draftCreateAt)
+      && this.now().getTime() - m.draftCreateAt! < OUTBOX_UNKEYED_CREATE_TTL_MS) {
+      saved = await this.createFromPressedSend(key, m);
+    }
+    if (!saved) throw new MutationRejectedError("The message was not sent because its first draft save could not be confirmed.", {
+      code: "draft_unsaved", retryable: false,
+    });
+    p.mutation = { ...m, draftId: saved.id, ...(saved.revision ? { ifContentRevision: saved.revision } : {}) };
+    if (await this.putOutbox(p)) return;
+    p.mutation = m;
+    throw new MutationRejectedError("The draft could not be recorded before sending.", {
+      code: "network", retryable: true,
+    });
+  }
+
+  /** Use the first save's key so a save still in flight and the sealed Send cannot make two rows. */
+  private async createFromPressedSend(key: string, m: Extract<EngineMutation, { kind: "mail_send" }>): Promise<CreatedDraftRow | null | undefined> {
+    try {
+      const saved = await this.adapter.mutate({
+        kind: "draft_save", draftId: null, mailboxId: m.mailboxId, threadId: m.threadId,
+        inReplyToMessageId: m.inReplyTo, forwardOfMessageId: m.forwardOf, forwardParts: m.forwardParts,
+        subject: m.subject ?? "", body: m.body, html: m.html ?? null, to: m.to ?? [], cc: m.cc ?? [], bcc: m.bcc ?? [],
+      }, { idempotencyKey: key });
+      if (saved.settlement === "queued") {
+        throw new MutationRejectedError("The first draft save is still waiting.", { code: "network", retryable: true });
+      }
+      return saved.entityId && saved.revision ? { id: saved.entityId, revision: saved.revision } : undefined;
+    } catch (error) {
+      if (error instanceof MutationRejectedError && error.code === "idempotency_replay") {
+        return this.adapter.draftFromCreate?.(key);
+      }
+      throw error;
+    }
+  }
+
   protected async dispatchOnce(
     p: PendingMutation,
     opts: DispatchOptions = {},
@@ -1796,19 +1844,23 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
          not send it beside a newer change, or after a Discard. A send is never ended and carries
          no signal: only its barrier goes, and this attempt settles on its own request's answer. */
       const stop = p.mutation.kind === "mail_send" ? null : abortControllerOrNull();
-      const filing = filingMutation(p.mutation);
-      const request = filing.kind === "screener_decide" && opts.unsubscribeIds?.length
-        ? { ...filing, unsubscribeIds: opts.unsubscribeIds } : filing;
-      const call = this.adapter.mutate(request, {
-        idempotencyKey: p.key,
-        ...pressAgeOf(p.mutation, p.at, this.now().getTime()),
-        ...(p.createAttempted === true ? { createAttempted: true } : {}),
-        ...(p.mutation.kind === "mail_send" ? {
-          ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
-          onDraftRow: (row: CreatedDraftRow) => this.recordCreatedRow(p, row),
-        } : {}),
-        ...(stop !== null ? { signal: stop.signal } : {}),
-      });
+      const dispatch = () => {
+        const filing = filingMutation(p.mutation);
+        const request = filing.kind === "screener_decide" && opts.unsubscribeIds?.length
+          ? { ...filing, unsubscribeIds: opts.unsubscribeIds } : filing;
+        return this.adapter.mutate(request, {
+          idempotencyKey: p.key,
+          ...pressAgeOf(p.mutation, p.at, this.now().getTime()),
+          ...(p.createAttempted === true ? { createAttempted: true } : {}),
+          ...(p.mutation.kind === "mail_send" ? {
+            ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
+            onDraftRow: (row: CreatedDraftRow) => this.recordCreatedRow(p, row),
+          } : {}),
+          ...(stop !== null ? { signal: stop.signal } : {}),
+        });
+      };
+      const call = p.mutation.kind === "mail_send" && p.mutation.draftCreateKey !== undefined && p.mutation.draftId === undefined
+        ? this.bindFirstDraft(p).then(dispatch) : dispatch();
       call.catch(() => { /* the loser of the ceiling's race has no reader */ });
       let ended = false;
       let end: () => void = () => {};
@@ -2300,19 +2352,16 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
 
   /** A reply can stop waiting while the client is offline and no drain is running. */
   private armSentReplyExpiry(): void {
-    clearTimeout(this.sentReplyExpiry);
-    this.sentReplyExpiry = undefined;
+    this.cancelSentReplyCheck?.();
+    this.cancelSentReplyCheck = undefined;
     if (this.disposed) return;
     const next = nextSentReplyExpiry(this.store);
     if (!Number.isFinite(next)) return;
-    const delay = Math.min(2_147_483_647, Math.max(0, next - this.now().getTime()));
-    this.sentReplyExpiry = setTimeout(() => {
+    this.cancelSentReplyCheck = this.scheduleSentReplyCheck(Math.max(0, next - this.now().getTime()), async () => {
       const stamp = this.store.stampOf("view_meta");
-      void this.refreshSentReplies().then(() => {
-        if (!this.disposed && this.store.stampOf("view_meta") !== stamp) this.notify();
-      });
-    }, delay);
-    if (typeof this.sentReplyExpiry === "object") this.sentReplyExpiry.unref?.();
+      await this.refreshSentReplies();
+      if (!this.disposed && this.store.stampOf("view_meta") !== stamp) this.notify();
+    });
   }
 
   protected async refreshSentReplies(): Promise<void> {

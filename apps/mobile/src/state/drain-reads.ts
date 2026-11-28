@@ -6,7 +6,7 @@
  * or when the app came back to the front ({@link DrainRead.factsDue}): an idle phone asked both every 8 s. The ENGINE's queue page and
  * undecided-sender offer are asked once per session here — the web's once-per-mount shape — and
  * after that by the engine's own settle when a drain touched the gate, a rule, the settings or a
- * mailbox. Asked on every drain they re-derived every list several times per poll.
+ * mailbox. An unanswered first offer is retried on the next drain.
  */
 import { CHECKED_FACTS_MAX_AGE_MS } from "./live";
 import { IDLE_DRAIN_CAP_MS } from "../net/drain-cadence";
@@ -14,12 +14,6 @@ import { IDLE_DRAIN_CAP_MS } from "../net/drain-cadence";
 export interface EngineQueues {
   refreshScreenerWaiting(): Promise<void>;
   refreshUnscreened(): Promise<void>;
-}
-
-/** Ask the engine for its queue page and its offer; a refusal waits for the next ask. */
-export function askEngineQueues(engine: EngineQueues): void {
-  void engine.refreshScreenerWaiting().catch(() => { /* the settle or the next focus asks again */ });
-  void engine.refreshUnscreened().catch(() => { /* an offer the door cannot make is absent */ });
 }
 
 /** How long the consent answer stands while the mirror does not move. */
@@ -53,7 +47,9 @@ export interface DrainRead<C> {
 }
 
 export function drainReads<C>(deps: DrainReadDeps<C>): DrainRead<C> {
+  const { engine } = deps;
   let armed = false;
+  let offerAsked = false;
   const now = deps.now ?? Date.now;
   const mailboxes = gate(deps.mailboxesEveryMs ?? MAILBOXES_REREAD_MS);
   const consent = gate(deps.factsEveryMs ?? FACTS_REREAD_MS);
@@ -61,7 +57,11 @@ export function drainReads<C>(deps: DrainReadDeps<C>): DrainRead<C> {
     for (const r of deps.rest) r();
     if (!armed) {
       armed = true;
-      askEngineQueues(deps.engine);
+      void engine.refreshScreenerWaiting().catch(() => { /* the engine retries at settle */ });
+    }
+    if (!offerAsked) {
+      offerAsked = true;
+      void engine.refreshUnscreened().catch(() => { offerAsked = false; });
     }
     const stamp = deps.stamp?.();
     const at = now();

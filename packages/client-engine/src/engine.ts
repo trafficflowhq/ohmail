@@ -9,6 +9,8 @@
  * every other verb still goes — repeating a state change is a no-op.
  */
 import { EngineCalendar } from "./engine/calendar.js";
+import type { EngineOptions } from "./engine/options.js";
+import { scheduleSentReplyCheck } from "./sent-reply-clock.js";
 
 /**
  * The delta-sync engine (brief §4 — the load-bearing abstraction):
@@ -20,7 +22,11 @@ import { EngineCalendar } from "./engine/calendar.js";
  *   next /sync drain), roll back only on a hard rejection;
  *   SSE/push are WAKE SIGNALS only — attachWakeSignal() nudges a syncOnce.
  */
-export class OhmailEngine extends EngineCalendar {}
+export class OhmailEngine extends EngineCalendar {
+  constructor(opts: EngineOptions) {
+    super(opts, opts.scheduleSentReplyCheck ?? scheduleSentReplyCheck);
+  }
+}
 
 export {
   type AppliedRuleRequest, type KeptAsNewDraft, type MutationResult, type MutationStatus, type OrganizerRequestView,

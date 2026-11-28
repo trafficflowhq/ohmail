@@ -44,7 +44,7 @@
  * Owner-keyed, wrapped, `"local"`-defaulted: the same three rules as `composeDraftKey`.
  */
 
-import type { MailSend } from "./compose.js";
+import type { ComposeSavedRevision, MailSend } from "./compose.js";
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import { durableRemove, durableSet, type DurableWrite } from "../storage/durable.js";
 import { scopeSuffix, type StorageScope } from "../storage/scope.js";
@@ -115,6 +115,10 @@ export interface SendLock {
    * next press comes to mint a fresh key for a message that has already gone.
    */
   unverified?: boolean;
+  /** A press sealed here until IndexedDB confirms the outbox entry. */
+  beforeOutbox?: { composer: string; mutation: MailSend };
+  /** The version on screen before Send saved its final words. */
+  savedDraft?: ComposeSavedRevision;
 }
 
 /**
@@ -287,20 +291,29 @@ function mayDrop(r: SendLock, why: SendLockDrop, owed: SendLockOwed, nowMs: numb
 
 /**
  * THE DOOR: reads the jar itself, so no caller can hand it a list it already shortened. `doomed`
- * names why a record should go (or `null`); `add` is a claim written in the same save. Returns
- * what the jar holds afterwards.
+ * names why a record should go (or `null`). A claim appends in the same save. A press receipt
+ * changes only the matching record's receipt and returns without considering any removal.
  */
 function dropSendLocks(
   doomed: (r: SendLock) => SendLockDrop | null, owed: SendLockOwed, nowMs: number,
-  owner: string | null, add: SendLock | null = null,
+  owner: StorageScope, write?: { claim: SendLock } | { receipt: { key: string; press: SendLock["beforeOutbox"] } },
 ): SendLock[] {
   const rows = loadOrEmpty(owner);
+  if (write && "receipt" in write) {
+    const { key, press } = write.receipt;
+    const row = rows.find((r) => r.key === key && r.v <= SEND_LOCK_FORMAT);
+    if (row === undefined || (press === undefined && row.beforeOutbox === undefined)) return rows;
+    if (press === undefined) delete row.beforeOutbox;
+    else row.beforeOutbox = press;
+    save(rows, owner);
+    return rows;
+  }
   const kept = rows.filter((r) => {
     const why = doomed(r);
     return why === null || !mayDrop(r, why, owed, nowMs);
   });
-  if (add !== null) kept.push(add);
-  if (add !== null || kept.length !== rows.length) save(kept, owner);
+  if (write) kept.push(write.claim);
+  if (write || kept.length !== rows.length) save(kept, owner);
   return kept;
 }
 
@@ -360,10 +373,12 @@ export function resumeSendLock(
   // been delivered. A record from a LATER format is exempt too: this build cannot read what its
   // fingerprint means, and a downgrade must not delete a newer install's evidence. A settled key
   // that no longer owes an ending goes as `ended`, whichever lane it is on.
-  dropSendLocks((r) => (
-    r.unverified !== true && !owed(r.key) ? "ended"
-      : r.lane === lane && r.fp !== id.fp && r.unverified !== true ? "replaced" : "aged"
-  ), owed, nowMs, owner);
+  dropSendLocks((r) => {
+    // A press not yet in the outbox still owns its key and words.
+    if (r.beforeOutbox !== undefined) return "aged";
+    if (r.unverified !== true && !owed(r.key)) return "ended";
+    return r.lane === lane && r.fp !== id.fp && r.unverified !== true ? "replaced" : "aged";
+  }, owed, nowMs, owner);
   return found?.key ?? null;
 }
 
@@ -433,8 +448,11 @@ export function claimSendLock(lock: SendLock, owed: SendLockOwed, owner: Storage
   // file existed. What has changed is that the refusal is no longer silent: `save` answers, and
   // the shell says once that this browser is not keeping decisions between reloads.
   // A record from a LATER format is not this build's to evict: the door keeps it.
-  const replaced = (r: SendLock): SendLockDrop | null => (
-    r.lane === lock.lane && !(r.unverified === true && r.fp !== lock.fp) ? "replaced" : null);
+  const replaced = (r: SendLock): SendLockDrop | null => {
+    if (r.lane !== lock.lane || (r.unverified === true && r.fp !== lock.fp)) return null;
+    // Another compose can press Send before the outbox has this letter on disk.
+    return r.beforeOutbox !== undefined && r.key !== lock.key ? null : "replaced";
+  };
   /**
    * THE VERSION IS STAMPED HERE, not taken from the caller.
    *
@@ -443,7 +461,7 @@ export function claimSendLock(lock: SendLock, owed: SendLockOwed, owner: Storage
    * build wrote. Leaving the number in the caller's hands made it a literal at the one call site that
    * had to be remembered on every format change, and 0.14.1 forgot it.
    */
-  dropSendLocks(replaced, owed, lock.at, owner, { ...lock, v: SEND_LOCK_FORMAT });
+  dropSendLocks(replaced, owed, lock.at, owner, { claim: { ...lock, v: SEND_LOCK_FORMAT } });
 }
 
 /**
@@ -648,7 +666,7 @@ export function unverifiedSendIntents(lane: string, owner: StorageScope): SendIn
  * next pause create a fresh one — two rows for one message before anything was reopened. A row is matched by either
  * name a record can carry it under: the subject it was minted with (`draft:<id>`) and the row it ACQUIRED afterwards
  * ({@link attachSendLockDraft}); when the row moves they disagree, and the row still in the drafts list is the one
- * named by the subject — that reading is {@link unresolvedSendRows}, called from here rather than repeated.
+ * named by the subject.
  */
 
 /**
@@ -688,20 +706,16 @@ export function parkedComposeRecord(
   owner: StorageScope,
 ): ParkedIdentity | null {
   const rows = loadOrEmpty(owner)
-    .filter((r) => r.lane === lane && r.unverified === true && r.v <= SEND_LOCK_FORMAT);
+    .filter((r) => r.lane === lane && (r.unverified === true || r.beforeOutbox !== undefined) && r.v <= SEND_LOCK_FORMAT);
   if (session !== null) {
     const named = rows.find((r) => lockSubjects(r).includes(`compose:${session}`));
     if (named) return { session: named.session ?? session, draftId: named.draftId };
   }
   if (draftId === null) return null;
-  // The ROW half is {@link unresolvedSendRows}, called rather than restated: the two names a row
-  // is recorded under appear at different moments in one message's life, and a second reading of
-  // that pair is a second chance to read only one of them.
-  if (!unresolvedSendRows(lane, owner).has(draftId)) return null;
   const byRow = rows.find(
     (r) => r.draftId === draftId || lockSubjects(r).includes(`draft:${draftId}`),
   );
-  return { session: byRow?.session ?? null, draftId: byRow?.draftId ?? draftId };
+  return byRow ? { session: byRow.session ?? null, draftId: byRow.draftId ?? draftId } : null;
 }
 
 /**
@@ -974,6 +988,13 @@ export function recordForSendKey(
   const rows = load(owner);
   if (rows === null) return null;
   return rows.find((r) => r.key === key && r.v <= SEND_LOCK_FORMAT && isLive(r, nowMs)) ?? null;
+}
+
+/** Keep the sealed press until the outbox has committed it. */
+export function writeBeforeOutbox(
+  key: string, press: SendLock["beforeOutbox"], owed: SendLockOwed, owner: StorageScope,
+): void {
+  dropSendLocks(() => null, owed, Date.now(), owner, { receipt: { key, press } });
 }
 
 /**

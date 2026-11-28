@@ -75,6 +75,28 @@ export class PlaywrightPerson implements Person {
     await this.page.route("**/*", (route) => route.abort("internetdisconnected"));
   }
 
+  async goOnline(): Promise<void> {
+    await this.page.unroute("**/*");
+    await this.context.setOffline(false);
+  }
+
+  async signalReconnect(): Promise<void> {
+    await this.page.evaluate(() => window.dispatchEvent(new Event("online")));
+  }
+
+  async closeTab(): Promise<void> {
+    const closed = this.page.waitForEvent("close");
+    await this.page.close({ runBeforeUnload: true });
+    await closed;
+  }
+
+  async restartForNewBuild(): Promise<void> {
+    const version = (url: URL) => url.origin === this.origin && url.pathname === "/version";
+    await this.page.route(version, (route) => route.fulfill({ json: { build: "next-fixture-build" } }), { times: 1 });
+    await this.page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await Promise.all([this.page.waitForEvent("domcontentloaded"), this.act("press", "reload-update")]);
+  }
+
   async goOfflineWhileOpeningSettings(): Promise<void> {
     const previous = this.page.url();
     let held = false;
@@ -105,6 +127,7 @@ export class PlaywrightPerson implements Person {
   /** A second tab of the same browser: the same cookies and storage, its own page. */
   async tab(): Promise<PlaywrightPerson> {
     const other = new PlaywrightPerson(await this.context.newPage(), this.context, this.origin, this.base, this.lang);
+    other.driven = this.driven;
     this.tabs.push(other);
     return other;
   }
@@ -191,6 +214,7 @@ export class PlaywrightPerson implements Person {
       description: (await attr("aria-description")) ?? "", pressed: await attr("aria-pressed"),
       selected: await attr("aria-selected"), current: await attr("aria-current"),
       expanded: await attr("aria-expanded"), checked: await attr("aria-checked"), disabled: await target.isDisabled(),
+      editable: await target.isEditable().catch(() => false),
     };
   }
 
@@ -325,6 +349,75 @@ export class PlaywrightPerson implements Person {
     return Object.fromEntries(Object.entries(all).map(([k, v]) => [k, [...new Set(v.match(global) ?? [])].sort()]));
   }
 
+  async holdMirrorWrites(): Promise<void> {
+    await this.page.evaluate(async () => {
+      const name = (await indexedDB.databases()).find((db) => db.name?.startsWith("ohmail-mirror:"))?.name;
+      if (!name) throw new Error("The browser mirror is missing");
+      await new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open(name);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          const transaction = db.transaction(["meta", "entities"], "readwrite");
+          transaction.onabort = () => db.close();
+          transaction.oncomplete = () => db.close();
+          const store = transaction.objectStore("meta");
+          const keepOpen = (): void => {
+            const read = store.get("wait-for-the-tab-to-close");
+            read.onsuccess = () => {
+              resolve();
+              keepOpen();
+            };
+            read.onerror = () => reject(read.error);
+          };
+          keepOpen();
+        };
+      });
+    });
+  }
+
+  async storedWriting(words: string, draftSubject?: string): Promise<string[]> {
+    const other = await this.context.newPage();
+    try {
+      await other.goto(`${this.origin}/api/hello`, { waitUntil: "commit" });
+      return await other.evaluate(async ({ needle, subject }) => {
+        const copies = await Promise.all((await indexedDB.databases())
+          .filter(({ name }) => name?.startsWith("ohmail-mirror:"))
+          .map(({ name }) => new Promise<string[]>((resolve, reject) => {
+            const open = indexedDB.open(name!);
+            open.onerror = () => reject(open.error);
+            open.onsuccess = () => {
+              const db = open.result;
+              const read = db.transaction("entities").objectStore("entities").getAll();
+              read.onerror = () => { db.close(); reject(read.error); };
+              read.onsuccess = () => {
+                const labels = read.result.flatMap(({ type, entity }) => {
+                  if (subject !== undefined && type === "draft" && entity?.subject === subject && entity.status === "sent") {
+                    return ["sent-draft"];
+                  }
+                  if (entity == null || !JSON.stringify(entity).includes(needle)) return [];
+                  if (type === "draft" && entity.status === "draft") return ["draft"];
+                  if (type === "outbox_entry" || type === "outbox_abandoned") {
+                    return [`${type}:${entity.mutation?.kind ?? ""}:${entity.lastError?.code ?? ""}`];
+                  }
+                  return [];
+                });
+                db.close();
+                resolve(labels);
+              };
+            };
+          })));
+        const beforeOutbox = Object.keys(localStorage)
+          .filter((key) => key.startsWith("ohmail.send.locks."))
+          .flatMap((key) => JSON.parse(localStorage.getItem(key) ?? "[]"))
+          .some((row) => row?.beforeOutbox?.mutation?.body?.includes(needle));
+        return [...copies.flat(), ...(beforeOutbox ? ["pressed-send"] : [])].sort();
+      }, { needle: words, subject: draftSubject });
+    } finally {
+      await other.close();
+    }
+  }
+
   async keep(key: string, value: string): Promise<void> {
     /* Another tab of this browser, on the install's name and on no page of the app (the API's answer to a hello), so
        nothing of the app runs there: it writes the entry and closes, as the tab that left it did. */
@@ -341,11 +434,18 @@ export class PlaywrightPerson implements Person {
     return (await this.page.evaluate(() => document.body.innerText)).includes(words);
   }
 
-  /** Set by the bench that opened this window with its clock driven (`person({ clock: "driven" })`). */
+  /** Set by the bench that opened this browser context with a driven clock. */
   driven = false;
+
+  async pauseClock(): Promise<void> {
+    if (!this.driven) throw new Error("this window's clock is not driven: open the person with { clock: \"driven\" }");
+    const now = await this.page.evaluate(() => Date.now());
+    await this.context.clock.pauseAt(new Date(now + 150));
+  }
+
   async later(ms: number): Promise<void> {
     if (!this.driven) throw new Error("this window's clock is not driven: open the person with { clock: \"driven\" }");
-    await this.page.clock.runFor(ms);
+    await this.context.clock.runFor(ms);
   }
 
   /** The jar this window shares, signed in as an account with the bench's sign-in cookies (`web.ts`). */

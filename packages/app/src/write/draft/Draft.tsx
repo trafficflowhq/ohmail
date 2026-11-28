@@ -5,7 +5,8 @@
  * them ("Draft from your text"); where it has none the word is not drawn and the plain control stands. An empty
  * balance the host knows of is said before the press. A draft that lands over typed words takes their place on
  * screen; the person's own text stays one tab away (the tabs over the text), kept by the composition (`own`) until
- * the reply is sent or discarded, whether the reply is closed and opened again or drafted again; not past a reload.
+ * the reply is sent or discarded, whether the reply is closed and opened again or drafted again. A new letter keeps
+ * both versions in its local recovery buffer.
  * Nothing is asked of a server before the press.
  */
 import { useEffect, useState, type ReactNode } from "react";
@@ -17,7 +18,7 @@ import { DraftControl, DraftTabs, GroupHeading } from "@ohmail/ui/mail";
 import { useOptionalReport } from "../../frame/commands.js";
 import { useText, type Text } from "../../text/index.js";
 import { useWriteBeside, useWriting } from "../above.js";
-import type { WriteDraftControl, WriteOwnText } from "../ports.js";
+import type { WriteOwnText } from "../ports.js";
 
 type Shown = "yours" | "draft";
 
@@ -25,18 +26,17 @@ type Shown = "yours" | "draft";
  * The person's own text and the draft beside it, as two tabs over the text, while their text holds words (a draft over
  * none has nothing to show beside it). A tab press puts that text in place; the text leaving keeps its latest words.
  */
-function ownTabs(
+function ownTabs<T extends Omit<WriteOwnText, "messageId">>(
   t: Text,
-  control: WriteDraftControl,
-  texts: WriteOwnText | null,
+  texts: T | null,
   now: RichValue,
-  put: (next: RichValue) => void,
+  put: (next: RichValue, versions: T) => void,
 ): ReactNode | undefined {
   if (texts === null || isRichEmpty(texts.yours)) return undefined;
   const show = (shown: Shown): void => {
     if (shown === texts.shown) return;
-    control.keep(shown === "yours" ? { ...texts, draft: now, shown } : { ...texts, yours: now, shown });
-    put(shown === "yours" ? texts.yours : texts.draft);
+    const leaving = texts.shown;
+    put(texts[shown], { ...texts, [leaving]: now, shown });
   };
   return (
     <DraftTabs
@@ -176,7 +176,10 @@ export function useDraftOffer(messageId: string, forward: boolean, keysHere: boo
     ),
     notice:
       here && control.notice !== null ? control.notice : noCredits === true ? t("draft.noCredits") : null,
-    tabs: ownTabs(t, control, texts, w.replyBody, (next) => w.onReplyBody(next)),
+    tabs: ownTabs(t, texts, w.replyBody, (next, versions) => {
+      control.keep(versions);
+      w.onReplyBody(next);
+    }),
     drafting,
     preview: drafting ? control.preview : undefined,
   };
@@ -199,16 +202,26 @@ export function useLetterDraftOffer(): DraftOffer | null {
   const here = control.messageId === id;
   const drafting = here && control.phase === "running";
   const waiting = !here && control.phase === "running";
-  const texts = control.own.get(id) ?? null;
+  const texts = compose.draftVersions ?? null;
   const body = { text: compose.body, html: compose.html, aiDraft: compose.aiDraft };
+  const tabs = ownTabs(t, texts, body, (next, draftVersions) => {
+    w.onComposeFields({
+      ...compose,
+      body: next.text,
+      html: next.html,
+      aiDraft: next.aiDraft ?? false,
+      draftVersions,
+    });
+  });
   const untouched = texts !== null && texts.shown === "draft" && body.text === texts.draft.text;
   const made = untouched ? texts.yours : body;
   const words = made.text.trim() !== "";
   const letter = control.letter;
   const priced = beside.metered && noCredits !== true;
-  const set = (next: RichValue): void =>
-    w.onComposeFields({ ...compose, body: next.text, html: next.html, aiDraft: next.aiDraft ?? false });
-  if (!control.offered || letter === "none" || Boolean(compose.forwardOf)) return null;
+  if (compose.forwardOf) return null;
+  if (!control.offered || letter === "none") {
+    return tabs === undefined ? null : { control: null, notice: null, tabs, drafting: false };
+  }
   const fromText = !drafting && !waiting && !untouched;
   const word = drafting
     ? t("draft.running")
@@ -257,7 +270,7 @@ export function useLetterDraftOffer(): DraftOffer | null {
       />
     ),
     notice,
-    tabs: ownTabs(t, control, texts, body, set),
+    tabs,
     drafting,
     preview: drafting ? control.preview : undefined,
   };

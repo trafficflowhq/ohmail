@@ -1341,6 +1341,13 @@ describe("the plan job's outputs", () => {
       "--scope", "selected", "--scope-why", "1 changed path(s)", "--select-outcome", "success", "--plan", join(scratch, "no-such-plan.json")], { encoding: "utf8", env: { ...process.env, GITHUB_STEP_SUMMARY: "" } });
     expect(run.status).toBe(0);
     expect(run.stdout).toBe('scope=whole\nwhy=the selector wrote no plan\nshards=[{"shard":0},{"shard":1}]\nalone=[]\nsqlite=[{"shard":0}]\n');
+
+    const out = composeOutputs({ indexes: [11, 12, 13], sqliteIndexes: [0], alone: [], scope: "whole" });
+    expect(out.shards).toEqual([
+      { shard: 11 }, { shard: "12a", baseShard: 12, part: "a" },
+      { shard: "12b", baseShard: 12, part: "b" }, { shard: 13 },
+    ]);
+    expect(out.sqlite).toEqual([{ shard: 0 }]);
   });
 
   it("measures its costs from a whole run, in this tree", () => {

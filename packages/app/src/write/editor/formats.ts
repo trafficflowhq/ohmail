@@ -4,12 +4,8 @@ import HorizontalRule from "@tiptap/extension-horizontal-rule";
 import { Mapping } from "@tiptap/pm/transform";
 import { Plugin } from "@tiptap/pm/state";
 import { AUTHORED_CODE_STYLE } from "@ohmail/app-logic/writing/rich-text";
-import type { ParagraphStyle } from "../ports.js";
+import { CODE_KEYS, PARAGRAPH_STYLES, paragraphKey } from "../format-help.js";
 import { applyCodeBlock, applyParagraphStyle, splitTargetLines } from "./commands.js";
-
-export const CODE_KEYS = { code: "mod+shift+c", codeBlock: "mod+alt+shift+c" } as const;
-export const PARAGRAPH_STYLES = [0, 1, 2, 3] as const;
-export const paragraphKey = (style: ParagraphStyle): string => `mod+alt+${style}`;
 
 const FormatKeys = Extension.create({
   name: "letterFormatKeys",

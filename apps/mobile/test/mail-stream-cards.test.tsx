@@ -10,11 +10,16 @@ const opened = vi.hoisted(() => vi.fn());
 const hydrated = vi.hoisted(() => vi.fn());
 const fetchBody = vi.hoisted(() => vi.fn<(id: string) => Promise<void>>());
 const navigate = vi.hoisted(() => vi.fn());
+const readQueues = vi.hoisted(() => vi.fn());
+const markAll = vi.hoisted(() => vi.fn());
 type VisibleItems = { viewableItems: Array<{ item: { id: string }; index: number | null }> };
 const fixture = vi.hoisted(() => ({
   ios: false, textLayout: undefined as ((event: unknown) => void) | undefined,
   fullBody: "", html: "", mailboxLabel: undefined as string | undefined,
-  focused: true, bodyState: "full", visible: undefined as ((items: VisibleItems) => void) | undefined,
+  focused: true, runFocusEffects: false, listRenders: 0, worldKey: "fixtures", bodyState: "full",
+  listSubject: undefined as string | undefined,
+  listId: undefined as string | null | undefined,
+  visible: undefined as ((items: VisibleItems) => void) | undefined,
   session: { engine: { hydrateBody: fetchBody } },
   filed: null as FiledSince | null, paper: true, receiptHasAttachments: false, receiptHasOffer: false,
 }));
@@ -36,7 +41,7 @@ vi.mock("react-native", async () => {
   const { rnDom } = await import("./_rendered-dom");
   return {
     ...rnDom,
-    useWindowDimensions: () => ({ fontScale: 1 }),
+    useWindowDimensions: () => ({ fontScale: 1, height: 844 }),
     Platform: { ...rnDom.Platform, get OS() { return fixture.ios ? "ios" : "android"; } },
     AppState: { currentState: "active", addEventListener: () => ({ remove: vi.fn() }) },
     Animated: { View: rnDom.View, ValueXY: class { x = { interpolate: () => 0 }; } },
@@ -44,12 +49,17 @@ vi.mock("react-native", async () => {
     PanResponder: { create: () => ({ panHandlers: {} }) },
   };
 });
-vi.mock("expo-router", () => ({
-  router: { push: navigate },
-  useFocusEffect: vi.fn(),
-  useIsFocused: () => fixture.focused,
-  useNavigation: () => ({ getState: () => undefined, addListener: () => vi.fn() }),
-}));
+vi.mock("expo-router", async () => {
+  const { useEffect } = await import("react");
+  return {
+    router: { push: navigate },
+    useFocusEffect: (effect: () => void | (() => void)) => {
+      useEffect(() => fixture.runFocusEffects && fixture.focused ? effect() : undefined, [effect, fixture.focused]);
+    },
+    useIsFocused: () => fixture.focused,
+    useNavigation: () => ({ getState: () => undefined, addListener: () => vi.fn() }),
+  };
+});
 vi.mock("../src/theme", () => ({
   useTheme: () => ({
     mail: fixture.paper, scheme: "light", c: new Proxy({}, { get: () => "#121212" }), radius: { card: 20, pill: 999 },
@@ -59,24 +69,30 @@ vi.mock("../src/theme", () => ({
 vi.mock("../src/state/pull", () => ({ usePullToSync: () => undefined }));
 vi.mock("../src/state/live", () => ({ firstSyncReadingSaid: () => null, moveTargetsFor: () => [] }));
 vi.mock("../src/state/world", () => ({
-  useEngineQueuesAsk: () => vi.fn(),
+  useEngineQueuesAsk: () => readQueues,
   useFilesStamp: vi.fn(),
   useLiveSession: () => fixture.session,
   useMessageBody: () => ({ body: fixture.fullBody || letter.snippet, bodyState: fixture.bodyState, html: fixture.html }),
-  useWorld: () => ({
-    boot: { settled: true },
-    worldKey: "fixtures",
-    ohbox: {
-      resurfaced: [], fresh: [{ ...letter, marks, mailbox: { name: "Work", address: ownAddress }, mailboxLabel: "Work" }],
-      seen: [], unreadIds: [letter.id], total: 1, filed: fixture.filed,
-    },
-    reads: { items: [{ ...letter, mailboxLabel: fixture.mailboxLabel }], meta: "23 new since you were here", unreadIds: [letter.id], newCount: 23 },
-    receipts: { groups: [{ label: "Today", items: [{ ...letter, mailboxLabel: fixture.mailboxLabel, hasAttachments: fixture.receiptHasAttachments }] }], total: 1, meta: "23 new since you were here", unreadIds: [letter.id], newCount: 23 },
-    mailboxes: { ownAddresses: [ownAddress] },
-    eventsOf: () => [],
-    filesOf: () => [],
-    actions: { hydrateMessage: hydrated, holdFiles: vi.fn(), releaseFiles: vi.fn(), markOhboxVisit: vi.fn() },
-  }),
+  useWorld: () => {
+    const row = { ...letter, id: fixture.listId ?? letter.id, subject: fixture.listSubject ?? letter.subject };
+    const rows = fixture.listId === null ? [] : [row];
+    const unreadIds = rows.map((item) => item.id);
+    return {
+      boot: { settled: true },
+      worldKey: fixture.worldKey,
+      ohbox: {
+        resurfaced: [], fresh: rows.map((item) => ({ ...item, marks,
+          mailbox: { name: "Work", address: ownAddress }, mailboxLabel: "Work" })),
+        seen: [], unreadIds, total: rows.length, filed: fixture.filed,
+      },
+      reads: { items: rows.map((item) => ({ ...item, mailboxLabel: fixture.mailboxLabel })), meta: "23 new since you were here", unreadIds, newCount: rows.length ? 23 : 0 },
+      receipts: { groups: [{ label: "Today", items: [{ ...letter, mailboxLabel: fixture.mailboxLabel, hasAttachments: fixture.receiptHasAttachments }] }], total: 1, meta: "23 new since you were here", unreadIds: [letter.id], newCount: 23 },
+      mailboxes: { ownAddresses: [ownAddress] },
+      eventsOf: () => [],
+      filesOf: () => [],
+      actions: { hydrateMessage: hydrated, holdFiles: vi.fn(), releaseFiles: vi.fn(), markOhboxVisit: vi.fn(), markAllSeen: markAll },
+    };
+  },
 }));
 vi.mock("../src/ui/base", async () => {
   const { rnDom } = await import("./_rendered-dom");
@@ -111,12 +127,14 @@ vi.mock("../src/ui/base", async () => {
   };
 });
 vi.mock("../src/ui/MailList", () => ({
-  MailList: ({ groups, renderRow, head, foot, tail, onViewableItemsChanged }: {
+  MailList: ({ groups, renderRow, head, foot, tail, onViewableItemsChanged, initialNumToRender }: {
     groups: { rows: WorldMail[] }[]; renderRow: (row: WorldMail) => ReactNode; head: ReactNode; foot?: ReactNode; tail?: ReactNode;
     onViewableItemsChanged?: (items: VisibleItems) => void;
+    initialNumToRender?: number;
   }) => {
+    fixture.listRenders += 1;
     fixture.visible = onViewableItemsChanged;
-    return h("main", null, head, groups.flatMap(({ rows }) => rows.map((row) => h("article", { key: row.id }, renderRow(row)))), foot, tail);
+    return h("main", { "data-initial-window": initialNumToRender }, head, groups.flatMap(({ rows }) => rows.map((row) => h("article", { key: row.id }, renderRow(row)))), foot, tail);
   },
 }));
 vi.mock("../src/ui/list-detail", () => ({
@@ -154,7 +172,12 @@ vi.mock("../src/ui/MailFoundEvents", () => ({
   useMailFoundEvents: () => fixture.receiptHasOffer ? { rows: [{}] } : null,
 }));
 vi.mock("../src/ui/MailCalendarSwitch", () => ({ MailCalendarSwitch: () => null }));
-vi.mock("../src/ui/MailListMenu", () => ({ MailListMenu: () => h("i", null, "⋯") }));
+vi.mock("../src/ui/MailListMenu", () => ({
+  MailListMenu: ({ unread = 0, fresh = 0, onMarkAll }: { unread?: number; fresh?: number; onMarkAll?: () => void }) =>
+    h("i", null, "⋯", onMarkAll && (unread > 0 || fresh > 0) ? h("button", {
+      "data-mark-all": "", "data-unread": unread, onClick: onMarkAll,
+    }) : null),
+}));
 vi.mock("../src/ui/MarkAllRead", () => ({ MarkAllRead: () => null }));
 vi.mock("../src/ui/StreamMailMenu", () => ({ StreamMailMenu: () => null }));
 vi.mock("react-native-webview", () => ({ WebView: () => null }));
@@ -181,18 +204,109 @@ afterEach(() => {
   hydrated.mockClear();
   fetchBody.mockReset();
   navigate.mockClear();
+  readQueues.mockClear();
+  markAll.mockClear();
   fixture.ios = false;
   fixture.textLayout = undefined;
   fixture.fullBody = "";
   fixture.html = "";
   fixture.mailboxLabel = undefined;
   fixture.focused = true;
+  fixture.runFocusEffects = false;
+  fixture.listRenders = 0;
+  fixture.worldKey = "fixtures";
+  fixture.listSubject = undefined;
+  fixture.listId = undefined;
   fixture.bodyState = "full";
   fixture.visible = undefined;
   fixture.filed = null;
   fixture.paper = true;
   fixture.receiptHasAttachments = false;
   fixture.receiptHasOffer = false;
+});
+
+it("keeps the Ohbox list when returning and leaves queue reads to the session", () => {
+  fixture.runFocusEffects = true;
+  const view = mount(h(Ohbox));
+  try {
+    const list = view.el.querySelector("main");
+    expect(list?.textContent).toContain(letter.subject);
+    const renders = fixture.listRenders;
+    fixture.focused = false;
+    view.render(h(Ohbox));
+    expect(fixture.listRenders).toBe(renders);
+    fixture.focused = true;
+    view.render(h(Ohbox));
+    expect(view.el.querySelector("main")).toBe(list);
+    expect(readQueues).not.toHaveBeenCalled();
+  } finally { view.unmount(); }
+});
+
+it("updates a covered Ohbox list when its mailbox changes", () => {
+  const view = mount(h(Ohbox));
+  try {
+    const renders = fixture.listRenders;
+    fixture.focused = false;
+    fixture.worldKey = "another-mailbox";
+    fixture.listSubject = "Mail from the new mailbox";
+    view.render(h(Ohbox));
+    expect(fixture.listRenders).toBeGreaterThan(renders);
+    expect(view.el.querySelector("main")?.textContent).toContain(fixture.listSubject);
+    expect(view.el.querySelector("main")?.textContent).not.toContain(letter.subject);
+  } finally { view.unmount(); }
+});
+
+it.each([["Ohbox", Ohbox], ["News", News]])("reuses the %s list and shows current rows and actions on its first return", (place, Screen) => {
+  vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const view = mount(h(Screen));
+  try {
+    const list = view.el.querySelector("main");
+    expect(list?.textContent).toContain(letter.subject);
+    const renders = fixture.listRenders;
+    fixture.focused = false;
+    view.render(h(Screen));
+    fixture.listSubject = "New subject";
+    fixture.listId = "new-letter";
+    view.render(h(Screen));
+    expect(fixture.listRenders).toBe(renders);
+    fixture.focused = true;
+    view.render(h(Screen));
+    expect(view.el.querySelector("main")).toBe(list);
+    expect(list?.textContent).toContain(fixture.listSubject);
+    expect(list?.textContent).not.toContain(letter.subject);
+    const mark = list!.querySelector<HTMLButtonElement>("[data-mark-all]");
+    expect(mark?.dataset.unread).toBe("1");
+    act(() => mark!.click());
+    expect(markAll.mock.calls).toEqual(place === "News"
+      ? [[["new-letter"], { place: "reads", upToId: "new-letter" }]]
+      : [[["new-letter"]]]);
+  } finally {
+    view.unmount();
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each([["Ohbox", Ohbox], ["News", News]])("removes the filed %s row and its Mark All action on the first return", (_place, Screen) => {
+  vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const view = mount(h(Screen));
+  try {
+    const list = view.el.querySelector("main");
+    expect(list?.querySelector("[data-mark-all]")).not.toBeNull();
+    fixture.focused = false;
+    view.render(h(Screen));
+    fixture.listId = null;
+    view.render(h(Screen));
+    fixture.focused = true;
+    view.render(h(Screen));
+    expect(view.el.querySelector("main")).toBe(list);
+    expect(list?.textContent).not.toContain(letter.subject);
+    expect(list?.querySelector("[data-mark-all]")).toBeNull();
+  } finally {
+    view.unmount();
+    vi.unstubAllGlobals();
+  }
 });
 
 it.each([News, Receipts])("puts the stream header's More at the Paper edge", (Screen) => {
@@ -402,6 +516,18 @@ it("loads a visible short News body without opening it and hides the extra contr
     fixture.bodyState = "full";
     view.render(h(News));
     expect(view.el.querySelector('[data-label="Read in full"]')).toBeNull();
+  } finally {
+    view.unmount();
+  }
+});
+
+it("opens a phone-sized Android News window with a smaller initial card batch", () => {
+  const view = mount(h(News));
+  try {
+    expect(view.el.querySelector("main")?.getAttribute("data-initial-window")).toBe("7");
+    fixture.ios = true;
+    view.render(h(News));
+    expect(view.el.querySelector("main")?.getAttribute("data-initial-window")).toBeNull();
   } finally {
     view.unmount();
   }

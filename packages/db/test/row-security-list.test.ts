@@ -50,15 +50,16 @@ const COLUMNS = new Map<string, Set<string>>(
 const bare = (arm: string): string => arm.replace(/::text$/, "");
 
 describe("every table of a server is in exactly one class, and the classes agree with the map", () => {
-  it("a server holds 112 tables: 83 of the account, 14 read before sign-in, 5 of the staff, 10 of operations", () => {
+  it("a server holds 113 tables: 83 of the account, 14 read before sign-in, 5 of the staff, 11 of operations", () => {
     const counts: Record<string, number> = {};
     for (const t of serverTables()) {
       const c = tableClass(t);
       expect(c, `${t} is in no class`).not.toBeNull();
       counts[c!] = (counts[c!] ?? 0) + 1;
     }
-    expect(serverTables()).toHaveLength(112);
-    expect(counts).toEqual({ account: 83, keyed: 14, staff: 5, operations: 10 });
+    expect(tableClass("worker_topology")).toBe("operations");
+    expect(serverTables()).toHaveLength(113);
+    expect(counts).toEqual({ account: 83, keyed: 14, staff: 5, operations: 11 });
     expect(lockedTables()).toHaveLength(102);
   });
 
@@ -331,10 +332,10 @@ describe("the account's views of the lock", () => {
 });
 
 describe("how each index the lock could take from a read is read", () => {
-  it("43 rows, each on a locked table: a view over that table, a bound named, or a reason; the catalog's own list is the lock's ground's case", () => {
+  it("45 rows, each on a locked table: a view over that table, a bound named, or a reason; the catalog's own list is the lock's ground's case", () => {
     const locked = new Set(lockedTables());
     const rows = Object.entries(INDEX_READS);
-    expect(rows).toHaveLength(43);
+    expect(rows).toHaveLength(45);
     expect(rows.filter(([, r]) => r.read === "view").map(([n]) => n).sort()).toEqual([
       "message_search_head_terms_trgm_idx", "message_search_head_tsv_idx", "message_search_names_trgm_idx", "message_search_terms_trgm_idx",
       "message_search_text_tsv_idx", "message_search_words_idx", "messages_account_arrival_key_idx", "messages_account_from_addr_idx",

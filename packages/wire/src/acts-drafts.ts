@@ -2,7 +2,7 @@
  * THE ACTS THAT WRITE AND SEND A LETTER: members of `EngineMutation` (`acts.ts`).
  */
 import type { EmailAddress, ISODateTime } from "./base.js";
-import type { ComposeAttachment } from "./drafts.js";
+import type { ComposeAttachment, DraftForwardSource } from "./drafts.js";
 
 export type SendAct =
   /**
@@ -39,6 +39,8 @@ export type SendAct =
        * server refuses an id that is not one of the original's parts (409, nothing sent).
        */
       forwardParts?: string[];
+      /** Remaining message attachments. Saved on the draft before the send reads it. */
+      forwardSources?: DraftForwardSource[];
       /**
        * The person confirmed forwarding a `no_forward` original after the one-sentence ask. The
        * server refuses such a forward without it (403) and admits it with it; ignored otherwise.
@@ -60,6 +62,10 @@ export type SendAct =
        * sending: the debounce means the last two seconds of typing may not have reached the row.
        */
       draftId?: string;
+      /** The first autosave's key when Send was pressed before the composer learned its row. */
+      draftCreateKey?: string;
+      /** When that key was minted, to stay within the server's create deduplication window. */
+      draftCreateAt?: number;
       /**
        * The version of {@link draftId}'s row the editor's words are based on: the send's PUT states
        * it, and a row moved off it refuses the edit and sends nothing. Not part of the fingerprint.
@@ -159,6 +165,7 @@ export type DraftAct =
       forwardOfMessageId?: string | null;
       /** The original's files the person kept, beside a forward. Absent leaves the row's list. */
       forwardParts?: string[] | null;
+      forwardSources?: DraftForwardSource[];
       subject: string;
       /**
        * The plain rendering, always. It is what the Drafts list shows and what decides there is

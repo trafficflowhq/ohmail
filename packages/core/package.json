@@ -178,6 +178,12 @@
       "node": "./dist/reader-refusal.js",
       "default": "./src/reader-refusal.ts"
     },
+    "./attachment-limits": {
+      "types": "./src/attachment-limits.ts",
+      "ohmail-source": "./src/attachment-limits.ts",
+      "node": "./dist/attachment-limits.js",
+      "default": "./src/attachment-limits.ts"
+    },
     "./outbound-text": {
       "types": "./src/outbound-text.ts",
       "ohmail-source": "./src/outbound-text.ts",

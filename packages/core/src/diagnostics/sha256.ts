@@ -1,7 +1,7 @@
 /**
- * SHA-256 over a string, synchronous and dependency-free. The bundle is built on the desktop's
+ * SHA-256 over bytes or a UTF-8 string, synchronous and dependency-free. The bundle is built on the desktop's
  * webview and on the phone's Hermes, and `crypto.subtle` is absent on one of them; a pure hash is
- * the same answer on both. Only ever fed ids, never mail. Held to `node:crypto` by the tests.
+ * the same answer on both. Held to `node:crypto` by the tests.
  */
 
 const K = new Uint32Array([
@@ -30,14 +30,16 @@ function utf8(text: string): number[] {
 
 const rotr = (x: number, n: number): number => (x >>> n) | (x << (32 - n));
 
-/** Lowercase hex SHA-256 of `text`'s UTF-8 bytes. */
-export function sha256Hex(text: string): string {
-  const bytes = utf8(text);
-  const bitLength = bytes.length * 8;
-  bytes.push(0x80);
-  while (bytes.length % 64 !== 56) bytes.push(0);
-  const hi = Math.floor(bitLength / 0x100000000);
-  for (const word of [hi, bitLength >>> 0]) bytes.push((word >>> 24) & 255, (word >>> 16) & 255, (word >>> 8) & 255, word & 255);
+/** Lowercase hex SHA-256 of the bytes, with strings encoded as UTF-8. */
+export function sha256Hex(input: string | Uint8Array): string {
+  const data = typeof input === "string" ? utf8(input) : input;
+  const bytes = new Uint8Array(Math.ceil((data.length + 9) / 64) * 64);
+  bytes.set(data);
+  bytes[data.length] = 0x80;
+  const bitLength = data.length * 8;
+  const length = new DataView(bytes.buffer, bytes.length - 8);
+  length.setUint32(0, Math.floor(bitLength / 0x100000000));
+  length.setUint32(4, bitLength >>> 0);
 
   const h = new Uint32Array([
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,

@@ -6,11 +6,17 @@
  * and `canSend` — so the parsing is testable one row at a time and cannot drift into a second copy
  * of the send rule.
  */
-import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/wire";
+import type { ComposeAttachment, EmailAddress, EngineDraft, EngineMutation } from "@ohmail/wire";
 import type { SignatureState } from "@ohmail/client-engine";
-import { durableRemove, durableSessionRemove, durableSessionSet, durableSet, localStorageDoor } from "../storage/durable.js";
+import { fnv1a, sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
+import { sha256Hex } from "@trafficflow/core/diagnostics";
+import { draftForwardSourceTuples, draftRevisionInput } from "@trafficflow/core/outbound-text";
+import { durableRemove, durableSessionRemove, durableSessionSet, durableSet, localStorageDoor, onLocalStorageChanged } from "../storage/durable.js";
 import { isDemoOwned, retiredSignOutStorageHeld } from "../storage/storage-owner.js";
 import { scopeSuffix, type StorageScope } from "../storage/scope.js";
+import { forwardSourceOf, forwardSourcesForSave, sourcesFromDraft, type ForwardSource } from "./forward-selection.js";
+import type { DraftVersions } from "./draft-reply-control.js";
+import type { RichValue } from "./rich-text.js";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {
@@ -50,6 +56,8 @@ export interface ComposeFields {
   html: string;
   /** Whether the body came from the drafter. Absent in older buffers. */
   aiDraft?: boolean;
+  /** The letter's AI draft and original text, kept in its local recovery buffer. */
+  draftVersions?: DraftVersions;
   /**
    * The sender the user picked, as a mailbox id; `null` = they did not pick one. A field on the
    * FORM rather than a derivation, because a default re-derived on every render would silently
@@ -63,14 +71,16 @@ export interface ComposeFields {
   /**
    * Files to send with this message — held in memory only, never written to `localStorage`.
    * Attachments carry base64 bytes and a photo would blow past a quota Safari private mode refuses
-   * outright, so `writeComposeDraft` strips this field and `readComposeDraft` never restores it: the
-   * buffer's job is to survive navigation and a reload of the TEXT, and a file picked before a
-   * reload is re-picked — honest, rather than a phantom paperclip pointing at bytes that are gone.
+   * outright, so `writeComposeDraft` keeps only the names of picked files for the recovery warning.
    * Not part of the autosaved `drafts` row either — nothing on the account stores attachment bytes
    * (§13.2/§14) — so `signatureOf`/`worthSaving` ignore it. Optional, so an old buffer reads back
    * as a draft with no files.
    */
   attachments?: ComposeAttachment[];
+  /** Picked files whose bytes were lost when the draft was restored. */
+  missingAttachmentNames?: readonly string[];
+  /** The forwarded originals still on this draft, in message-date order. Their bytes stay in memory. */
+  forwardSources?: ForwardSource[];
   /**
    * The message this compose is forwarding — an id, and nothing else. A forward is written on the ordinary compose
    * form; this one field turns it into a forward on the wire, and it deliberately carries no copy of the original —
@@ -194,8 +204,30 @@ const UNIT_STORES = ["compose.session", "compose.row", "compose.draft"] as const
 const unitKeys = (suffix: string): string[] => unitPrefixes().map((prefix) => prefix + suffix);
 const handoffPrefix = (owner: string): string => `${COMPOSE_DRAFT_PREFIX}${owner}:handoff:`;
 const handoffs = localStorageDoor("compose.draft");
+const detachedUnits = new Map<string, string>();
 const adoptedOwners = new Set<string>();
+const composeRemovals = new EventTarget();
 let handoffArmed = false;
+
+export function onComposeStorageChanged(owner: StorageScope, check: () => void): () => void {
+  const scope = scopeSuffix(owner);
+  const base = COMPOSE_DRAFT_PREFIX + scope;
+  const stop = onLocalStorageChanged((key) => {
+    if (key === null || key === base || key.startsWith(`${base}.`) || key.startsWith(handoffPrefix(scope))) check();
+  });
+  composeRemovals.addEventListener(scope, check);
+  return () => {
+    stop();
+    composeRemovals.removeEventListener(scope, check);
+  };
+}
+
+function removeComposeBuffer(owner: StorageScope): void {
+  if (durableRemove(composeDraftKey(owner), "compose.draft") === "stored") {
+    // The browser's storage event only reaches other windows.
+    composeRemovals.dispatchEvent(new Event(scopeSuffix(owner)));
+  }
+}
 
 function readUnit(keys: readonly string[]): (string | null)[] {
   return keys.map((key) => window.localStorage.getItem(key));
@@ -204,6 +236,69 @@ function readUnit(keys: readonly string[]): (string | null)[] {
 /** A session alone names no draft: opening the composer mints one. */
 function holdsMessage(unit: readonly (string | null)[]): boolean {
   return unit[1] !== null || unit[2] !== null;
+}
+
+/** Recipients, subject, either version of the body or forwarded originals make a compose worth keeping. */
+export function worthSaving(f: ComposeFields): boolean {
+  return (
+    f.to.trim() !== "" ||
+    (f.cc ?? "").trim() !== "" ||
+    (f.bcc ?? "").trim() !== "" ||
+    f.subject.trim() !== "" ||
+    f.body.trim() !== "" ||
+    hasDraftVersionWords(f.draftVersions) ||
+    (f.forwardSources?.length ?? 0) > 0
+  );
+}
+
+function hasDraftVersionWords(versions: DraftVersions | undefined): boolean {
+  return versions !== undefined && (versions.yours.text.trim() !== "" || versions.draft.text.trim() !== "");
+}
+
+function hasRecoveryContent(raw: string | null | undefined): boolean {
+  try { return worthSaving(decodeComposeDraft(raw)); }
+  catch { return false; }
+}
+
+function decodeUnit(raw: string | null): (string | null)[] | null {
+  if (raw === null) return null;
+  try {
+    const unit: unknown = JSON.parse(raw);
+    return Array.isArray(unit) && unit.length === UNIT_STORES.length
+      && unit.every((value) => value === null || typeof value === "string") ? unit : null;
+  } catch { return null; }
+}
+
+function detachedUnit(owner: StorageScope): (string | null)[] | null {
+  const key = detachedUnits.get(scopeSuffix(owner));
+  return key === undefined ? null : decodeUnit(handoffs.get(key));
+}
+
+/** A save may answer after pagehide. Keep its row and markers beside the words that moved. */
+function updateDetachedUnit(owner: StorageScope, update: (unit: (string | null)[]) => void): boolean {
+  const key = detachedUnits.get(scopeSuffix(owner));
+  if (key === undefined) return false;
+  const unit = decodeUnit(handoffs.get(key));
+  if (unit !== null) {
+    update(unit);
+    handoffs.set(key, JSON.stringify(unit));
+  }
+  return true;
+}
+
+/** A leaving editor can still finish a save while its recovery copy is on disk. */
+export function storedComposeDraft(owner: StorageScope): boolean {
+  if (detachedUnits.has(scopeSuffix(owner))) return detachedUnit(owner)?.[2] != null;
+  return handoffs.get(composeDraftKey(owner)) !== null;
+}
+
+function updateComposeBuffer(owner: StorageScope, update: (raw: string) => string): void {
+  try {
+    if (updateDetachedUnit(owner, (unit) => { if (unit[2] != null) unit[2] = update(unit[2]); })) return;
+    const key = composeDraftKey(owner);
+    const raw = window.localStorage.getItem(key);
+    if (raw) durableSet(key, update(raw), "compose.draft");
+  } catch { /* the marker stays in this page's memory */ }
 }
 
 function storeUnitPart(key: string, value: string | null, index: number): boolean {
@@ -223,38 +318,128 @@ function acceptUnit(to: readonly string[], unit: readonly (string | null)[], con
     }
     written.push(i);
   }
-  if (consume()) return true;
+  if (consume()) {
+    rowHolds.delete(to[2]!);
+    createsMem.delete(to[2]!);
+    return true;
+  }
   for (const index of written.reverse()) storeUnitPart(to[index]!, previous[index]!, index);
   return false;
 }
 
 function moveUnit(from: readonly string[], to: readonly string[], unit = readUnit(from)): boolean {
-  return acceptUnit(to, unit, () => {
-    from.forEach((key, index) => storeUnitPart(key, null, index));
-    return true;
-  });
+  return acceptUnit(to, unit, () => removeUnit(from, unit));
 }
 
-function adoptClosedComposer(owner: string, own: readonly string[]): boolean {
+function removeUnit(keys: readonly string[], unit: readonly (string | null)[]): boolean {
+  const removed: number[] = [];
+  for (let index = 0; index < keys.length; index += 1) {
+    if (unit[index] === null) continue;
+    if (!storeUnitPart(keys[index]!, null, index)) {
+      for (const prior of removed) storeUnitPart(keys[prior]!, unit[prior]!, prior);
+      return false;
+    }
+    removed.push(index);
+  }
+  rowHolds.delete(keys[2]!);
+  createsMem.delete(keys[2]!);
+  return true;
+}
+
+type OfferComposer = (restore: () => boolean, available: () => boolean) => void;
+type RestoreOffer = { restore: () => Promise<boolean>; available: () => boolean };
+
+type ClosedCompose = { key: string; raw: string; unit: (string | null)[]; ownTab: boolean };
+
+function closedVersion({ unit }: ClosedCompose) {
+  const [, row, raw] = unit;
+  if (!row || !raw) return null;
+  const { holds } = JSON.parse(raw) as { holds?: Partial<ComposeRowHolds> };
+  if (holds?.row !== row || typeof holds.rev !== "string" || !holds.rev
+    || typeof holds.sig !== "string" || holds.gone) return null;
+  const fields = decodeComposeDraft(raw);
+  const edited = holds.sig !== holdsSig(fields) || holds.pending !== undefined || fields.sig?.kind === "edited"
+    || (holds.fromMailboxId !== undefined && holds.fromMailboxId !== fields.fromMailboxId);
+  // Older markers lack the From choice. Their matching text can rank the copies,
+  // but only the full saved proof lets recovery remove a duplicate.
+  const saved = !edited && matchesSavedMarker(fields, holds, { id: row, contentRevision: holds.rev });
+  return { row, revision: holds.rev, edited, saved };
+}
+
+function adoptClosedComposer(
+  owner: string, own: readonly string[], live?: ReadonlySet<string>, offer?: OfferComposer,
+): boolean {
   const prefix = handoffPrefix(owner);
   const mine = prefix + composerId();
   const keys = [mine, ...Object.keys(window.localStorage).filter((key) => key !== mine && key.startsWith(prefix))];
+  const candidates: ClosedCompose[] = [];
   for (const key of keys) {
+    const source = key.slice(prefix.length).split(":", 1)[0]!;
+    const ownTab = source === composerId();
+    if (!ownTab && live?.has(composerLockName(source))) continue;
     const raw = window.localStorage.getItem(key);
     if (raw === null) continue;
-    let unit: unknown;
-    try { unit = JSON.parse(raw); } catch { continue; }
-    if (!Array.isArray(unit) || unit.length !== UNIT_STORES.length
-      || !unit.every((value) => value === null || typeof value === "string") || !holdsMessage(unit)) continue;
-    return acceptUnit(own, unit, () => handoffs.get(key) === raw && handoffs.remove(key) === "stored");
+    const unit = decodeUnit(raw);
+    if (unit === null) continue;
+    if (!hasRecoveryContent(unit[2])) {
+      if (handoffs.get(key) === raw) handoffs.remove(key);
+      continue;
+    }
+    candidates.push({ key, raw, unit, ownTab });
+  }
+  const first = candidates[0];
+  if (first) {
+    // A fresh tab should recover edits made against the same saved revision before an
+    // untouched copy of it. A reload still takes its own tab's work first.
+    const version = closedVersion(first);
+    const siblings = version === null ? [] : candidates.filter((candidate) => candidate.unit[1] === version.row)
+      .map((candidate) => ({ candidate, version: closedVersion(candidate) }))
+      .filter((copy) => copy.version?.revision === version.revision);
+    const changed = !first.ownTab && version?.edited === false
+      ? siblings.find((copy) => copy.version?.edited === true)
+      : undefined;
+    const selected = changed?.candidate ?? first;
+    const recoveringEdits = changed !== undefined || version?.edited === true;
+    const take = (unit: (string | null)[], raw: string): boolean => {
+      const accepted = acceptUnit(own, unit, () =>
+        handoffs.get(selected.key) === raw && handoffs.remove(selected.key) === "stored");
+      if (accepted && recoveringEdits && selected.raw === raw) {
+        // These copies hold only the base revision of the edits just recovered.
+        for (const copy of siblings) {
+          if (copy.version?.saved && handoffs.get(copy.candidate.key) === copy.candidate.raw) {
+            handoffs.remove(copy.candidate.key);
+          }
+        }
+      }
+      return accepted;
+    };
+    if (offer && !selected.ownTab) {
+      offer(() => {
+        const current = handoffs.get(selected.key);
+        const left = decodeUnit(current);
+        if (current === null || holdsMessage(readUnit(own)) || left === null || left[0] !== selected.unit[0]
+          || !hasRecoveryContent(left[2])) return false;
+        return take(left, current);
+      }, () => {
+        const left = decodeUnit(handoffs.get(selected.key));
+        return left !== null && left[0] === selected.unit[0] && hasRecoveryContent(left[2]);
+      });
+      return true;
+    }
+    const accepted = take(selected.unit, selected.raw);
+    if (accepted && !selected.ownTab) unannounced.add(owner);
+    return accepted;
   }
   const legacy = unitKeys(owner);
   const unit = readUnit(legacy);
-  return holdsMessage(unit) && moveUnit(legacy, own, unit);
+  if (hasRecoveryContent(unit[2])) return moveUnit(legacy, own, unit);
+  if (holdsMessage(unit)) removeUnit(legacy, unit);
+  return false;
 }
 
 function adoptHandoff(owner: StorageScope): void {
   const o = scopeSuffix(owner);
+  if (detachedUnits.has(o)) return;
   // Wait for the page's identity before taking anything from another composer.
   const locks = claimSettled ? null : composerLocks();
   if (locks !== null) {
@@ -290,6 +475,7 @@ export function handOffComposer(): void {
       // If an earlier handoff is still waiting, keep both versions.
       const key = previous === null || previous === raw ? slot : `${slot}:${crypto.randomUUID()}`;
       if (previous !== raw && handoffs.set(key, raw) !== "stored") continue;
+      detachedUnits.set(owner, key);
       keys.forEach((part, index) => storeUnitPart(part, null, index));
     }
   } catch { /* the browser can refuse storage reads */ }
@@ -325,8 +511,27 @@ let composerLocked = false;
 let claim: Promise<void> | null = null;
 let claimSettled = false;
 const recoveries = new Map<string, Promise<boolean>>();
+const recoveryOffers = new Map<string, RestoreOffer>();
 const unannounced = new Set<string>();
 const composerLockName = (id: string): string => `${COMPOSER_KEY}.${id}`;
+const RECOVERY_LOCK = `${COMPOSER_KEY}:recover`;
+
+export function composeOrigin(): string {
+  return composerId();
+}
+
+/** Resume a press only after its original page lets go, and in just one window. */
+export async function recoverComposePress(source: string, take: () => Promise<void>): Promise<void> {
+  const locks = composerLocks();
+  const same = source === composerId();
+  if (locks === null) {
+    if (same) await take();
+    return;
+  }
+  await locks.request(same ? RECOVERY_LOCK : composerLockName(source), { ifAvailable: true }, (lock) => {
+    if (lock) return take();
+  });
+}
 /** The id a page of this tab let go of at `pagehide`; a duplicate's copied storage never has it. */
 const COMPOSER_LEFT_KEY = `${COMPOSER_KEY}:left`;
 /** How long a reload waits for its previous page's lock before it takes an id of its own. */
@@ -401,7 +606,7 @@ const writtenUnderLock = (raw: string | null): boolean => {
 };
 
 /** ONE dead tab's unit for this owner, into this composer — serialized across tabs by a lock. */
-function recoverOrphan(locks: ComposerLocks, owner: string): Promise<boolean> {
+function recoverOrphan(locks: ComposerLocks, owner: string, offer?: OfferComposer): Promise<boolean> {
   let late = false;
   const run = async (): Promise<boolean> => {
     try {
@@ -414,18 +619,35 @@ function recoverOrphan(locks: ComposerLocks, owner: string): Promise<boolean> {
       adoptedOwners.add(owner);
       armHandoff();
       if (holdsMessage(readUnit(own))) return false;
-      if (adoptClosedComposer(owner, own)) return false;
+      if (adoptClosedComposer(owner, own, live, offer)) return false;
       const base = `${COMPOSE_DRAFT_PREFIX}${owner}.`;
       for (const k of Object.keys(window.localStorage)) {
         const id = k.startsWith(base) ? k.slice(base.length) : "";
         if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || id === mine || live.has(composerLockName(id))) continue;
         if (!writtenUnderLock(window.localStorage.getItem(k))) continue;
-        return moveUnit(unitKeys(`${owner}.${id}`), own);
+        const from = unitKeys(`${owner}.${id}`);
+        const unit = readUnit(from);
+        if (!hasRecoveryContent(unit[2])) {
+          removeUnit(from, unit);
+          continue;
+        }
+        if (offer) {
+          const [session] = unit;
+          offer(() => {
+            const left = readUnit(from);
+            return !holdsMessage(readUnit(own)) && left[0] === session && hasRecoveryContent(left[2]) && moveUnit(from, own, left);
+          }, () => {
+            const left = readUnit(from);
+            return left[0] === session && hasRecoveryContent(left[2]);
+          });
+          return false;
+        }
+        return moveUnit(from, own, unit);
       }
     } catch { /* a refused jar or manager: nothing is recovered */ }
     return false;
   };
-  const asked = (locks.request(`${COMPOSER_KEY}:recover`, {}, run) as Promise<boolean>).catch(() => false);
+  const asked = (locks.request(RECOVERY_LOCK, {}, run) as Promise<boolean>).catch(() => false);
   const bound = new Promise<boolean>((r) => { setTimeout(() => { late = true; r(false); }, LOCK_ANSWER_MS); });
   return Promise.race([asked, bound]);
 }
@@ -434,8 +656,12 @@ function recoverOrphan(locks: ComposerLocks, owner: string): Promise<boolean> {
  * Run `ready` once this page knows which composer it is. At once where nothing is asked, so a
  * window the host names and a browser without Web Locks read their unit exactly as before; every
  * read of the unit at mount waits here — the restore, and the autosave's adoption of its row.
+ * A new page opening Compose can offer a different tab's unit without adopting it. That unit
+ * stays where it was until the action takes it, under the same lock as automatic recovery.
  */
-export function whenComposerReady(ready: () => void, owner: StorageScope): () => void {
+export function whenComposerReady(
+  ready: () => void, owner: StorageScope, offer?: (restore: RestoreOffer) => void,
+): () => void {
   const locks = composerLocks();
   if (locks === null) {
     ready();
@@ -444,7 +670,19 @@ export function whenComposerReady(ready: () => void, owner: StorageScope): () =>
   const o = scopeSuffix(owner);
   let r = recoveries.get(o);
   if (r === undefined) {
-    r = claimComposer(locks).then(() => recoverOrphan(locks, o)).then((got) => {
+    const defer = offer && ((restore: () => boolean, available: () => boolean) => {
+      recoveryOffers.set(o, {
+        available: () => { try { return available(); } catch { return false; } },
+        restore: async () => {
+          try {
+            const restored = await locks.request(RECOVERY_LOCK, {}, restore) === true;
+            if (restored) recoveryOffers.delete(o);
+            return restored;
+          } catch { return false; }
+        },
+      });
+    });
+    r = claimComposer(locks).then(() => recoverOrphan(locks, o, defer)).then((got) => {
       if (got) unannounced.add(o);
       return got;
     });
@@ -455,6 +693,8 @@ export function whenComposerReady(ready: () => void, owner: StorageScope): () =>
     if (live) {
       if (!adoptedOwners.has(o)) recoveries.delete(o);
       ready();
+      const restore = recoveryOffers.get(o);
+      if (restore?.available()) offer?.(restore);
     }
   });
   return () => { live = false; };
@@ -468,6 +708,7 @@ export function takeRecoveredComposer(owner: StorageScope): boolean {
 /** A fresh page, for a test: nothing adopted yet. The tab's id is the test's own sessionStorage. */
 export function resetComposerForTest(): void {
   adoptedOwners.clear();
+  detachedUnits.clear();
   composerInMemory = null;
   hostComposer = null;
   reminted = null;
@@ -475,6 +716,7 @@ export function resetComposerForTest(): void {
   claim = null;
   claimSettled = false;
   recoveries.clear();
+  recoveryOffers.clear();
   unannounced.clear();
   rowHolds.clear();
   createsMem.clear();
@@ -496,57 +738,94 @@ export function readComposeDraft(scope: StorageScope): ComposeFields {
   adoptHandoff(scope);
   const key = composeDraftKey(scope);
   try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return EMPTY_COMPOSE;
-    const parsed = JSON.parse(raw) as Partial<ComposeFields>;
-    return {
-      to: typeof parsed.to === "string" ? parsed.to : "",
-      // Guarded field-wise like every other line here, so a buffer written before Cc/Bcc existed
-      // restores as a draft with empty Cc/Bcc rather than throwing or dropping the whole draft.
-      cc: typeof parsed.cc === "string" ? parsed.cc : "",
-      bcc: typeof parsed.bcc === "string" ? parsed.bcc : "",
-      subject: typeof parsed.subject === "string" ? parsed.subject : "",
-      body: typeof parsed.body === "string" ? parsed.body : "",
-      // Same field-wise guard as `fromMailboxId` below, and it is what makes a draft written
-      // by the plain textarea restore as a plain draft rather than as an empty one.
-      html: typeof parsed.html === "string" ? parsed.html : "",
-      ...(typeof parsed.aiDraft === "boolean" ? { aiDraft: parsed.aiDraft } : {}),
-      // Guarded field-wise, so a buffer written before this field existed reads back as "no
-      // pick" and one
-      // written after it is still readable by a bundle that predates the field. Nothing here
-      // versions the shape, and nothing needs to.
-      fromMailboxId: typeof parsed.fromMailboxId === "string" && parsed.fromMailboxId.length > 0
-        ? parsed.fromMailboxId
-        : null,
-      // NEVER restored — bytes are transient and are stripped on write. A restored draft starts
-      // with no files, and a file the user had picked before reloading is re-picked.
-      attachments: [],
-      // RESTORED, because it is an id rather than bytes and losing it would turn a half-written
-      // forward back into an empty message titled "Fwd: …". Guarded field-wise like
-      // `fromMailboxId`: a buffer written before this field existed reads back as a plain compose.
-      forwardOf: typeof parsed.forwardOf === "string" && parsed.forwardOf.length > 0
-        ? parsed.forwardOf
-        : null,
-      // The kept files: a list of at most 100 ids, else nothing removed.
-      forwardParts: Array.isArray(parsed.forwardParts) && parsed.forwardParts.length <= 100
-        && parsed.forwardParts.every((id) => typeof id === "string")
-        ? [...parsed.forwardParts]
-        : null,
-      // Guarded field-wise like its neighbours: only the three shapes the model names restore,
-      // and anything else — a buffer from before the field, or a value some other version wrote
-      // — reads back as `following`, which is the resting state.
-      ...(parsed.sig?.kind === "removed" ? { sig: { kind: "removed" as const } }
-        : parsed.sig?.kind === "edited" && typeof parsed.sig.text === "string"
-          ? { sig: { kind: "edited" as const, text: parsed.sig.text } }
-          : {}),
-      ...(typeof parsed.diag === "string" && parsed.diag !== "" ? { diag: parsed.diag } : {}),
-      ...(parsed.recipientsTyped === true ? { recipientsTyped: true as const } : {}),
-    };
+    const raw = detachedUnits.has(scopeSuffix(scope)) ? detachedUnit(scope)?.[2] : window.localStorage.getItem(key);
+    return decodeComposeDraft(raw);
   } catch {
     // Blocked storage, or a value some earlier version wrote in another shape. Either way an
     // empty form beats throwing inside a render.
     return EMPTY_COMPOSE;
   }
+}
+
+function readDraftVersion(value: Partial<RichValue> | undefined): RichValue | undefined {
+  if (typeof value?.text !== "string" || typeof value.html !== "string") return undefined;
+  return { text: value.text, html: value.html, ...(typeof value.aiDraft === "boolean" ? { aiDraft: value.aiDraft } : {}) };
+}
+
+function readDraftVersions(value: Partial<DraftVersions> | undefined): DraftVersions | undefined {
+  if (value?.shown !== "yours" && value?.shown !== "draft") return undefined;
+  const yours = readDraftVersion(value.yours);
+  const draft = readDraftVersion(value.draft);
+  return yours && draft ? { yours, draft, shown: value.shown } : undefined;
+}
+
+export type ComposeDraftRecovery = Pick<ComposeFields, "draftVersions" | "missingAttachmentNames" | "aiDraft">;
+
+export function readComposeDraftRecovery(value: ComposeDraftRecovery | undefined): ComposeDraftRecovery | undefined {
+  const draftVersions = readDraftVersions(value?.draftVersions);
+  const names = Array.isArray(value?.missingAttachmentNames)
+    ? value.missingAttachmentNames.filter((name) => typeof name === "string" && name !== "")
+    : [];
+  if (!draftVersions && names.length === 0) return undefined;
+  return {
+    ...(draftVersions ? { draftVersions, aiDraft: typeof value?.aiDraft === "boolean" ? value.aiDraft : undefined } : {}),
+    ...(names.length ? { missingAttachmentNames: names } : {}),
+  };
+}
+
+/** Picked file bytes stay in memory. Forwarded originals can be read again from their references. */
+export function missingComposeFiles(fields: ComposeFields): string[] {
+  const picked = fields.attachments?.filter((file) => forwardSourceOf(file) === undefined) ?? [];
+  return [...(fields.missingAttachmentNames ?? []), ...picked.map((file) => file.filename)];
+}
+
+function decodeComposeDraft(raw: string | null | undefined): ComposeFields {
+  if (!raw) return EMPTY_COMPOSE;
+  const parsed = JSON.parse(raw) as Partial<ComposeFields>;
+  const forwardSources = sourcesFromDraft(parsed.forwardSources);
+  return {
+    to: typeof parsed.to === "string" ? parsed.to : "",
+    // Guarded field-wise like every other line here, so a buffer written before Cc/Bcc existed
+    // restores as a draft with empty Cc/Bcc rather than throwing or dropping the whole draft.
+    cc: typeof parsed.cc === "string" ? parsed.cc : "",
+    bcc: typeof parsed.bcc === "string" ? parsed.bcc : "",
+    subject: typeof parsed.subject === "string" ? parsed.subject : "",
+    body: typeof parsed.body === "string" ? parsed.body : "",
+    // Same field-wise guard as `fromMailboxId` below, and it is what makes a draft written
+    // by the plain textarea restore as a plain draft rather than as an empty one.
+    html: typeof parsed.html === "string" ? parsed.html : "",
+    ...(typeof parsed.aiDraft === "boolean" ? { aiDraft: parsed.aiDraft } : {}),
+    ...readComposeDraftRecovery(parsed),
+    // Guarded field-wise, so a buffer written before this field existed reads back as "no
+    // pick" and one
+    // written after it is still readable by a bundle that predates the field. Nothing here
+    // versions the shape, and nothing needs to.
+    fromMailboxId: typeof parsed.fromMailboxId === "string" && parsed.fromMailboxId.length > 0
+      ? parsed.fromMailboxId
+      : null,
+    attachments: [],
+    ...(forwardSources ? { forwardSources } : {}),
+    // RESTORED, because it is an id rather than bytes and losing it would turn a half-written
+    // forward back into an empty message titled "Fwd: …". Guarded field-wise like
+    // `fromMailboxId`: a buffer written before this field existed reads back as a plain compose.
+    forwardOf: typeof parsed.forwardOf === "string" && parsed.forwardOf.length > 0
+      ? parsed.forwardOf
+      : null,
+    // The kept files: a list of at most 100 ids, else nothing removed.
+    forwardParts: Array.isArray(parsed.forwardParts) && parsed.forwardParts.length <= 100
+      && parsed.forwardParts.every((id) => typeof id === "string")
+      ? [...parsed.forwardParts]
+      : null,
+    // Guarded field-wise like its neighbours: only the three shapes the model names restore,
+    // and anything else — a buffer from before the field, or a value some other version wrote
+    // — reads back as `following`, which is the resting state.
+    ...(parsed.sig?.kind === "removed" ? { sig: { kind: "removed" as const } }
+      : parsed.sig?.kind === "edited" && typeof parsed.sig.text === "string"
+        ? { sig: { kind: "edited" as const, text: parsed.sig.text } }
+        : {}),
+    ...(typeof parsed.diag === "string" && parsed.diag !== "" ? { diag: parsed.diag } : {}),
+    ...(parsed.recipientsTyped === true ? { recipientsTyped: true as const } : {}),
+  };
 }
 
 /**
@@ -566,14 +845,15 @@ export function writeComposeDraft(f: ComposeFields, scope: StorageScope): void {
    * every visit to Compose leave a stored buffer behind. `body` is the editor's plain rendering and is `""` for that
    * document, which is why it is the field that decides. Same rule as `isRichEmpty`.
    */
-  if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === "") {
-    durableRemove(composeDraftKey(scope), "compose.draft");
+  if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === ""
+    && !hasDraftVersionWords(f.draftVersions) && f.forwardSources === undefined) {
+    removeComposeBuffer(scope);
     return;
   }
-  // STRIP THE ATTACHMENTS' BYTES. They are held in memory only (see `ComposeFields.attachments`):
-  // a photo's worth of base64 would blow a storage quota, and a restored buffer must not claim a
-  // paperclip pointing at bytes it no longer holds. Everything textual is persisted as before.
-  const { attachments: _drop, ...persisted } = f;
+  // Original forwarded files can be read again from their saved references. Picked files need a warning.
+  const { attachments: _drop, missingAttachmentNames: _names, ...words } = f;
+  const names = missingComposeFiles(f);
+  const persisted = names.length > 0 ? { ...words, missingAttachmentNames: names } : words;
   // `locked`: written while this page holds its composer, so a crash leaves a unit it may adopt.
   const locked = composerLocked ? { ...persisted, locked: true } : persisted;
   const holds = rowHoldsOf(composeDraftKey(scope));
@@ -607,12 +887,10 @@ export function readComposeCreates(owner: StorageScope): string[] {
 export function writeComposeCreates(keys: readonly string[], owner: StorageScope): void {
   const key = composeDraftKey(owner);
   createsMem.set(key, [...keys]);
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return;
+  updateComposeBuffer(owner, (raw) => {
     const { creates: _was, ...rest } = JSON.parse(raw) as Record<string, unknown>;
-    durableSet(key, JSON.stringify(keys.length > 0 ? { ...rest, creates: keys } : rest), "compose.draft");
-  } catch { /* the keys stay in this page's memory */ }
+    return JSON.stringify(keys.length > 0 ? { ...rest, creates: keys } : rest);
+  });
 }
 
 /**
@@ -624,6 +902,8 @@ export function writeComposeCreates(keys: readonly string[], owner: StorageScope
 export interface ComposeRowHolds {
   row: string;
   sig: string;
+  /** The form's From choice when this revision was opened or saved, including the default choice. */
+  fromMailboxId?: string | null;
   /** A later save the outbox took for the row, not yet seen to land. */
   pending?: string;
   /** The row was deleted elsewhere while `pending` was unknown: those words are not saved again. */
@@ -645,6 +925,7 @@ function rowHoldsOf(key: string): ComposeRowHolds | null {
     if (typeof h?.row === "string" && h.row !== "" && typeof h.sig === "string") {
       found = {
         row: h.row, sig: h.sig,
+        ...(h.fromMailboxId === null || typeof h.fromMailboxId === "string" ? { fromMailboxId: h.fromMailboxId } : {}),
         ...(typeof h.pending === "string" ? { pending: h.pending } : {}),
         ...(h.gone === true ? { gone: true } : {}),
         ...(typeof h.rev === "string" && h.rev !== "" ? { rev: h.rev } : {}),
@@ -664,11 +945,7 @@ export function readComposeRowHolds(owner: StorageScope): ComposeRowHolds | null
 export function markComposeRowHolds(holds: ComposeRowHolds, owner: StorageScope): void {
   const key = composeDraftKey(owner);
   rowHolds.set(key, holds);
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return;
-    durableSet(key, JSON.stringify({ ...(JSON.parse(raw) as Record<string, unknown>), holds }), "compose.draft");
-  } catch { /* the marker stays in this page's memory */ }
+  updateComposeBuffer(owner, (raw) => JSON.stringify({ ...(JSON.parse(raw) as Record<string, unknown>), holds }));
 }
 
 /**
@@ -705,6 +982,7 @@ export function composeSessionKey(owner: StorageScope): string {
 
 export function composeSessionId(owner: StorageScope): string | null {
   adoptHandoff(owner);
+  if (detachedUnits.has(scopeSuffix(owner))) return detachedUnit(owner)?.[0] ?? null;
   try {
     const held = window.localStorage.getItem(composeSessionKey(owner));
     if (held !== null && held.length > 0) return held;
@@ -727,6 +1005,7 @@ export function composeSessionId(owner: StorageScope): string | null {
  */
 export function readComposeSession(owner: StorageScope): string | null {
   adoptHandoff(owner);
+  if (detachedUnits.has(scopeSuffix(owner))) return detachedUnit(owner)?.[0] ?? null;
   // The jar's own door: a read it refuses answers `null`.
   const held = localStorageDoor("compose.session").get(composeSessionKey(owner));
   return held !== null && held.length > 0 ? held : null;
@@ -784,6 +1063,7 @@ export function forgetComposeRows(): void {
 
 export function readComposeRow(owner: StorageScope): string | null {
   adoptHandoff(owner);
+  if (detachedUnits.has(scopeSuffix(owner))) return detachedUnit(owner)?.[1] ?? null;
   try {
     const held = window.localStorage.getItem(composeRowKey(owner));
     return held !== null && held.length > 0 ? held : null;
@@ -796,6 +1076,7 @@ export function writeComposeRow(id: string | null, owner: StorageScope): void {
   const key = composeRowKey(owner);
   if (id === null) composeRowInMemory.delete(key);
   else composeRowInMemory.set(key, id);
+  if (updateDetachedUnit(owner, (unit) => { unit[1] = id; })) return;
   // The row stays as durable as the tab through `composeRowInMemory` above, which is why a
   // refusal is survivable here at all; it is no longer silent about being a tab's memory.
   if (id === null) durableRemove(key, "compose.row");
@@ -806,13 +1087,14 @@ export function clearComposeDraft(owner: StorageScope): void {
   // FIRST, because the remembered row must not survive a clear of the message it names.
   composeRowInMemory.delete(composeRowKey(owner));
   createsMem.delete(composeDraftKey(owner));
+  rowHolds.delete(composeDraftKey(owner));
   /*
    * FOUR INDEPENDENT REMOVALS, not one try block. Under a shared `try` the first refusal skipped
    * every line below it, so a quota that rejected the buffer's removal left the session id and
    * the row behind — the identity of a message this call has just declared over. Each door
    * answers for itself now, exactly as the sign-out sweep's per-key catch does.
    */
-  durableRemove(composeDraftKey(owner), "compose.draft");
+  removeComposeBuffer(owner);
   // The session id goes with the buffer it names: the message-in-progress is over, so the next
   // press is a new message and must not inherit this one's identity.
   durableRemove(composeSessionKey(owner), "compose.session");
@@ -846,6 +1128,179 @@ export interface ComposeHeld {
 }
 
 /**
+ * The saved shape, as one string, so "has anything changed" is one comparison rather than five
+ * that can be forgotten one at a time. It covers the TEXT the mutation carries; the sending
+ * mailbox is tracked beside it (`savedMailbox` in the hook) rather than in here, because the
+ * two have different sources — the text is the form's, the mailbox is the RESOLUTION's
+ * (`resolveComposeFrom`), and folding the resolution into a signature of the form would make
+ * "has the form changed" depend on an argument the form does not hold.
+ */
+export function signatureOf(f: ComposeFields): string {
+  return JSON.stringify([
+    f.to, f.cc ?? "", f.bcc ?? "", f.subject, f.body, f.html ?? "", f.forwardOf ?? "",
+    // The kept files only when there is a list, so every older buffer keeps its signature.
+    ...(f.forwardOf && f.forwardParts ? [[...f.forwardParts].sort()] : []),
+    ...(f.forwardSources !== undefined ? [forwardSourceShape(f.forwardSources)] : []),
+  ]);
+}
+
+/** The forwarding fields covered by existing compose storage markers. */
+export function forwardSourceShape(sources: readonly ForwardSource[] | undefined): string[][] | undefined {
+  return sources?.map(({ id, filename, sha256 }) => [id, filename, sha256 ?? ""]);
+}
+
+/** {@link signatureOf} hashed, for the marker the buffer carries — the body is not stored twice. */
+export function holdsSig(f: ComposeFields): string {
+  return sigOf(signatureOf(f));
+}
+
+/** A string hashed (cyrb53). */
+export function sigOf(s: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+export function sameRecipientList(before: readonly EmailAddress[], after: readonly EmailAddress[]): boolean {
+  return before.length === after.length && before.every((entry, i) =>
+    entry.address === after[i]?.address && (entry.name ?? null) === (after[i]?.name ?? null));
+}
+
+export type ComposeSavedRevision = Pick<EngineDraft, "id" | "contentRevision" | "mailboxId">;
+
+/** Recover the From proof of a saved copy when only its revision survived. */
+function matchesDraftRevision(fields: ComposeFields, mailboxId: string, revision: string): boolean {
+  if (!/^[0-9a-f]{64}$/.test(revision)) return false;
+  const to = parseRecipients(fields.to);
+  const cc = parseRecipients(fields.cc);
+  const bcc = parseRecipients(fields.bcc);
+  if (to.invalid.length || cc.invalid.length || bcc.invalid.length) return false;
+  return sha256Hex(draftRevisionInput({
+    mailboxId, inReplyToMessageId: null, subject: fields.subject, body: fields.body, html: fields.html || null,
+    to: to.addresses, cc: cc.addresses, bcc: bcc.addresses,
+    forwardOfMessageId: fields.forwardOf, forwardParts: fields.forwardParts,
+    forwardSources: forwardSourcesForSave(fields.forwardSources),
+  })) === revision;
+}
+
+function matchesSavedMarker(
+  fields: ComposeFields, marker: Partial<ComposeRowHolds> | null | undefined,
+  row: Pick<ComposeSavedRevision, "id" | "contentRevision"> & { mailboxId?: string },
+): boolean {
+  return !!row.contentRevision && marker?.row === row.id && marker.rev === row.contentRevision
+    && marker.pending === undefined && marker.gone !== true && marker.sig === holdsSig(fields)
+    && fields.sig?.kind !== "edited"
+    && (marker.fromMailboxId !== undefined ? marker.fromMailboxId === fields.fromMailboxId
+      : fields.fromMailboxId === null || fields.fromMailboxId === row.mailboxId
+        || matchesDraftRevision(fields, fields.fromMailboxId, row.contentRevision));
+}
+
+export function composeWordsFingerprint(fields: ComposeFields): string | null {
+  if (!fields.forwardSources?.length && [fields.to, fields.subject, fields.body].every((text) => text.trim() === "")) return null;
+  const fingerprint = sendFingerprint(composePlan(fields, fields.fromMailboxId).mutation as unknown as MailSend);
+  return fields.forwardSources?.length
+    ? fnv1a(JSON.stringify([fingerprint, draftForwardSourceTuples(fields.forwardSources)]))
+    : fingerprint;
+}
+
+/** Check both the recorded revision and the words still present in this recovery copy. */
+export function composeBufferMatchesRevision(
+  fields: ComposeFields, marker: Partial<ComposeRowHolds> | null | undefined, row: EngineDraft,
+): boolean {
+  if (!matchesSavedMarker(fields, marker, row)) return false;
+  if (fields.subject !== row.subject || fields.body !== row.body || (fields.html || null) !== (row.html ?? null)
+    || (fields.fromMailboxId !== null && fields.fromMailboxId !== row.mailboxId)
+    || (fields.forwardOf ?? null) !== (row.forwardOfMessageId ?? null)
+    || JSON.stringify(fields.forwardParts ?? null) !== JSON.stringify(row.forwardParts ?? null)
+    || JSON.stringify(draftForwardSourceTuples(fields.forwardSources ?? []))
+      !== JSON.stringify(draftForwardSourceTuples(row.forwardSources ?? []))) return false;
+  return (["to", "cc", "bcc"] as const).every((line) => {
+    const parsed = parseRecipients(fields[line]);
+    return parsed.invalid.length === 0 && sameRecipientList(parsed.addresses, row[line]);
+  });
+}
+
+/** A completed send or discard spends the recovery units named by its durable identity. */
+export function clearEndedComposeCopies(held: ComposeHeld, owner: StorageScope, saved?: ComposeSavedRevision | EngineDraft): void {
+  if (held.session === null && saved === undefined) return;
+  reconcileComposeCopies(owner, () => ({ session: held.session, saved }));
+}
+
+/** A confirmed ending can spend the saved revision even when a different composer made the copy. */
+export function clearSavedComposeCopies(row: ComposeSavedRevision | EngineDraft | undefined, owner: StorageScope): void {
+  if (row?.contentRevision) clearEndedComposeCopies({ draftId: null, session: null }, owner, row);
+}
+
+type ObservedDraftEnd = { mailboxId?: string; fingerprint?: string };
+type ComposeEnd = { session?: string | null; saved?: ComposeSavedRevision | EngineDraft; observed?: ObservedDraftEnd };
+
+/** An authoritative row ending spends its confirmed saved versions and the exact words pressed Send on. */
+export function clearKnownComposeCopies(
+  owner: StorageScope,
+  ended: (row: string, session: string | null) => ObservedDraftEnd | undefined,
+  includeCurrent = false,
+): void {
+  reconcileComposeCopies(owner, (held) => {
+    const observed = held.draftId === null ? undefined : ended(held.draftId, held.session);
+    return observed === undefined ? undefined : { observed };
+  }, includeCurrent);
+}
+
+function reconcileComposeCopies(owner: StorageScope, ended: (held: ComposeHeld) => ComposeEnd | undefined, includeCurrent = false): void {
+  clearComposeCopies(owner, ([session, draftId, raw]) => {
+    const ending = ended({ session: session ?? null, draftId: draftId ?? null });
+    if (ending === undefined) return false;
+    if (ending.session && session === ending.session) return true;
+    if (!draftId || (ending.observed === undefined && ending.saved?.id !== draftId)) return false;
+    if (!raw) return ending.observed !== undefined;
+    try {
+      const marker = (JSON.parse(raw) as { holds?: Partial<ComposeRowHolds> }).holds;
+      const fields = decodeComposeDraft(raw);
+      const observed = ending.observed;
+      if (observed !== undefined && !worthSaving(fields)) return true;
+      if (observed?.fingerprint !== undefined && observed.fingerprint === composeWordsFingerprint(fields)) return true;
+      const saved = ending.saved;
+      if (saved && "body" in saved) return composeBufferMatchesRevision(fields, marker, saved);
+      return matchesSavedMarker(fields, marker, saved ?? { id: draftId, mailboxId: observed?.mailboxId, contentRevision: marker?.rev });
+    } catch { return false; }
+  }, includeCurrent);
+}
+
+function clearComposeCopies(owner: StorageScope, matches: (unit: readonly (string | null)[]) => boolean, includeCurrent = false): void {
+  const scope = scopeSuffix(owner);
+  const prefix = handoffPrefix(scope);
+  const own = composerId();
+  const scratch = `${COMPOSE_DRAFT_PREFIX}${scope}.`;
+  const rows = `${COMPOSE_ROW_PREFIX}${scope}.`;
+  try {
+    const sweep = (keys: readonly string[]): void => {
+      const unit = readUnit(keys);
+      if (matches(unit) && readUnit(keys).every((value, index) => value === unit[index])) removeUnit(keys, unit);
+    };
+    for (const key of Object.keys(window.localStorage)) {
+      if (key.startsWith(prefix)) {
+        const raw = handoffs.get(key);
+        const unit = decodeUnit(raw);
+        if (unit !== null && matches(unit) && handoffs.get(key) === raw) handoffs.remove(key);
+      } else {
+        const unitPrefix = key.startsWith(scratch) ? scratch : key.startsWith(rows) ? rows : undefined;
+        if (unitPrefix === undefined) continue;
+        const id = key.slice(unitPrefix.length);
+        if ((id !== own || includeCurrent) && /^[A-Za-z0-9_-]{1,64}$/.test(id)) sweep(unitKeys(`${scope}.${id}`));
+      }
+    }
+    sweep(unitKeys(scope));
+  } catch { /* a refused jar leaves the units for the next recovery */ }
+}
+
+/**
  * IS THE COMPOSE SURFACE STILL HOLDING THE MESSAGE THIS OPERATION WAS FOR? — the whole of the
  * one-composer-per-draft rule. A settlement that lands while the person is writing something
  * else must act on the message it was for or on nothing; it used to act on whatever was open,
@@ -866,7 +1321,7 @@ export function composeStillHolds(
   // has said nothing about which message it is for, which is not evidence that it is a
   // different one, and refusing on it would leave a delivered message in the composer.
   if (held.session === null) return true;
-  return composeSessionId(owner) === held.session;
+  return readComposeSession(owner) === held.session;
 }
 
 /**
@@ -1038,6 +1493,7 @@ export function composePlan(
       ...(fields.forwardOf ? { forwardOf: fields.forwardOf } : {}),
       // The kept files ride only a forward that has a list: absent, the server sends every one.
       ...(fields.forwardOf && fields.forwardParts ? { forwardParts: [...fields.forwardParts] } : {}),
+      ...(fields.forwardSources !== undefined ? { forwardSources: forwardSourcesForSave(fields.forwardSources) } : {}),
       ...(mailboxId ? { mailboxId } : {}),
       ...(draftId ? { draftId } : {}),
       threadId: null,

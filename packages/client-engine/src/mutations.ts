@@ -943,6 +943,7 @@ function effectsOf(reader: EntityReader, m: EngineMutation, ctx: EffectContext):
         inReplyToMessageId: parent?.id ?? null,
         forwardOfMessageId: m.forwardOf ?? null,
         ...(m.forwardOf && m.forwardParts ? { forwardParts: m.forwardParts } : {}),
+        ...(m.forwardSources !== undefined ? { forwardSources: m.forwardSources } : {}),
         subject: m.subject ?? (parent ? replySubject(parent.subject) : ""),
         body: m.body,
         to,
@@ -988,6 +989,7 @@ function effectsOf(reader: EntityReader, m: EngineMutation, ctx: EffectContext):
           inReplyToMessageId: m.inReplyToMessageId ?? null,
           forwardOfMessageId: m.forwardOfMessageId ?? null,
           ...(m.forwardOfMessageId && m.forwardParts ? { forwardParts: m.forwardParts } : {}),
+          ...(m.forwardSources !== undefined ? { forwardSources: m.forwardSources } : {}),
           subject: m.subject,
           body: m.body,
           to: m.to,
@@ -1022,6 +1024,7 @@ function effectsOf(reader: EntityReader, m: EngineMutation, ctx: EffectContext):
           ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
           ...(m.forwardOfMessageId !== undefined ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
           ...(m.forwardParts !== undefined ? { forwardParts: m.forwardParts } : {}),
+          ...(m.forwardSources !== undefined ? { forwardSources: m.forwardSources } : {}),
           // The markup the save states, so the next save reads it while this one is in flight.
           ...(m.html !== undefined ? { html: m.html } : {}),
           updatedAt: iso,

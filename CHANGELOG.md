@@ -21,6 +21,38 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.12] — 2026-11-28
+
+### Writable CalDAV calendars stay usable while a connection retries
+
+Calendar shows a CalDAV connection problem separately from viewing permissions and identifies subscriptions as view only. Owned and shared CalDAV calendars use the server's write permissions, and guestless repeating events can be edited on write-shared calendars. Moves from a write-shared CalDAV calendar use the server's native move when supported.
+
+### Write starts a fresh message and sent drafts stay gone
+
+On web and desktop, Write opens an empty message and keeps any saved draft in Drafts. Closing or reloading a tab keeps unsent words with their original draft. Sending, scheduling, or discarding a draft clears its recovery copy.
+
+### Compose offers Restore only for drafts with unsent content
+
+Empty drafts no longer leave a Restore offer in Compose after you close the tab.
+
+### Forward several messages together
+
+- Forward selected messages together as removable message attachments. Use Edit next to a collapsed reply or forward quote to change its words, or Reset to restore the original.
+
+### Clearer warnings in Mailboxes and Screener
+
+Mailbox settings show the permanent erasure warning when you choose to erase ohmail's copy. If you choose to keep the copy, the dialog says it stays.
+
+The Screener sender card says “Unsubscribe if offered” when a one-click unsubscribe is conditional.
+
+### Quicker navigation between phone mail lists
+
+The bottom bar responds when you touch it on Android and iOS. Ohbox and Screener use the queue already loaded by the mail sync when you switch between them.
+
+### Unfinished letters keep both versions after a reload
+
+Switch between your original text and the AI draft after reloading or reopening a saved letter from Drafts on the same device. The composer names any files you need to attach again and shows how to keep the draft when you start a new message.
+
 ## [2.0.11] — 2026-11-27
 
 ### Calendar date picking and event drag previews
@@ -19528,7 +19560,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.11...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.12...HEAD
+[2.0.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.12
 [2.0.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.11
 [2.0.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.10
 [2.0.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.9

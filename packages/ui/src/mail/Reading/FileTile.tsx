@@ -6,6 +6,7 @@ export interface FileTileProps {
   /** What it is, as a few letters: "PDF", "JPG". */
   kind: string;
   name: string;
+  wrapName?: boolean;
   /** How much it weighs, as it is printed. */
   size?: string;
   /** A picture's small look at itself, in place of the letters: the image the app has of it. */
@@ -27,11 +28,11 @@ export interface FileTileProps {
 }
 
 /** A file on a message, a draft or a waiting sender's letter. */
-export function FileTile({ kind, name, size, look, main, save, off, onMenu }: FileTileProps) {
+export function FileTile({ kind, name, wrapName, size, look, main, save, off, onMenu }: FileTileProps) {
   const face = (
     <>
       {look ? <i className="oh-file-kind oh-file-look">{look}</i> : <i className="oh-file-kind">{kind}</i>}
-      <span className="oh-file-name">
+      <span className="oh-file-name" data-wrap={wrapName ? "" : undefined}>
         <b className="oh-file-title">{name}</b>
         {size ? <span className="oh-file-size">{size}</span> : null}
       </span>

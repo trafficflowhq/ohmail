@@ -3521,10 +3521,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const pair = await boundedCollect(this.client.fetch(`${low}:${high}`, { uid: true }), {
       max: 2, bound: "enumerate_uids", deadline: this.readDeadline(), folder,
       onAbandon: (_notify, because) => this.retireConnection(because),
-      map: (row) => ({ seq: row.seq, uid: row.uid }),
+      map: (row) => askedRow(row, ANY_UID, "uid") ? { seq: row.seq, uid: row.uid } : null,
     });
-    const before = pair.find((row) => row.seq === low)?.uid;
-    const after = pair.find((row) => row.seq === high)?.uid;
+    const before = pair.find((row) => row?.seq === low)?.uid;
+    const after = pair.find((row) => row?.seq === high)?.uid;
     return before !== undefined && Number.isSafeInteger(before) && before > 0 && before <= uid
       && after !== undefined && Number.isSafeInteger(after) && after > uid ? after : undefined;
   }
@@ -3532,12 +3532,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private async enumerateUidWindow(from: number, through: number, folder: string): Promise<number[]> {
     if (through < from) return [];
     let outOfRange = false;
+    const asked = { has: (uid: number) => Number.isSafeInteger(uid) && uid >= from && uid <= through };
     const rows = await boundedCollect(this.client.fetch(`${from}:${through}`, { uid: true }, { uid: true }), {
       max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids",
       deadline: this.readDeadline(), folder,
       onAbandon: (_notify, because) => this.retireConnection(because),
       map: (row) => {
-        if (!Number.isSafeInteger(row.uid) || row.uid < from || row.uid > through) outOfRange = true;
+        if (!askedRow(row, asked, "uid")) outOfRange = true;
         return row.uid;
       },
     });

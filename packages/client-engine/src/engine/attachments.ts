@@ -48,6 +48,11 @@ export abstract class EngineAttachments extends EngineHydration {
     }
   }
 
+  fetchForwardSource(messageId: string, maxBytes: number): Promise<Blob> {
+    return this.adapter.fetchForwardSource?.(messageId, maxBytes)
+      ?? Promise.reject(new Error("Message source unavailable"));
+  }
+
   attachmentsAvailable(): boolean {
     return typeof this.adapter.listAttachments === "function"
       && typeof this.adapter.fetchAttachment === "function";

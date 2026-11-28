@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -148,16 +149,24 @@ describe("the confirmation offers the erase, and the removal that keeps the copy
     await click(buttonIn(rowOf(el, A)!, copy.remove!));
     expect((el.querySelector("#mb-remove-keep") as HTMLInputElement).checked).toBe(true);
     expect(el.querySelector("#mb-erase-confirm"), "the address is asked before erase is chosen").toBeNull();
-    const said = () => el.querySelector('[role="alertdialog"]')!.textContent ?? "";
+    const dialog = within(el).getByRole("alertdialog");
+    const said = () => dialog.textContent ?? "";
+    const keep = within(dialog).getByRole("radio", { name: copy.removeKeepChoice });
+    const erase = within(dialog).getByRole("radio", { name: copy.removeEraseChoice });
     expect(said()).toContain(copy.removeCopyStays);
-    expect(said()).toContain(copy.removeEraseWhat);
+    expect(said()).not.toContain(copy.removeEraseWhat);
 
-    await click(el.querySelector("#mb-remove-erase")!);
+    await click(erase);
     const field = el.querySelector("#mb-erase-confirm") as HTMLInputElement;
     expect(field.value, "the pane filled in the address it asks the person to type").toBe("");
+    expect(said()).toContain(copy.removeEraseWhat);
     expect(said()).toContain(copy.removeCopyErased);
     expect(said()).not.toContain(copy.removeCopyStays);
     expect(buttonIn(el, copy.removeEraseConfirm!).disabled, "an empty address may not proceed").toBe(true);
+
+    await click(keep);
+    expect(said()).toContain(copy.removeCopyStays);
+    expect(said()).not.toContain(copy.removeEraseWhat);
   });
 
   it("POSITIVE CONTROL: the default removal calls the keep door and never the erase", async () => {

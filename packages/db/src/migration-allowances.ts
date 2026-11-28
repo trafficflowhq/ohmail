@@ -155,6 +155,15 @@ export const MIGRATION_ALLOWANCES: readonly MigrationAllowance[] = [
     shipped: "6868a3224192c76c19c1a506ff77cfd02df729023e0073494663fc4610a7287d",
     reason: REPLAY_GUARD_REASON,
   },
+  {
+    journal: "mail",
+    tag: "0227_calendar_session_scope",
+    recorded: "ffc8021939a5e7e060a54661bb7ff91d55fe02ee61a59101e19e00b7a0d5df0d",
+    shipped: "0cb4fd9cfc9498aac08f9456660af8d55cc006acf5304a00bc08e6ee1e31906c",
+    reason:
+      "the same session scope constraint is installed without a scan, then validated after the " +
+      "mail journal commits; previously applied versions already have the identical validated check",
+  },
 ] as const;
 
 /** The allowance admitting exactly this drift, or null. Every field must match. */

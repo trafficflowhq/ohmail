@@ -3,8 +3,8 @@
  * subject at the head, the shell's editor as its text, what happened to it over its lines, and its verbs at the foot.
  * Every word, person and file lives in the composition; this view holds the open lines and nothing of the letter.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Composer, Sheet, type RecipientsProps } from "@ohmail/ui/mail";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Composer, SendStatus, Sheet, type RecipientsProps } from "@ohmail/ui/mail";
 import { COMPOSE_SEND_KEY, sendRefusal } from "@ohmail/app-logic/writing/mail-send";
 import { useFocusFollows } from "@ohmail/app-logic/keys";
 import type { PaneProps } from "../frame/contract.js";
@@ -48,7 +48,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
   const [laterAnchor, setLaterAnchor] = useState<HTMLElement | null>(null);
   const laterOpen = laterAnchor !== null;
   const { mayGo, long, empty, went, pressable, signature, then } = useLetterSend(
-    files.model.attaching.length > 0,
+    files.model.attaching.length > 0 || Boolean(w.composeForwardSelection),
   );
   const [handle, setHandle] = useState<EditorHandle | null>(null);
   const marks = useMarks(handle, !locked, plan.pointer !== "coarse");
@@ -56,8 +56,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
   const draft = useLetterDraftOffer();
   const drafting = draft?.drafting === true;
   const previewing = draft?.preview !== undefined;
-  const placeholder = draft === null ? t("placeholder") : t("draft.placeholder");
-  /* With Send later open, Mod+Enter is the card's: it schedules, it never sends now. */
+  const placeholder = draft?.control ? t("draft.placeholder") : t("placeholder");
   useLetterKeys(
     keysHere,
     pressable && !previewing && !laterOpen,
@@ -112,12 +111,12 @@ export function Letter({ keysHere, plan }: PaneProps) {
           forwarded={forwarded.forwarded}
           files={files.files}
           note={letterNote(
-            { wait: w.composeWaitNote, send: forkSaid(w) ? null : lines.foot },
+            { wait: w.composeWaitNote, send: letterSendNote(w, tc, lines.foot) },
             saving,
             long.line ?? empty.line,
             draft?.notice ?? null,
             forwarded.refusal,
-            files.note ?? notKept,
+            w.composeForwardSelection?.note ?? files.note ?? notKept,
             went,
           )}
           onFiles={files.onFiles}
@@ -127,7 +126,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
             attach: files.attach,
             format: marks.format,
             emoji: emoji.control,
-            ...(draft === null ? {} : { draft: draft.control }),
+            ...(draft?.control ? { draft: draft.control } : {}),
           }}
           placeholder={unwritten({ text: w.compose.body, html: w.compose.html }) ? placeholder : undefined}
         >
@@ -154,6 +153,17 @@ export function Letter({ keysHere, plan }: PaneProps) {
       />
     </>
   );
+}
+
+function letterSendNote(w: Writing, t: ReturnType<typeof useText>, foot: ReactNode): ReactNode {
+  if (w.restoreClosedCompose) {
+    return (
+      <SendStatus place="foot" acts={[{ label: t("restoreDraft"), onPress: w.restoreClosedCompose }]}>
+        {t("recoveredFromClosedTab")}
+      </SendStatus>
+    );
+  }
+  return forkSaid(w) ? null : foot;
 }
 
 function useComposeSending({ showSend, composeSend }: Writing): boolean {
@@ -225,6 +235,7 @@ function useLetterFiles(locked: boolean) {
     cap: letterCap(w.composeFrom.maxMessageBytes, beside.surface),
     locked,
     forward: Boolean(compose.forwardOf),
+    messageSelection: w.composeForwardSelection,
     letterEpochNow: w.composeEpochNow,
   });
   const forwarded = useForwarded(w.composeForwardFiles, locked);
@@ -299,11 +310,13 @@ function useLetterSaveLines(ceiling: boolean, hasFrom: boolean) {
     elsewhere: elsewhereForSave(w.composeElsewhere),
   };
   const saved = tc("draftNote");
+  const filenames = w.compose.missingAttachmentNames?.join(", ");
   return {
     saving: saveLines(state, {
       notSaved: tc("draftNotSaved"),
       resumed: tc("resumedNote"),
       saved: hasFrom ? undefined : saved,
+      reattach: filenames ? tc("reattachAfterRecovery", { filenames }) : undefined,
     }),
     reassurance: hasFrom && canReassure(state) ? saved : undefined,
   };

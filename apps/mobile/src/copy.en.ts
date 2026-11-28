@@ -19,6 +19,7 @@ export const PAIRING_DEVICE_NAMES = { "mobile-ios": "iPhone", "mobile-android": 
 
 /** Hoisted for {@link PIN_CHANGED}'s reason: `bootMigratingOf` counts under this sentence. */
 const BOOT_MIGRATING = "Updating the mail store on this phone…";
+const formatCount = new Intl.NumberFormat("en").format;
 
 /**
  * Hoisted out of the table because {@link TABLE.connectSyncFailed} interpolates it, and a member
@@ -1582,10 +1583,10 @@ const TABLE = {
   searchAll: "All",
   searchFewer: "Fewer",
   searchPeople: "People",
-  searchPeopleFrom: (count: number) => `${count.toLocaleString("en")} from`,
-  searchPeopleTo: (count: number) => `${count.toLocaleString("en")} to`,
-  searchPeopleBoth: (from: number, to: number) => `${from.toLocaleString("en")} from · ${to.toLocaleString("en")} to`,
-  searchMailboxTotal: (count: number) => count === 1 ? "1 message" : `${count.toLocaleString("en")} messages`,
+  searchPeopleFrom: (count: number) => `${formatCount(count)} from`,
+  searchPeopleTo: (count: number) => `${formatCount(count)} to`,
+  searchPeopleBoth: (from: number, to: number) => `${formatCount(from)} from · ${formatCount(to)} to`,
+  searchMailboxTotal: (count: number) => count === 1 ? "1 message" : `${formatCount(count)} messages`,
   searchResults: "Results",
   searchSortedBy: (order: string) => `Sorted by ${order}`,
   searchNameOrAddress: "Name or address",
@@ -1688,7 +1689,7 @@ const TABLE = {
   scheduledCount: (n: number) => `Scheduled. ${n}`,
   draftListCount: (n: number) => `Drafts. ${n}`,
   streamYouAt: (address: string) => `you (${address})`,
-  streamFreshCount: (count: string) => `${count} new`,
+  streamFreshCount: (count: number) => `${formatCount(count)} new`,
   screenApplyShort: (n: number) => `Apply ${n}`,
   screenHeldShort: (n: number) => `${n} held`,
   searchResultsHead: (n: number) => (n === 1 ? "1 result" : `${n} results`),
