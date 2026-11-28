@@ -14,7 +14,9 @@ import { draftForwardSourceTuples, draftRevisionInput } from "@trafficflow/core/
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet, localStorageDoor, onLocalStorageChanged } from "../storage/durable.js";
 import { isDemoOwned, retiredSignOutStorageHeld } from "../storage/storage-owner.js";
 import { scopeSuffix, type StorageScope } from "../storage/scope.js";
-import { forwardSourcesForSave, sourcesFromDraft, type ForwardSource } from "./forward-selection.js";
+import { forwardSourceOf, forwardSourcesForSave, sourcesFromDraft, type ForwardSource } from "./forward-selection.js";
+import type { DraftVersions } from "./draft-reply-control.js";
+import type { RichValue } from "./rich-text.js";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {
@@ -54,6 +56,8 @@ export interface ComposeFields {
   html: string;
   /** Whether the body came from the drafter. Absent in older buffers. */
   aiDraft?: boolean;
+  /** The letter's AI draft and original text, kept in its local recovery buffer. */
+  draftVersions?: DraftVersions;
   /**
    * The sender the user picked, as a mailbox id; `null` = they did not pick one. A field on the
    * FORM rather than a derivation, because a default re-derived on every render would silently
@@ -67,14 +71,14 @@ export interface ComposeFields {
   /**
    * Files to send with this message — held in memory only, never written to `localStorage`.
    * Attachments carry base64 bytes and a photo would blow past a quota Safari private mode refuses
-   * outright, so `writeComposeDraft` strips this field and `readComposeDraft` never restores it: the
-   * buffer's job is to survive navigation and a reload of the TEXT, and a file picked before a
-   * reload is re-picked — honest, rather than a phantom paperclip pointing at bytes that are gone.
+   * outright, so `writeComposeDraft` keeps only the names of picked files for the recovery warning.
    * Not part of the autosaved `drafts` row either — nothing on the account stores attachment bytes
    * (§13.2/§14) — so `signatureOf`/`worthSaving` ignore it. Optional, so an old buffer reads back
    * as a draft with no files.
    */
   attachments?: ComposeAttachment[];
+  /** Picked files whose bytes were lost when the draft was restored. */
+  missingAttachmentNames?: readonly string[];
   /** The forwarded originals still on this draft, in message-date order. Their bytes stay in memory. */
   forwardSources?: ForwardSource[];
   /**
@@ -234,7 +238,7 @@ function holdsMessage(unit: readonly (string | null)[]): boolean {
   return unit[1] !== null || unit[2] !== null;
 }
 
-/** Recipients, subject, body or forwarded originals make a compose worth keeping. */
+/** Recipients, subject, either version of the body or forwarded originals make a compose worth keeping. */
 export function worthSaving(f: ComposeFields): boolean {
   return (
     f.to.trim() !== "" ||
@@ -242,8 +246,13 @@ export function worthSaving(f: ComposeFields): boolean {
     (f.bcc ?? "").trim() !== "" ||
     f.subject.trim() !== "" ||
     f.body.trim() !== "" ||
+    hasDraftVersionWords(f.draftVersions) ||
     (f.forwardSources?.length ?? 0) > 0
   );
+}
+
+function hasDraftVersionWords(versions: DraftVersions | undefined): boolean {
+  return versions !== undefined && (versions.yours.text.trim() !== "" || versions.draft.text.trim() !== "");
 }
 
 function hasRecoveryContent(raw: string | null | undefined): boolean {
@@ -738,6 +747,38 @@ export function readComposeDraft(scope: StorageScope): ComposeFields {
   }
 }
 
+function readDraftVersion(value: Partial<RichValue> | undefined): RichValue | undefined {
+  if (typeof value?.text !== "string" || typeof value.html !== "string") return undefined;
+  return { text: value.text, html: value.html, ...(typeof value.aiDraft === "boolean" ? { aiDraft: value.aiDraft } : {}) };
+}
+
+function readDraftVersions(value: Partial<DraftVersions> | undefined): DraftVersions | undefined {
+  if (value?.shown !== "yours" && value?.shown !== "draft") return undefined;
+  const yours = readDraftVersion(value.yours);
+  const draft = readDraftVersion(value.draft);
+  return yours && draft ? { yours, draft, shown: value.shown } : undefined;
+}
+
+export type ComposeDraftRecovery = Pick<ComposeFields, "draftVersions" | "missingAttachmentNames" | "aiDraft">;
+
+export function readComposeDraftRecovery(value: ComposeDraftRecovery | undefined): ComposeDraftRecovery | undefined {
+  const draftVersions = readDraftVersions(value?.draftVersions);
+  const names = Array.isArray(value?.missingAttachmentNames)
+    ? value.missingAttachmentNames.filter((name) => typeof name === "string" && name !== "")
+    : [];
+  if (!draftVersions && names.length === 0) return undefined;
+  return {
+    ...(draftVersions ? { draftVersions, aiDraft: typeof value?.aiDraft === "boolean" ? value.aiDraft : undefined } : {}),
+    ...(names.length ? { missingAttachmentNames: names } : {}),
+  };
+}
+
+/** Picked file bytes stay in memory. Forwarded originals can be read again from their references. */
+export function missingComposeFiles(fields: ComposeFields): string[] {
+  const picked = fields.attachments?.filter((file) => forwardSourceOf(file) === undefined) ?? [];
+  return [...(fields.missingAttachmentNames ?? []), ...picked.map((file) => file.filename)];
+}
+
 function decodeComposeDraft(raw: string | null | undefined): ComposeFields {
   if (!raw) return EMPTY_COMPOSE;
   const parsed = JSON.parse(raw) as Partial<ComposeFields>;
@@ -754,6 +795,7 @@ function decodeComposeDraft(raw: string | null | undefined): ComposeFields {
     // by the plain textarea restore as a plain draft rather than as an empty one.
     html: typeof parsed.html === "string" ? parsed.html : "",
     ...(typeof parsed.aiDraft === "boolean" ? { aiDraft: parsed.aiDraft } : {}),
+    ...readComposeDraftRecovery(parsed),
     // Guarded field-wise, so a buffer written before this field existed reads back as "no
     // pick" and one
     // written after it is still readable by a bundle that predates the field. Nothing here
@@ -761,8 +803,6 @@ function decodeComposeDraft(raw: string | null | undefined): ComposeFields {
     fromMailboxId: typeof parsed.fromMailboxId === "string" && parsed.fromMailboxId.length > 0
       ? parsed.fromMailboxId
       : null,
-    // NEVER restored — bytes are transient and are stripped on write. A restored draft starts
-    // with no files, and a file the user had picked before reloading is re-picked.
     attachments: [],
     ...(forwardSources ? { forwardSources } : {}),
     // RESTORED, because it is an id rather than bytes and losing it would turn a half-written
@@ -805,14 +845,15 @@ export function writeComposeDraft(f: ComposeFields, scope: StorageScope): void {
    * every visit to Compose leave a stored buffer behind. `body` is the editor's plain rendering and is `""` for that
    * document, which is why it is the field that decides. Same rule as `isRichEmpty`.
    */
-  if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === "" && f.forwardSources === undefined) {
+  if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === ""
+    && !hasDraftVersionWords(f.draftVersions) && f.forwardSources === undefined) {
     removeComposeBuffer(scope);
     return;
   }
-  // STRIP THE ATTACHMENTS' BYTES. They are held in memory only (see `ComposeFields.attachments`):
-  // a photo's worth of base64 would blow a storage quota, and a restored buffer must not claim a
-  // paperclip pointing at bytes it no longer holds. Everything textual is persisted as before.
-  const { attachments: _drop, ...persisted } = f;
+  // Original forwarded files can be read again from their saved references. Picked files need a warning.
+  const { attachments: _drop, missingAttachmentNames: _names, ...words } = f;
+  const names = missingComposeFiles(f);
+  const persisted = names.length > 0 ? { ...words, missingAttachmentNames: names } : words;
   // `locked`: written while this page holds its composer, so a crash leaves a unit it may adopt.
   const locked = composerLocked ? { ...persisted, locked: true } : persisted;
   const holds = rowHoldsOf(composeDraftKey(scope));

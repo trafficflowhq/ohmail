@@ -31,7 +31,12 @@ export function canReassure(s: SaveState): boolean {
 /** The lines before the ceiling's, and after it, in the order of rank. */
 export function saveLines(
   s: SaveState,
-  words: { readonly notSaved: string; readonly resumed: string; readonly saved?: string },
+  words: {
+    readonly notSaved: string;
+    readonly resumed: string;
+    readonly saved?: string;
+    readonly reattach?: string;
+  },
 ): { readonly before: readonly string[]; readonly after: readonly string[] } {
   return {
     before: s.closeRefusal === null ? [] : [s.closeRefusal],
@@ -39,6 +44,7 @@ export function saveLines(
       ...(s.saveRefused && !s.ceiling && s.elsewhere !== "untyped" ? [words.notSaved] : []),
       ...(canReassure(s) && words.saved !== undefined ? [words.saved] : []),
       ...(s.resumed && s.elsewhere === "none" ? [words.resumed] : []),
+      ...(words.reattach !== undefined ? [words.reattach] : []),
     ],
   };
 }

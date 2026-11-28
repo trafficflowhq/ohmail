@@ -48,6 +48,7 @@ import {
   composePlan,
   composeSessionId,
   EMPTY_COMPOSE,
+  missingComposeFiles,
   onComposeStorageChanged,
   parseRecipients,
   readComposeDraft,
@@ -86,6 +87,7 @@ import {
 } from "./compose-from.js";
 import type { ConsentState } from "../consent/consent-state.js";
 import { NEW_LETTER, useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply.js";
+import type { DraftVersions } from "./draft-reply-control.js";
 import { dropCopy, handleOf, landedOf, twins } from "./draft-creates.js";
 import { accountSigOf, useReplyAutosave, type ReplyDraftForm } from "./reply-autosave.js";
 import { forwardSourceOf, forwardSourcesOf, loadForwardSources, selectedMessages, selectionSubject, withForwardFiles } from "./forward-selection.js";
@@ -1061,11 +1063,13 @@ export function useShellCompose({
    * `draft-reply-wiring.test.tsx`. An empty editor takes the draft
    * directly; a non-empty one is asked, and keeps its text until answered.
    */
-  const onDraft = useStableCallback((draft: DraftedReply, messageId: string, of: "reply" | "letter") => {
-    /* A new letter's draft takes the letter's words; the person's own stay one tab away (`own`), as a reply's. */
+  const onDraft = useStableCallback((
+    draft: DraftedReply, messageId: string, of: "reply" | "letter", draftVersions: DraftVersions | undefined,
+  ) => {
+    /* The visible letter and its other version are written to the same recovery buffer. */
     if (of === "letter") {
       // `onComposeFields` is declared below; a stable callback reads it when the answer lands.
-      onComposeFields({ ...composeRef.current, body: draft.text, html: draft.html, aiDraft: draft.aiDraft });
+      onComposeFields({ ...composeRef.current, body: draft.text, html: draft.html, aiDraft: draft.aiDraft, draftVersions });
       return;
     }
     // The FORWARD dock's body is not "existing reply text": when the open editor is the
@@ -2301,6 +2305,19 @@ export function useShellCompose({
   useEffect(() => { if (!sendCarriesThis) setWaitNote(null); }, [sendCarriesThis]);
   /** The last compose press's message, for the files a letter let go of while it waits (no row stores them). */
   const lastComposePress = useRef<MailSendMutation | null>(null);
+  /** Hand the recovery details to the saved draft before replacing its active buffer. */
+  const keepDraftRecovery = useStableCallback(() => {
+    const id = autosave.rowNow();
+    if (id === null) return;
+    const { draftVersions, aiDraft } = composeRef.current;
+    const names = missingComposeFiles(composeRef.current);
+    const recovery = draftVersions || names.length > 0
+      ? { draftVersions, aiDraft, missingAttachmentNames: names.length > 0 ? names : undefined }
+      : undefined;
+    const lane = `draft:${id}`;
+    const meta = readReplyMeta(lane, scope);
+    if (recovery || meta.recovery) writeReplyMeta(lane, { ...meta, recovery }, scope);
+  });
   /** The waiting letter is let go of: its binding ends, and its files stay with its press. */
   const letGoOfWaiting = useStableCallback(() => {
     autosave.endWaiting();
@@ -2324,6 +2341,7 @@ export function useShellCompose({
     if (held.kind === "parked" && held.session !== null) {
       attachSendLockDraft(COMPOSE_SEND_KEY, [`compose:${held.session}`], outgoing, scope);
     }
+    keepDraftRecovery();
     if (sendCarriesThis) letGoOfWaiting();
     autosave.release();
     setCompose(seeded);
@@ -2439,10 +2457,9 @@ export function useShellCompose({
   useEffect(() => {
     if (!autosave.draftId || !composerReady) return;
     const { sig } = compose;
-    writeReplyMeta(
-      `draft:${autosave.draftId}`,
-      { ...(sig && sig.kind !== "following" ? { sig } : {}), forwardSources: readReplyMeta(`draft:${autosave.draftId}`, scope).forwardSources }, scope,
-    );
+    const lane = `draft:${autosave.draftId}`;
+    const { forwardSources, recovery } = readReplyMeta(lane, scope);
+    writeReplyMeta(lane, { sig: sig?.kind !== "following" ? sig : undefined, forwardSources, recovery }, scope);
   }, [autosave.draftId, compose.sig, composerReady, scope]);
 
   /**
@@ -2597,16 +2614,23 @@ export function useShellCompose({
          and the composer that held them has moved on (or holds them still, and is replaced here). */
       const owedFiles = [...handedPress.current].find(([, p]) => p.row === d.id);
       if (owedFiles !== undefined) handedPress.current.delete(owedFiles[0]);
-      const files = parked ? [] : owedFiles?.[1].m.attachments ?? pressed ?? [];
+      const live = d.status === "draft" && autosave.rowNow() === d.id ? composeRef.current : undefined;
+      const files = parked ? [] : owedFiles?.[1].m.attachments ?? pressed ?? live?.attachments ?? [];
       // `formatRecipientChips`, never a bare join: the seeded string must end in a separator
       // or the LAST stored recipient reopens as raw text in the input — no ×, typing appends
       // to the address — while the others are chips.
       // Use the live signature on this editor's own row and device metadata on any other row.
-      const meta = d.status !== "draft" ? {} : autosave.draftId === d.id ? compose : readReplyMeta(`draft:${d.id}`, scope);
-      const forwardSources = d.forwardSources ?? meta.forwardSources;
+      const meta = d.status === "draft" && !live ? readReplyMeta(`draft:${d.id}`, scope) : {};
+      const sig = live?.sig ?? meta.sig;
+      const recovery = live
+        ? { draftVersions: live.draftVersions, missingAttachmentNames: live.missingAttachmentNames, aiDraft: live.aiDraft }
+        : meta.recovery;
+      const forwardSources = d.forwardSources ?? (live ?? meta).forwardSources;
       const seeded: ComposeFields = {
         ...(forwardSources !== undefined ? withForwardFiles(forwardSources, files) : files.length > 0 ? { attachments: files } : {}),
-        ...(meta.sig && meta.sig.kind !== "following" ? { sig: meta.sig } : {}),
+        ...(sig && sig.kind !== "following" ? { sig } : {}),
+        draftVersions: recovery?.draftVersions,
+        missingAttachmentNames: recovery?.missingAttachmentNames,
         to: formatRecipientChips(d.to),
         cc: formatRecipientChips(d.cc),
         bcc: formatRecipientChips(d.bcc),
@@ -2616,7 +2640,7 @@ export function useShellCompose({
         // sent. A row whose html the sync page left out opens plain, and the engine
         // then keeps its save from flattening it (`Engine.enrich`).
         html: typeof d.html === "string" ? d.html : "",
-        aiDraft: typeof d.rationale === "string",
+        aiDraft: recovery?.aiDraft ?? (typeof d.rationale === "string"),
         fromMailboxId: d.mailboxId,
         // THE ROW'S FORWARD: a forward kept as a draft reopens as a forward, and its
         // send carries the original — an id, never a copy of the original's words, which the
@@ -2661,7 +2685,10 @@ export function useShellCompose({
       const openSeeded = (): void => {
         /* Another letter takes the composer: the one leaving lets its own text go, and a draft still out for it fills
            none. The letter's own row opened again is the same letter: its draft and its own text stay. */
-        if (readComposeRow(scope) !== d.id) draftReply?.moved(NEW_LETTER);
+        if (autosave.rowNow() !== d.id) {
+          keepDraftRecovery();
+          draftReply?.moved(NEW_LETTER);
+        }
         if (waiting) letGoOfWaiting();
         setCompose(seeded);
         /**
@@ -3124,6 +3151,15 @@ export function useShellCompose({
       const forwardSources = input.forwardSources.filter(({ id }) => !removed.has(id));
       if (forwardSources.length !== input.forwardSources.length) next = { ...next, forwardSources };
     }
+    if (input.missingAttachmentNames?.length && input.attachments !== prev.attachments) {
+      const missing = [...input.missingAttachmentNames];
+      for (const file of input.attachments ?? []) {
+        if (forwardSourceOf(file) || prev.attachments?.includes(file)) continue;
+        const index = missing.indexOf(file.filename);
+        if (index >= 0) missing.splice(index, 1);
+      }
+      if (missing.length !== input.missingAttachmentNames.length) next = { ...next, missingAttachmentNames: missing };
+    }
     setCompose(next);
     writeComposeDraft(next, scope);
     // The close's refusal was about the text as it stood; an edit makes it a stale sentence.
@@ -3315,7 +3351,6 @@ export function useShellCompose({
          was gone. Asked before the discard, which spends the binding it reads. */
       const keeps = discardKeepsCompose();
       // Its own text kept beside a draft goes with it, and a draft still out fills no letter; Undo puts both back.
-      const kept = draftReply?.own.get(NEW_LETTER);
       draftReply?.moved(NEW_LETTER);
       // This message's own press, withdrawn or thrown away with it, owes no door anything.
       if (own) handedPress.current.delete(COMPOSE_SEND_KEY);
@@ -3328,7 +3363,6 @@ export function useShellCompose({
           const may = mayReplace(snapshot);
           const open = (): void => {
             replaceComposer(snapshot);
-            if (kept !== undefined) draftReply?.keep(kept);
             draftReply?.restore(NEW_LETTER);
             go("compose");
           };

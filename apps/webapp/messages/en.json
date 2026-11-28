@@ -1755,7 +1755,7 @@
     "cancelUnreachable": "Couldn't reach the server to cancel. ohmail will keep asking and will not send this again.",
     "discardHeld": "Not deleted: its send is not confirmed, so the message stays in Drafts.",
     "discardUnknown": "Not deleted: this browser cannot tell whether its send is still going out, so the message stays in Drafts.",
-    "resumedNote": "This is the message you left unfinished. Discard it to start a new one.",
+    "resumedNote": "This is the message you left unfinished. Close it to keep the draft, then choose Write to start a new message. Discard deletes this draft.",
     "closeNotSaved": "This draft couldn't be saved, so it stayed open here.",
     "closeNotSavedReason": "This draft couldn't be saved: {reason}. It stayed open here.",
     "recoveredFromClosedTab": "A message from a tab that closed unexpectedly is back in Compose.",
@@ -1801,6 +1801,7 @@
     "sendLaterFilesTooFar": "A message with files can be scheduled at most {days, plural, one {# day} other {# days}} ahead. Pick a closer time.",
     "sendLaterThisComputer": "It goes at that time if ohmail is open on this computer; otherwise when ohmail next opens, up to a day later.",
     "filesNotKept": "{count, plural, one {This message was scheduled with a file that was not kept. Attach it again before you send.} other {This message was scheduled with # files that were not kept. Attach them again before you send.}}",
+    "reattachAfterRecovery": "Attach {filenames} again before sending.",
     "toastScheduled": "{when}",
     "keySchedule": "Schedule send"
   },

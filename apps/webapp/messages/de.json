@@ -1755,7 +1755,7 @@
     "cancelUnreachable": "Der Server war zum Abbrechen nicht erreichbar. ohmail fragt weiter nach und sendet das nicht noch einmal.",
     "discardHeld": "Nicht gelöscht: Ihr Versand ist nicht bestätigt, darum bleibt die Nachricht in den Entwürfen.",
     "discardUnknown": "Nicht gelöscht: Dieser Browser kann nicht erkennen, ob ihr Versand noch läuft, darum bleibt die Nachricht in den Entwürfen.",
-    "resumedNote": "Das ist die Nachricht, die du nicht fertig geschrieben hast. Verwirf sie, um eine neue zu beginnen.",
+    "resumedNote": "Das ist die Nachricht, die du nicht fertig geschrieben hast. Schließe sie, um den Entwurf zu behalten. Wähle dann Schreiben für eine neue Nachricht. Mit Verwerfen löschst du diesen Entwurf.",
     "closeNotSaved": "Dieser Entwurf konnte nicht gespeichert werden und bleibt hier offen.",
     "closeNotSavedReason": "Dieser Entwurf konnte nicht gespeichert werden: {reason}. Er bleibt hier offen.",
     "recoveredFromClosedTab": "Eine Nachricht aus einem unerwartet geschlossenen Tab ist wieder da, unter Schreiben.",
@@ -1801,6 +1801,7 @@
     "sendLaterFilesTooFar": "Eine Nachricht mit Dateien lässt sich höchstens {days, plural, one {# Tag} other {# Tage}} im Voraus planen. Wähle eine frühere Zeit.",
     "sendLaterThisComputer": "Sie geht zu dieser Zeit raus, wenn ohmail auf diesem Computer geöffnet ist, sonst beim nächsten Öffnen von ohmail, bis zu einem Tag später.",
     "filesNotKept": "{count, plural, one {Diese Nachricht war mit einer Datei geplant, die nicht aufbewahrt wurde. Hänge sie vor dem Senden erneut an.} other {Diese Nachricht war mit # Dateien geplant, die nicht aufbewahrt wurden. Hänge sie vor dem Senden erneut an.}}",
+    "reattachAfterRecovery": "Hänge {filenames} vor dem Senden erneut an.",
     "toastScheduled": "{when}",
     "keySchedule": "Versand planen"
   },
