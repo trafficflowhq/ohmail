@@ -119,6 +119,24 @@ function claimKey(e: KeyboardEvent<HTMLDivElement>): void {
   e.nativeEvent.stopImmediatePropagation();
 }
 
+function MenuVeil({ dim, onClose }: { dim: boolean; onClose: () => void }) {
+  return (
+    <div
+      className="oh-veil"
+      data-veil=""
+      data-dim={dim ? "" : undefined}
+      onPointerDown={(event) => {
+        if (event.pointerType !== "touch") onClose();
+      }}
+      onClick={(event) => {
+        // Keep the veil in place until a tap's click has landed on it.
+        event.stopPropagation();
+        onClose();
+      }}
+    />
+  );
+}
+
 /**
  * A short list that comes out of the thing you pressed. The arrows, Home and End move; Enter runs;
  * Esc (wherever the keys are, the topmost first), Tab and a press beside it close it, and the keys go back
@@ -203,7 +221,7 @@ export function Menu(props: MenuProps) {
 
   const drawn = (
     <div className="oh-over" data-popover={props.portal ? "" : undefined}>
-      <div className="oh-veil" data-veil="" data-dim={anchor ? undefined : ""} onPointerDown={onClose} />
+      <MenuVeil dim={!anchor} onClose={onClose} />
       <div
         ref={box}
         className="oh-menu"

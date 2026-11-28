@@ -26,6 +26,7 @@ function mailbox(
   protectedLetter = false,
   lang: "en" | "de" = "en",
   reply?: ReaderReply,
+  size?: "phone",
 ) {
   const world = mirror({
     enabledAt: UPDATED,
@@ -52,6 +53,7 @@ function mailbox(
     letters: [message],
     open: message.id,
     lang,
+    size,
     parts: reply ? { reply } : undefined,
     words: { ...CALENDAR_WORDS[lang], ...WORDS[lang], ...(lang === "de" ? calmailDe : calmailEn) },
     host: {
@@ -75,6 +77,26 @@ function mailbox(
   });
   return { ...mounted, message, press };
 }
+
+it("a quick second tap on the reader's More button does not open Calendar", async () => {
+  const { address, press } = mailbox(undefined, false, "en", undefined, "phone");
+  const more = within(screen.getByRole("toolbar", { name: "Actions" })).getByRole("button", {
+    name: "More",
+    exact: true,
+  });
+  vi.spyOn(more, "getBoundingClientRect").mockReturnValue(new DOMRect(326, 715, 48, 48));
+  const tap = { detail: 1, clientX: 350, clientY: 739 };
+  fireEvent.click(more, tap);
+  const menu = screen.getByRole("menu", { name: "More" });
+  const add = within(menu).getByRole("menuitem", { name: "Add to calendar" });
+  fireEvent.click(add, tap);
+  expect(address.read()).toBe("#/ohbox/m/m1");
+  expect(menu.isConnected).toBe(true);
+
+  fireEvent.click(add, { ...tap, clientX: 100 });
+  expect(await screen.findByRole("dialog", { name: "New event" })).toBeTruthy();
+  expect(press).not.toHaveBeenCalled();
+});
 
 it("v opens the letter's draft without writing and stays out of text fields", async () => {
   const { address, press, message } = mailbox();

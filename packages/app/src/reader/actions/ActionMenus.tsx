@@ -1,5 +1,5 @@
 import { useBinding } from "@ohmail/app-logic/keys";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { useScreenerAcknowledgements } from "@ohmail/app-logic/consent";
 import type { RefObject } from "react";
 import type { TagEntity } from "@ohmail/wire";
@@ -11,7 +11,7 @@ import { useShortcutsMenu } from "../../keys/ShortcutsMenuItem.js";
 import { useText } from "../../text/index.js";
 import { CARD_DELETE_KEY, isCardDeleteKey, type PanelMenu } from "../keys.js";
 import { ResurfaceMenu } from "./ResurfaceMenu.js";
-import type { ActionWords, OpenPanel, Placed } from "./panel-verbs.js";
+import type { ActionWords, OpenPanel, PanelRoom, Placed } from "./panel-verbs.js";
 import type { Verbs } from "./use-verbs.js";
 
 function openScreening(root: HTMLElement | null, fallback?: () => void): void {
@@ -56,6 +56,42 @@ export function useActionMenu(
     setMenu((open) => (open === which ? null : which));
   };
   return { anchor, menu, setMenu, close, toggle, byKey, trash, confirmTrash, trashAcknowledged };
+}
+
+const MORE_REPEAT_MS = 300;
+
+export function useReaderMore(
+  room: PanelRoom,
+  menu: OpenPanel,
+  label: string,
+  toggle: (at: HTMLElement) => void,
+) {
+  const morePress = useRef<{ time: number; bounds: DOMRect } | null>(null);
+  useLayoutEffect(() => {
+    if (menu !== "more") morePress.current = null;
+  }, [menu]);
+  const more = {
+    label,
+    behind: true,
+    expanded: menu === "more" || menu === "cardDelete",
+    onPress: (at: HTMLElement, event: MouseEvent<HTMLButtonElement>) => {
+      if (room === "phone" && event.detail > 0 && menu !== "more") {
+        morePress.current = { time: event.timeStamp, bounds: at.getBoundingClientRect() };
+      }
+      toggle(at);
+    },
+  };
+  const catchMoreRepeat = (event: MouseEvent<HTMLDivElement>) => {
+    // The phone sheet can put an action directly where the More button was tapped.
+    const press = morePress.current;
+    if (menu !== "more" || !press || !event.detail || event.timeStamp - press.time > MORE_REPEAT_MS) return;
+    const { left, right, top, bottom } = press.bounds;
+    const { clientX: x, clientY: y } = event;
+    if (x < left || x >= right || y < top || y >= bottom) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  return { more, catchMoreRepeat };
 }
 
 interface ActionMenusProps {

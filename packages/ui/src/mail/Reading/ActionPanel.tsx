@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, type MouseEvent } from "react";
 import { KeyHint } from "../../base/index.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./action-panel.css";
@@ -82,7 +82,7 @@ export interface ActionPanelProps {
     behind: boolean;
     apart?: boolean;
     expanded?: boolean;
-    onPress?: (at: HTMLElement) => void;
+    onPress?: (at: HTMLElement, event: MouseEvent<HTMLButtonElement>) => void;
   };
   /** Key hints are switched on. */
   keysShown?: boolean;
@@ -164,7 +164,7 @@ export function ActionPanel({ label, items, more, keysShown, folded, short, onFo
             title={more.label}
             aria-haspopup="menu"
             aria-expanded={more.expanded ?? false}
-            onClick={(event) => more.onPress?.(event.currentTarget)}
+            onClick={(event) => more.onPress?.(event.currentTarget, event)}
           >
             <Icon name="more" size={20} />
           </button>

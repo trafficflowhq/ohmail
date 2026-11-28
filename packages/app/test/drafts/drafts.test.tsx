@@ -105,6 +105,29 @@ it("offers the list's Pull new mail action from Drafts More", () => {
   expect(pull).toHaveBeenCalledOnce();
 });
 
+it("dismissing Drafts More consumes the whole tap over Discard", async () => {
+  const seen = fresh();
+  const { container } = draw(
+    <PullContext value={{ available: true, pull: () => {}, pulling: false }}>
+      <Drafts drafts={[draft({ id: "d1", subject: "Keep this draft" })]} seen={seen} phone />
+    </PullContext>,
+  );
+  const more = screen.getByRole("button", { name: words.drafts.listMenu });
+  const discard = screen.getByRole("button", { name: "Discard" });
+  fireEvent.click(more);
+  const veil = container.querySelector("[data-veil]")!;
+  const down = new MouseEvent("pointerdown", { bubbles: true, cancelable: true });
+  Object.defineProperty(down, "pointerType", { value: "touch" });
+  fireEvent(veil, down);
+  // A browser can hit the Discard button if the veil is removed before the tap finishes.
+  fireEvent.click(veil.isConnected ? veil : discard);
+  await flush();
+  expect(seen.said).toEqual([]);
+  expect(seen.opened).toEqual([]);
+  expect(more.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.getByRole("option", { name: /Keep this draft/ })).toBeTruthy();
+});
+
 const flush = () =>
   act(async () => {
     await Promise.resolve();
