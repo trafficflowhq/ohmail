@@ -364,6 +364,24 @@ function editorKeyDown(
     return true;
   }
   if (askedLink(view.editable, e, asks)) return true;
+  // The browser can move the caret before its selectionchange reaches ProseMirror.
+  // Use the visible caret so Enter cannot replace the text that was previously selected.
+  const selection = view.state.selection;
+  if (
+    e.key === "Enter" &&
+    !e.metaKey &&
+    !e.ctrlKey &&
+    !e.altKey &&
+    !e.isComposing &&
+    e.keyCode !== 229 &&
+    !view.composing &&
+    view.editable &&
+    selection instanceof TextSelection &&
+    !selection.empty &&
+    view.dom.ownerDocument.getSelection()?.isCollapsed
+  ) {
+    keepNativeSelection(view);
+  }
   if (!escapeUnlessTaken(view, e)) return false;
   /* An Escape none of the editor's own bindings took is the screen's, and claimed for it. */
   const leave = keys.onLeaveKey;
