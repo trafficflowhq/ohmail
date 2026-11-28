@@ -1,6 +1,7 @@
+import { Fragment } from "react";
 import { hueOf, type CalendarRecord } from "@ohmail/app-logic/calendar";
-import { wayOfConnection } from "@ohmail/app-logic/calendar/setup";
-import { Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
+import { accountsOf } from "@ohmail/app-logic/calendar/setup";
+import { Menu, MenuItem, MenuNote, MenuRule } from "@ohmail/ui/base";
 import { CalendarSquare, type CalendarTone, type EventFormRow } from "@ohmail/ui/calendar";
 import { useCalendarMirror } from "../calsetup/index.js";
 import { useText, type Text } from "../text/index.js";
@@ -53,23 +54,26 @@ export function DraftCalendarMenu({
   const t = useText("calendar");
   const settings = useText("calsettings");
   const mirror = useCalendarMirror();
+  const accounts = accountsOf(mirror?.connections ?? [], choices).filter(({ calendars }) => calendars.length);
   return (
     <Menu open up anchor={anchor} label={label ?? t("create.calendar")} onClose={close}>
       {note && <MenuNote>{note}</MenuNote>}
-      {choices.map((choice) => {
-        const connection = mirror?.connections.find(({ id }) => id === choice.connectionId);
-        return (
-          <MenuItem
-            key={choice.id}
-            leading={<CalendarSquare tone={mirror?.tones.get(choice.id) ?? hueOf(choice.color)} />}
-            checked={choice.id === current}
-            note={connection && settings(`way.${wayOfConnection(connection)}`)}
-            onPress={() => choose(choice.id)}
-          >
-            {choice.name}
-          </MenuItem>
-        );
-      })}
+      {accounts.map(({ connection, way, calendars }, index) => (
+        <Fragment key={connection.id}>
+          {index > 0 && <MenuRule />}
+          {calendars.map((choice) => (
+            <MenuItem
+              key={choice.id}
+              leading={<CalendarSquare tone={mirror?.tones.get(choice.id) ?? hueOf(choice.color)} />}
+              checked={choice.id === current}
+              note={settings(`way.${way}`)}
+              onPress={() => choose(choice.id)}
+            >
+              {choice.name}
+            </MenuItem>
+          ))}
+        </Fragment>
+      ))}
     </Menu>
   );
 }

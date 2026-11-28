@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { Button, Icon, Overlay, SuggestionCredit, SuggestionList } from "@ohmail/ui/base";
 import type { EventFormItem, EventFormRow } from "@ohmail/ui/calendar";
 import { useFrame } from "../frame/commands.js";
@@ -29,11 +29,19 @@ export function useDraftPlace(
     setSheet(true);
     if (!value?.trim()) places.open();
   };
+  const field = {
+    ...places.field,
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (places.keys(event) || event.key !== "Enter" || event.nativeEvent.isComposing) return;
+      event.preventDefault();
+      close();
+    },
+  };
   if (value === null) return { rows: [], overlay: null, open: phone ? open : undefined };
 
   const input: EventFormItem = phone
     ? { kind: "openText", label, placeholder, value, ref: opener, onPress: open }
-    : { kind: "text", label, placeholder, value, ref: places.anchor, suggests: places.field };
+    : { kind: "text", label, placeholder, value, ref: places.anchor, suggests: field };
   const items: EventFormItem[] = [input];
   if (maps) items.push({ kind: "link", text: maps.label, title: maps.title, onPress: maps.onPress });
   if (!phone && places.unavailable) items.push({ kind: "status", text: unavailable });
@@ -69,18 +77,13 @@ export function useDraftPlace(
               <label className="cal-place-field">
                 <Icon name="place" size={18} />
                 <input
-                  {...places.field}
+                  {...field}
                   ref={places.anchor}
                   aria-label={label}
                   className="cal-place-input"
                   placeholder={placeholder}
                   spellCheck={false}
                   enterKeyHint="done"
-                  onKeyDown={(event) => {
-                    if (places.keys(event) || event.key !== "Enter" || event.nativeEvent.isComposing) return;
-                    event.preventDefault();
-                    close();
-                  }}
                 />
                 {value && (
                   <Button
