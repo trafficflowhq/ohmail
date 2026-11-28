@@ -63,6 +63,7 @@ export function QuickAdd({ label, tone, line, close, onAdd, children, still, bus
       return;
     }
     if (
+      event.defaultPrevented ||
       event.key !== "Enter" ||
       event.shiftKey ||
       event.altKey ||

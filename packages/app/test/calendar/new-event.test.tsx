@@ -81,6 +81,42 @@ it("creates in the explicitly chosen writable calendar and keeps the words when 
   expect((form.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
 });
 
+it("lists writable calendars together in the same account order as the side rail", async () => {
+  const w = world();
+  w.put(
+    "calendar_connection",
+    "older",
+    connectionRecord({
+      id: "older",
+      provider: "google",
+      createdAt: "2026-11-01T00:00:00Z",
+    }),
+  );
+  w.put("calendar", "trips", calendarRecord({ id: "trips", name: "Trips", connectionId: "older" }));
+  w.put("calendar", "house", calendarRecord({ id: "house", name: "House" }));
+  w.put(
+    "calendar",
+    "birthdays",
+    calendarRecord({
+      id: "birthdays",
+      name: "Birthdays",
+      connectionId: "older",
+    }),
+  );
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.click(form.getByRole("button", { name: "Calendar" }));
+  const menu = within(screen.getByRole("menu", { name: "Calendar" }));
+  expect(menu.getAllByRole("menuitemradio")).toEqual([
+    menu.getByRole("menuitemradio", { name: "Trips Google" }),
+    menu.getByRole("menuitemradio", { name: "Birthdays Google" }),
+    menu.getByRole("menuitemradio", { name: "Studio CalDAV" }),
+    menu.getByRole("menuitemradio", { name: "Personal CalDAV" }),
+    menu.getByRole("menuitemradio", { name: "House CalDAV" }),
+  ]);
+});
+
 it("offers known guests immediately and accepts one from the keyboard after a search", () => {
   const w = world();
   const person = ["mara", "example.test"].join("@");
@@ -482,6 +518,29 @@ it.each(["off", "down"] as const)(
     expect(place).toHaveProperty("value", "The rooftop");
   },
 );
+
+it("keeps a new event open when Enter accepts a free-form place", async () => {
+  const w = world();
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "New event" }), { target: { value: "Planning" } });
+  fireEvent.click(form.getByRole("button", { name: "Place" }));
+  const place = form.getByRole("combobox", { name: "Place" });
+  fireEvent.change(place, { target: { value: "Meeting room upstairs" } });
+  await act(async () => {
+    fireEvent.keyDown(place, { key: "Enter" });
+  });
+  expect(press).not.toHaveBeenCalled();
+  expect(place).toHaveProperty("value", "Meeting room upstairs");
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({ event: expect.objectContaining({ place: "Meeting room upstairs" }) }),
+  );
+  await act(async () => {});
+});
 
 it("fills a run of whole days and its place from a typed line", async () => {
   const w = world();
