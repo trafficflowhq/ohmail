@@ -25,6 +25,7 @@
  * own therefore never withdraws it; a line the report does have (ready, downloading, failed) still
  * replaces it, because the update is the fix.
  */
+import { saveStartListOnClose } from "./start-list.js";
 import {
   announceUpdate,
   announceVersion,
@@ -434,6 +435,7 @@ export function startLeaveSave(options: LeaveSaveOptions = {}): () => void {
     if (stopped || answering) return;
     answering = true;
     try {
+      saveStartListOnClose();
       await flushBeforeRestart();
       await saved();
     } catch {

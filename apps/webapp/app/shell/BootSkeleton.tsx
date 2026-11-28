@@ -18,14 +18,14 @@ export function BootSkeleton({ active }: { active: boolean }) {
 }
 
 /** The shared mail frame before a desktop window has an engine to give it. */
-export function WindowOpening({ children }: { children?: ReactNode }) {
+export function WindowOpening({ children, kept }: { children?: ReactNode; kept?: ReactNode }) {
   const windowFacts = useMemo(() => browserWindowFacts(window), []);
   const facts = useSignal(windowFacts);
   const look = useThemeLook();
   const show = useLoadingGrace(true, BOOT_SKELETON_GRACE_MS);
   return (
     <div className="gate-boot" aria-busy={children ? undefined : true}>
-      <OpeningFrame facts={facts} look={look} show={show} status={children} />
+      <OpeningFrame facts={facts} look={look} show={show || kept != null} status={children} kept={kept} />
     </div>
   );
 }

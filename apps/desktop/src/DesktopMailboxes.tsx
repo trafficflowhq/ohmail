@@ -1,3 +1,4 @@
+import { forgetStartList } from "./start-list.js";
 /**
  * WHICH MAILBOX THIS INSTALL IS OPENING — the facts, and the Settings pane that shows them.
  * Two surfaces, one read: the SYNC LINE's ladder starts with "can we see this account's
@@ -1304,6 +1305,7 @@ export function DesktopMailboxes(
     const stillHere = () => removalDoor?.active ?? true;
     void (async () => {
       try {
+        forgetStartList();
         const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
           method: "DELETE",
         });
