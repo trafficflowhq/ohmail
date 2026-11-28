@@ -247,6 +247,27 @@ describe("/health bounds", () => {
     });
   }, 60_000);
 
+  it("reports a database interruption during takeover before the takeover deadline", async () => {
+    const door = DbDoor.to(DB);
+    door.holdAt = (text) => door.held.length === 0 && text.includes('insert into "worker_heartbeats"');
+    await door.up();
+    const held = await acquireLeaderLock(DB);
+    expect(held).not.toBeNull();
+    const sup = await runWorkerSupervised(cfgFor(new FakeAdapterFleet(), {
+      databaseUrl: door.via(DB), lockHeartbeatMs: 100, takeoverDeadlineMs: 30_000,
+    }));
+    closers.push(async () => { door.down(); await sup.stop(); });
+    await held!.release();
+    await waitForBody(sup.healthPort, (b) => b.takingOver && door.held.length > 0, 10_000, "the held roster claim");
+    expect((await health(sup.healthPort)).status).toBe(200);
+    door.stall();
+    const waiting = await waitForStatus(sup.healthPort, 503, 4000);
+    expect(waiting).toMatchObject({ healthy: false, leader: false, unhealthyReason: "waiting_for_database" });
+    await door.up();
+    door.thaw(door.held[0]!);
+    await waitForBody(sup.healthPort, (b) => b.leader && b.healthy, 20_000, "recovered leadership");
+  }, 60_000);
+
   it("a leader serving 0 of 2 goes 503 even with NOTHING quarantined", async () => {
     // The widening. The old rule was `… && quarantined > 0`, so a shard whose mailboxes are
     // expected but unservable for any OTHER reason answered 200 for ever. Two enabled mailboxes
@@ -369,6 +390,20 @@ describe("/health bounds", () => {
     // degraded body NAMES a cause. That is exactly the state the deploy probes were reading.
     expect(body.body.degradedReason, "degraded with nothing to act on").not.toBeNull();
     expect(body.body.unserved.total).toBe(2);
+  }, 60_000);
+
+  it("keeps the worker healthy after its only provider backs off", async () => {
+    const fleet = new FakeAdapterFleet();
+    const { mailboxId } = await seedMailbox(makeDb(DB));
+    fleet.behave(mailboxId, { failConnect: true });
+    const sup = await runWorkerSupervised(cfgFor(fleet, { servingNothingMaxMs: 60 }));
+    closers.push(() => sup.stop());
+    await waitForBody(sup.healthPort, (b) => b.leader && b.quarantined === 1, 10_000, "provider in backoff");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(await health(sup.healthPort)).toMatchObject({
+      status: 200,
+      body: { healthy: true, degraded: true, mailboxes: 0, quarantined: 1 },
+    });
   }, 60_000);
 
   it("a leader whose cycle stops moving answers 503 stuck_cycle and tells its host, once", async () => {

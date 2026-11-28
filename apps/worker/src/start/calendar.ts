@@ -59,6 +59,8 @@ export interface CalendarRunnerDeps {
   readonly log: Logger;
 }
 
+const CALENDAR_SCAN_STALL_MS = 120_000;
+
 export interface CalendarRunner {
   /** Read the roster soon: the floor's tick, or a ring. */
   ring(): void;
@@ -66,6 +68,8 @@ export interface CalendarRunner {
   stop(): void;
   /** Resolves once no turn is in flight. */
   settled(): Promise<void>;
+  /** Roster scan health and its last successful scan, from memory. */
+  progress(): { stalled: boolean; databaseFault: boolean; lastSettledAt: number | null };
   /** Turns running and connections waiting, from memory. */
   load(): { readonly running: number; readonly queued: number };
 }
@@ -91,6 +95,9 @@ export function startCalendarRunner(deps: CalendarRunnerDeps): CalendarRunner {
   const ended = new AbortController();
   const hardMs = deps.turnHardMs ?? TURN_HARD_MS;
   const turnMs = deps.turnMs ?? TURN_MS;
+  let scanDueAt = deps.now() + deps.floorMs;
+  let lastSettledAt: number | null = null;
+  let scanFailedAt: number | null = null;
   let running = 0;
   let stopped = false;
   const off = (): boolean => stopped || deps.isStopped();
@@ -191,7 +198,23 @@ export function startCalendarRunner(deps: CalendarRunnerDeps): CalendarRunner {
   };
 
   const bell: SyncKickBell = startSyncKickBell({
-    pass: scan, floorMs: deps.floorMs, gapMs: deps.gapMs, ...(deps.source ? { source: deps.source } : {}),
+    pass: async (by) => {
+      scanDueAt = deps.now();
+      try {
+        await scan(by);
+        lastSettledAt = deps.now();
+        if (!off() && lastSettledAt - (scanFailedAt ?? scanDueAt) >= CALENDAR_SCAN_STALL_MS) {
+          deps.log.info("calendar_worker_recovered", { reason: "the database roster scan succeeded" });
+        }
+        scanFailedAt = null;
+      } catch (err) {
+        scanFailedAt ??= scanDueAt;
+        throw err;
+      } finally {
+        scanDueAt = deps.now() + deps.floorMs;
+      }
+    },
+    floorMs: deps.floorMs, gapMs: deps.gapMs, ...(deps.source ? { source: deps.source } : {}),
     isStopped: off, log: deps.log, label: "calendar_scan",
   });
 
@@ -206,6 +229,14 @@ export function startCalendarRunner(deps: CalendarRunnerDeps): CalendarRunner {
     },
     async settled(): Promise<void> {
       while (inflight.size > 0) await Promise.allSettled([...inflight]);
+    },
+    progress() {
+      const now = deps.now();
+      return {
+        stalled: !off() && now - scanDueAt >= CALENDAR_SCAN_STALL_MS,
+        databaseFault: !off() && scanFailedAt !== null && now - scanFailedAt >= CALENDAR_SCAN_STALL_MS,
+        lastSettledAt,
+      };
     },
     load: () => ({ running, queued: queue.length }),
   };

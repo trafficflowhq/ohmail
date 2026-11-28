@@ -27,6 +27,8 @@ export interface AdapterOptions {
   bodyMaxBytes: number;
   headersTimeoutMs: number;
   requestTimeoutMs: number;
+  /** Answer the process monitor's loopback HEAD /live before dependency lookups. */
+  localLiveness?: boolean;
   /** The process's planned stop. Active event streams finish through their request signal. */
   eventStreamShutdown?: AbortSignal;
   /**
@@ -373,6 +375,11 @@ export function makeHttpServer(
 ): Server {
   const note = onceEachPeer(opts.onForwardingNote);
   const onRequest = (req: IncomingMessage, res: ServerResponse): void => {
+    if (opts.localLiveness && req.method === "HEAD" && req.url === "/live" &&
+      canonicalIp(req.socket.remoteAddress ?? "") === "127.0.0.1" && !hasBody(req)) {
+      res.writeHead(204).end();
+      return;
+    }
     void serve(req, res, handle, opts, note).catch(() => {
       // serve() answers its own failures; this catch only covers a socket that died while we
       // were answering, where there is nothing left to say and nobody left to say it to.

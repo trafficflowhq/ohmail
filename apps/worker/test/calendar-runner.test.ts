@@ -4,7 +4,7 @@
  * account is never turned; a turn that threw, or found its connection gone, is not asked again
  * every tick.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { silentLogger } from "@trafficflow/core";
 import { startCalendarRunner, type CalendarRunner, type CalendarRunnerDeps } from "../src/start/calendar.js";
 import type { CalendarSyncOutcome, DueConnection } from "@ohmail/organizer/calendar-sync";
@@ -28,6 +28,66 @@ async function settle(r: CalendarRunner): Promise<void> {
 }
 
 describe("the calendar's runner", () => {
+  it("reports a hung roster scan and clears it when the scan returns", async () => {
+    let now = 1000;
+    let finish!: (rows: DueConnection[]) => void;
+    const r = start({
+      now: () => now,
+      roster: () => new Promise((resolve) => { finish = resolve; }),
+      turn: async () => synced(false),
+    });
+    r.ring();
+    now += 121_000;
+    expect(r.progress()).toMatchObject({ stalled: true, lastSettledAt: null });
+    finish([]);
+    await settle(r);
+    expect(r.progress()).toMatchObject({ stalled: false, lastSettledAt: now });
+  });
+
+  it("reports repeated roster failures until a database scan succeeds", async () => {
+    let now = 1000;
+    let rejectRoster = true;
+    const r = start({
+      now: () => now, roster: async () => { if (rejectRoster) throw new Error("roster failed"); return []; },
+      turn: async () => synced(false),
+    });
+    r.ring();
+    await settle(r);
+    now += 121_000;
+    r.ring();
+    await settle(r);
+    expect(r.progress()).toMatchObject({ databaseFault: true, lastSettledAt: null });
+    rejectRoster = false;
+    r.ring();
+    await settle(r);
+    expect(r.progress()).toMatchObject({ databaseFault: false, lastSettledAt: now });
+  });
+
+  it("keeps reporting a healthy roster during a long calendar turn", async () => {
+    let now = 1000;
+    const turn = Promise.withResolvers<CalendarSyncOutcome>();
+    const started = Promise.withResolvers<void>();
+    const r = start({
+      now: () => now,
+      roster: async () => [due("importing")],
+      turn: () => { started.resolve(); return turn.promise; },
+    });
+    r.ring();
+    await started.promise;
+    try {
+      for (let scan = 0; scan < 4; scan++) {
+        now += 31_000;
+        r.ring();
+        await vi.waitFor(() => expect(r.progress().lastSettledAt).toBe(now));
+      }
+      expect(r.load().running).toBe(1);
+      expect(r.progress()).toMatchObject({ stalled: false, lastSettledAt: now });
+    } finally {
+      turn.resolve(synced(false));
+      await r.settled();
+    }
+  });
+
   it("queues a connection once, and a turn with more to read goes behind the others", async () => {
     const turns: string[] = [];
     let aMore = true;

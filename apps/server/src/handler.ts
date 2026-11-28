@@ -1,3 +1,4 @@
+import type { ClockProgress } from "./clock-health.js";
 import { randomUUID } from "node:crypto";
 import {
   clientIp, createApp, bodyCeilingFor, readBodyWithin, BodyOverCeilingError, isDbBusy, dbBusyResponse,
@@ -46,6 +47,7 @@ export interface Pipeline {
   logger: Pick<Logger, "error" | "warn">;
   buildDeps: (req: Request) => ApiDeps;
   ingress?: IngressPolicy | undefined;
+  clockProgress?: () => Record<string, ClockProgress> | undefined;
   rotationProof?: (req: Request) => Promise<Response>;
 }
 
@@ -257,7 +259,21 @@ export function makeDispatch(p: Pipeline): (req: Request, socketClientIp?: strin
     try {
       const deps = p.buildDeps(forRouter);
       deps.requestId = requestId;
-      const response = noStore(await app.handle(forRouter, deps), requestId);
+      let result = await app.handle(forRouter, deps);
+      if (forRouter.method === "GET" && new URL(forRouter.url).pathname === "/health") {
+        const clocks = p.clockProgress?.();
+        if (clocks && result.headers.get("content-type")?.includes("application/json")) {
+          const body = await result.json();
+          const unhealthy = Object.values(clocks).some((clock) => clock.stalled);
+          const headers = new Headers(result.headers);
+          headers.delete("content-length");
+          result = new Response(JSON.stringify({ ...body, clocks, ...(unhealthy ? { ok: false, ready: false } : {}) }), {
+            status: unhealthy ? 503 : result.status,
+            headers,
+          });
+        }
+      }
+      const response = noStore(result, requestId);
       if (p.ingress && new URL(forRouter.url).pathname === "/health") {
         response.headers.set("X-Ohmail-Ingress-Policy", p.ingress.id);
       }

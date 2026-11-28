@@ -107,6 +107,12 @@ services:
       # digest of ./proxy is what makes an update that edits the directory restart the proxy.
       # test/selfhost-proxy-reload.test.ts fails on a stale value and prints the new one.
       ohmail.proxy-config: sha256:7a5aa997545e89f6fec7fa2f475d5d8273629bc2b6c673265390e58a1d07a95e
+    healthcheck:
+      # The local admin listener confirms Caddy loaded either front door.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     volumes:
       # Both front doors, the route table they import and the entrypoint. The entrypoint picks the
       # door: proxy/Caddyfile, which owns TLS, or proxy/Caddyfile.external-tls when
@@ -267,8 +273,8 @@ services:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r)=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 5s
-      retries: 60
-      start_period: 30s
+      retries: 3
+      start_period: 5m
 
   organizer:
     image: ghcr.io/trafficflowhq/ohmail-worker:${OHMAIL_IMAGE_TAG:-1.0.13}
@@ -400,11 +406,11 @@ services:
       MS_DEVICE_CLIENT_ID: ${MS_DEVICE_CLIENT_ID:-}
       MS_DEVICE_TENANT: ${MS_DEVICE_TENANT:-}
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/').then((r)=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r)=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
-      retries: 18
-      start_period: 30s
+      retries: 3
+      start_period: 3m
 
   db:
     image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
@@ -449,7 +455,7 @@ services:
     depends_on:
       rustfs:
         condition: service_healthy
-    restart: "no"
+    restart: on-failure:5
     environment:
       RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-${MINIO_ROOT_USER:-ohmail-staging}}
       RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-${MINIO_ROOT_PASSWORD:-}}
@@ -465,6 +471,12 @@ services:
   mailpit:
     image: ghcr.io/trafficflowhq/mirror-mailpit:v1.24.2@sha256:3ad9483ac2dea937ae402b95435ab12c3355d2373a1002a49491db0be536d8fa
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     ports:
       # The mail UI, loopback only: read verification mail on the box at http://127.0.0.1:8025.
       # A second stack on this box gives it another port with OHMAIL_MAIL_UI_PORT in its own .env.

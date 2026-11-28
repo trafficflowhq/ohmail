@@ -269,6 +269,18 @@ describe("serve(): the verdict taken on a real socket", () => {
     });
   }
 
+  it("answers the loopback liveness check without resolving the forward proxy", async () => {
+    const lookup = vi.fn(async () => []);
+    const calls: { ip: string; xff: string | null }[] = [];
+    const port = await listen({
+      localLiveness: true, trustedProxies: makeTrustedProxies(["proxy.test"], { lookup }),
+    }, calls);
+    const result = await fetch(`http://127.0.0.1:${port}/live`, { method: "HEAD" });
+    expect(result.status).toBe(204);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
   it("passes the configured client address header through the normal server entry point", async () => {
     const sink: { ip: string; xff: string | null }[] = [];
     const options = { trustedProxies: set("127.0.0.1"), clientIpHeader: "x-real-ip" as const };

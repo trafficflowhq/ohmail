@@ -152,6 +152,7 @@ export interface WorkerScope {
   noteScreenerHold: (accountId: string) => void;
   booted: boolean;   // changes
   firstBeatPending: boolean;   // changes
+  heartbeatAt: number | null;
   claimed: boolean;   // changes
   expected: number;   // changes
   truncated: number;   // changes

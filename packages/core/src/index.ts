@@ -46,5 +46,6 @@ export * from "./crypto.js";
 export * from "./oauth/microsoft.js";
 export * from "./oauth/microsoft-device.js";
 export * from "./log.js";
+export { startProcessWatchdog } from "./process-watchdog.js";
 export * from "./statement-fault.js";
 export * from "./privacy/tracker-blocker.js";

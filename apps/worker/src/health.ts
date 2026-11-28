@@ -161,6 +161,9 @@ export interface HealthSnapshot {
    * on a standby. Closed codes and clocks only, a memory read, so `/health` touches no database.
    */
   apiCron: ApiCronTargetHealth[];
+  heartbeatAt?: number | null;
+  mailProgressAt?: number | null;
+  calendarProgress?: { stalled: boolean; databaseFault: boolean; lastSettledAt: number | null } | null;
   /**
    * Whether the parked-accounts reader is composed (mail 0124, the wall). `absent` = no
    * `config.entitlements`, the self-host truth; the Cloud deploy gate asserts `composed`,
@@ -362,6 +365,11 @@ export interface HealthInput extends DegradedCauses {
   maxMs: number;
   /** How stale a COMPLETED cycle may go, mailboxes connected, before the verdict says
    *  `degraded` (`WorkerConfig.staleCycleMaxMs`). Never moves `healthy`. */
+  heartbeatStalledSince?: number | null;
+  calendarStalled?: boolean;
+  calendarDatabaseFault?: boolean;
+  watchIdleCycle?: boolean;
+  quarantined?: number;
   staleCycleMaxMs: number;
   /** The floor of {@link stuckCycleBoundMs} (`WorkerConfig.stuckCycleMaxMs`). */
   stuckCycleMaxMs: number;
@@ -445,14 +453,17 @@ export function evaluateHealth(input: HealthInput): HealthVerdict {
   // turn is the quarantine's to deal with, not a restart's.
   if (input.leader) {
     const stuckSince = input.cycleProgressAt ?? input.leaderSince;
-    const stuck = input.connected > 0 && stuckSince !== null
+    const stuck = (input.connected > 0 || input.watchIdleCycle) && stuckSince !== null
       && input.now - stuckSince >= stuckCycleBoundMs(input);
     // A fault only counts against a shard that owes mail: an empty one has no cycle to clear it.
     const failingFor = input.databaseFaultSince === null ? null : input.now - input.databaseFaultSince;
     const owes = input.expected - input.standDown > 0;
-    if ((owes && failingFor !== null && failingFor >= input.maxMs) || (stuck && input.databaseFault)) {
+    if ((owes && failingFor !== null && failingFor >= input.maxMs)
+      || (stuck && (input.databaseFault || input.heartbeatStalledSince != null))) {
       return verdict("database_fault");
     }
+    if (input.calendarStalled) return verdict("stuck_cycle");
+    if (input.calendarDatabaseFault) return verdict("database_fault");
     if (stuck) return verdict("stuck_cycle");
   }
 
@@ -463,7 +474,9 @@ export function evaluateHealth(input: HealthInput): HealthVerdict {
   // working. Not a new policy — `expected: 0` has never been a fault — this only says a mailbox someone
   // else organizes is not what this worker owes. The window is short (a stand-down writes
   // `status='disabled'`, so the next roster pass drops it from `expected`).
-  const owed = Math.max(0, input.expected - input.standDown);
+  // Provider backoff is visible in the roster shortfall. The loop can still be alive
+  // and polling when every provider rejects its connection.
+  const owed = Math.max(0, input.expected - input.standDown - (input.quarantined ?? 0));
   if (input.leader && owed > 0 && input.connected === 0) {
     const since = input.lastCycleAt ?? input.leaderSince;
     if (since !== null && input.now - since >= input.maxMs) return verdict("serving_nothing");

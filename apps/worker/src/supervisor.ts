@@ -4,7 +4,7 @@ import {
   DEFAULT_DB_WAIT_BASE_MS, DEFAULT_DB_WAIT_CAP_MS, DEFAULT_FIRST_CONTACT_DEADLINE_MS, DEFAULT_HEALTH_PORT,
   DEFAULT_LOCK_HEARTBEAT_MS, DEFAULT_SERVING_NOTHING_MAX_MS, DEFAULT_SHARDS, DEFAULT_STALE_CYCLE_MAX_MS,
   DEFAULT_STANDBY_RETRY_MS, DEFAULT_STUCK_CYCLE_MAX_MS, DEFAULT_SURRENDER_DEADLINE_MS, takeoverDeadlineMsOf,
-  timerMs, type WorkerConfig,
+  LOCK_UNPROVEN_HEARTBEATS, timerMs, type WorkerConfig,
 } from "./config.js";
 import { asDatabaseFault, databaseAwayCodeOf, FIRST_CONTACT_TIMEOUT } from "./db-fault.js";
 import { DatabaseFaultError } from "@ohmail/organizer/dead-letter";
@@ -165,6 +165,7 @@ export async function runWorkerSupervised(
   let closing: Promise<boolean> | null = null;
   /** The stuck cycle has been reported to the host's hook; it is reported once. */
   let stuckReported = false;
+  let hasLed = false;
   let leaderWaiters: Array<() => void> = [];
 
   // Read through a function: `state` changes across awaits, which control-flow narrowing
@@ -172,7 +173,7 @@ export async function runWorkerSupervised(
   const isStopped = (): boolean => state === "stopped";
   const isLive = (): boolean => state !== "stopped" && state !== "failed";
 
-  /** Everything the verdict may know, read once: the answer `/health` gives and the act below share it. */
+  /** The mail loop and leadership signals shared by health reporting and recovery. */
   function healthInput(stats: WorkerStats | undefined, now: number): HealthInput {
     // The no-worker fallback (waiting, standby, or a takeover in flight) has to be the ALL-CLEAR:
     // an instance with no worker yet has no roster to fall short of, and its real conditions are
@@ -180,6 +181,9 @@ export async function runWorkerSupervised(
     const causes = stats?.causes
       ?? { databaseFault: false, dutyGap: false, unserved: 0, standDown: 0, capacityDropped: 0 };
     const standby = state === "standby";
+    const heartbeatAt = stats?.heartbeatAt ?? null;
+    const heartbeatStalledSince = heartbeatAt !== null && now - heartbeatAt >= Math.max(DEFAULT_SERVING_NOTHING_MAX_MS, 4 * watchMs)
+      ? heartbeatAt : null;
     return {
       now, fatal: fatal !== undefined && fatal !== null,
       leader: state === "leader", standby,
@@ -194,6 +198,9 @@ export async function runWorkerSupervised(
       lastRotationMs: stats?.lastRotationMs ?? null,
       databaseFaultSince: stats?.databaseFaultSince?.getTime() ?? null,
       maxMs, staleCycleMaxMs, stuckCycleMaxMs, pollIntervalMs: config.pollIntervalMs,
+      heartbeatStalledSince,
+      watchIdleCycle: stats !== undefined,
+      quarantined: stats?.unserved.quarantined ?? 0,
       ...causes,
     };
   }
@@ -220,7 +227,11 @@ export async function runWorkerSupervised(
       // the two states it missed cost an eight-minute unannounced outage. A rule that decides
       // whether a deployment may go live is worth a truth table, and a truth table needs a
       // pure function to be a test of.
-      const verdict = evaluateHealth(input);
+      const verdict = evaluateHealth({
+        ...input,
+        calendarStalled: stats?.calendarProgress?.stalled ?? false,
+        calendarDatabaseFault: stats?.calendarProgress?.databaseFault ?? false,
+      });
       return {
         // The build identity, first in the body because it is the first thing to read:
         // every other field below is a claim ABOUT a build, and worth nothing until you know
@@ -282,6 +293,9 @@ export async function runWorkerSupervised(
         pager: stats?.pager ?? null,
         // Same contract: a standby has scheduled nothing, and `[]` is the honest report.
         apiCron: stats?.apiCron ?? [],
+        heartbeatAt: stats?.heartbeatAt ?? null,
+        mailProgressAt: input.cycleProgressAt,
+        calendarProgress: stats?.calendarProgress ?? null,
         // The wall's reader (mail 0124): the worker's own answer once it runs; before that, the
         // config fact it will be composed from — never a fabricated `composed`.
         parkedReader: stats?.parkedReader ?? (config.entitlements ? "composed" : "absent"),
@@ -378,9 +392,9 @@ export async function runWorkerSupervised(
     }
     // Either clock past the bound: the fault's own age, or a cycle that stood still that long
     // before the fault was named.
-    const failingSince = input.databaseFaultSince ?? now;
+    const failingSince = input.databaseFaultSince ?? input.heartbeatStalledSince ?? now;
     const stoodStill = now - (input.cycleProgressAt ?? input.leaderSince ?? now);
-    if (reason === "database_fault" && (now - failingSince >= boundMs || (input.connected > 0 && stoodStill >= boundMs))) {
+    if (reason === "database_fault" && (now - failingSince >= boundMs || (input.watchIdleCycle && stoodStill >= boundMs))) {
       log.error("stuck_cycle_surrendered", {
         outageMs: now - failingSince, boundMs,
         reason: "the database has failed for longer than the stuck bound; waiting for it to lead again",
@@ -524,44 +538,73 @@ export async function runWorkerSupervised(
     // The lock is ours and the worker is starting: published as a takeover, as it always was.
     if (state !== "standby") { state = "standby"; standbySince = Date.now(); }
     let started: RunningWorker;
-    // releases the lock if it throws
+    let takingOver = true;
+    let lossCode: string | null = null;
+    let closingDeadline: ReturnType<typeof setTimeout> | undefined;
+    let rejectDeadline!: (err: Error) => void;
+    const deadline = new Promise<never>((_, reject) => { rejectDeadline = reject; });
+    const overdue = setTimeout(() => rejectDeadline(new TakeoverTimeoutError()), takeoverDeadlineMs);
+
+    const takeoverLost = (code: string): void => {
+      if (!takingOver || !isLive() || lossCode !== null) return;
+      lossCode = code;
+      state = "waiting";
+      lockWon = false;
+      waitingSince = Date.now();
+      waitingCode = code;
+      // Let startup unwind and close its own pools. Never start a second worker beside it.
+      closingDeadline = setTimeout(() => rejectDeadline(new SurrenderTimeoutError()), surrenderDeadlineMs);
+    };
+    void lock.lost.then((err) => takeoverLost(err.code));
+    // The worker installs its usual lock checks after its initial configuration reads.
+    // Prove the lock during those reads too, then hand the check over without overlap.
+    let unproven = 0;
+    let verifying = false;
+    const earlyWatch = setInterval(() => {
+      if (!isLive() || lossCode !== null) return;
+      if (unproven >= LOCK_UNPROVEN_HEARTBEATS) { takeoverLost("LOCK_UNPROVEN"); return; }
+      unproven += 1;
+      if (verifying) return;
+      verifying = true;
+      void lock.verify().then((held) => {
+        if (held) unproven = 0;
+        else takeoverLost("LOCK_NOT_HELD");
+      }).catch(() => undefined).finally(() => { verifying = false; });
+    }, watchMs);
     const starting = startWorkerWithLock(config, lock, {
-      onLockLost,
+      onLockWatch: () => clearInterval(earlyWatch),
+      onLockLost: (err) => { if (takingOver) takeoverLost(err.code); else onLockLost(err); },
+      onStartupDatabaseFault: (err) => {
+        const code = databaseAwayCodeOf(err);
+        if (code !== null) takeoverLost(code);
+      },
       onInitialRoster: (startingWorker) => { if (isLive()) takingOverWorker = startingWorker; },
     });
-    let overdue: ReturnType<typeof setTimeout> | undefined;
     try {
-      started = await Promise.race([
-        starting,
-        new Promise<never>((_, reject) => {
-          overdue = setTimeout(() => { reject(new TakeoverTimeoutError()); }, takeoverDeadlineMs);
-        }),
-      ]);
+      started = await Promise.race([starting, deadline]);
     } catch (err) {
-      if (err instanceof TakeoverTimeoutError) {
-        // The start is still running and still holds the lock, so the lock is not released under
-        // it: this throw ends the process, which frees it. Should the start ever return first, it
-        // is closed.
+      if (err instanceof TakeoverTimeoutError || err instanceof SurrenderTimeoutError) {
         void starting.then((late) => late.stop(), () => undefined).catch(() => undefined);
         throw err;
       }
-      const code = databaseAwayCodeOf(err);
+      const code = databaseAwayCodeOf(err) ?? lossCode;
       if (code === null || !isLive()) throw err;
-      // The database went away under the takeover. The lock is released and the pool closed
-      // (`startWorkerWithLock`), so this is the waiting start again, not a broken instance.
       lockWon = false;
       waitForDatabase(err, code);
       return;
     } finally {
+      takingOver = false;
       takingOverWorker = null;
+      clearInterval(earlyWatch);
       clearTimeout(overdue);
+      clearTimeout(closingDeadline);
     }
     // stop() may have been called WHILE we were taking over (a SIGTERM landing during a
     // standby's promotion). Publishing leadership now would leak this worker and its lock:
     // stop() already saw `worker === null` and returned.
     if (!isLive()) { await started.stop(); return; }
     worker = started;
-    if (started.stats().lockLost) {
+    if (lossCode !== null || started.stats().lockLost) {
       // The lock went while the worker was starting: it never led, and it has quiesced.
       log.error("leadership_surrendered", { reason: "lock lost during the takeover; waiting to lead again" });
       surrender(Date.now());
@@ -572,6 +615,8 @@ export async function runWorkerSupervised(
     leaderSince = Date.now();
     watch = setInterval(watchCycle, watchMs);
     log.info("leader_acquired", {});
+    if (hasLed) log.info("worker_recovered", { reason: "leadership and scheduling resumed" });
+    hasLed = true;
     for (const resolve of leaderWaiters.splice(0)) resolve();
   }
 

@@ -39,7 +39,10 @@ export function heartbeatSection(scope: WorkerScope): void {
           { shardIndex: scope.shardIndex, instanceId: scope.leaderToken, shards: scope.shards, startedAt: scope.startedAt, ...counters() },
           { pid: scope.lock.backendPid, key: leaderLockKeyFor(scope.shardIndex), mark: scope.lock.mark },
         );
-        if (landed) scope.claimed = true;
+        if (landed) {
+          scope.claimed = true;
+          scope.heartbeatAt = Date.now();
+        }
         else scope.handleLockLoss(new LockLostError("the database does not show this instance's session holding the lock", "LOCK_UNCLAIMED"));
       } catch (err) {
         if (required) {
@@ -60,7 +63,8 @@ export function heartbeatSection(scope: WorkerScope): void {
      */
     async function renew(): Promise<void> {
       const mine = await refreshHeartbeat(scope.roster as unknown as Tx, { shardIndex: scope.shardIndex, instanceId: scope.leaderToken, ...counters() });
-      if (!mine) scope.handleLockLoss(new LockLostError("the heartbeat row no longer names this instance", "LOCK_SUPERSEDED"));
+      if (mine) scope.heartbeatAt = Date.now();
+      else scope.handleLockLoss(new LockLostError("the heartbeat row no longer names this instance", "LOCK_SUPERSEDED"));
     }
 
     /**
