@@ -12,6 +12,8 @@ export type InviteState =
   | { readonly at: "opening" }
   /** The link carried no secret: it was cut short, or the secret came in the query, which is refused. */
   | { readonly at: "missing" }
+  /** The page was reopened after it removed the fragment from this history entry. */
+  | { readonly at: "reopen" }
   /** This build has no server behind it. */
   | { readonly at: "unavailable" }
   /** The account's blanks; while they are sent, and a refusal said as the shell's sentence. */

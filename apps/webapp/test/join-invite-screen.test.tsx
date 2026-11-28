@@ -103,8 +103,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mountAt(url: string): Promise<HTMLElement> {
-  window.history.replaceState(null, "", url);
+async function mountAt(url?: string): Promise<HTMLElement> {
+  if (url !== undefined) window.history.replaceState(null, "", url);
   const { InviteRoute } = await import("../app/(product)/join/invite/InviteRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -155,6 +155,29 @@ describe("the token: fragment in, scrubbed at once, never in any request URL", (
     expect(window.location.pathname).toBe("/join/invite");
     // The page is drawn without the secret: the ceremony holds it, no element or attribute carries it.
     expect(c.innerHTML, "the page carried the link's token").not.toContain(TOKEN);
+  });
+
+  it("on reload, asks for the original invitation again and opens it in the same tab", async () => {
+    await mountAt(`/join/invite#${TOKEN}`);
+    expect(window.location.hash).toBe("");
+    expect(JSON.stringify(window.history.state)).not.toContain(TOKEN);
+    await act(async () => root!.unmount());
+    host?.remove();
+
+    const reloaded = await mountAt();
+    expect(reloaded.textContent).toContain("Reopen your invitation");
+    expect(reloaded.textContent).not.toContain("This link is incomplete");
+    expect(blank(reloaded, W.emailLabel)).toBeNull();
+
+    await act(async () => {
+      const hashChanged = new Promise<void>((resolve) =>
+        window.addEventListener("hashchange", () => resolve(), { once: true }),
+      );
+      window.location.hash = TOKEN;
+      await hashChanged;
+    });
+    expect(blank(reloaded, W.emailLabel)).not.toBeNull();
+    expect(window.location.hash).toBe("");
   });
 
   it("the token rides ONLY the redeem's JSON body — no fetch URL ever carries it", async () => {

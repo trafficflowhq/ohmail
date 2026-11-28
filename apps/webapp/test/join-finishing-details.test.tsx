@@ -88,7 +88,7 @@ async function render(screen: "join" | "verify", props: Record<string, unknown> 
   const { NextIntlClientProvider } = await import("next-intl");
   const node = screen === "join"
     ? React.createElement((await import("../app/(product)/join/JoinRoute.js")).JoinRoute, { initialCode: "", publicSignup: true, ...props })
-    : React.createElement((await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute, { initialToken: "tok" });
+    : React.createElement((await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute, { initialToken: "tok", ...props });
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -288,6 +288,19 @@ describe("addressSuggestion, the rule itself", () => {
       expect(addressSuggestion(fine), fine).toBeNull();
     }
   });
+});
+
+it("explains how to continue when the confirmation page is reloaded", async () => {
+  window.history.replaceState(null, "", "/verify-email?token=link-fixture");
+  const opened = await render("verify", { initialToken: "link-fixture" });
+  const code = () => `input[aria-label="${en.verify.tokenLabel}"]`;
+  expect(opened.host.querySelector(code())).toBeNull();
+  expect(window.location.search).toBe("");
+
+  await unmount?.();
+  const reloaded = await render("verify", { initialToken: "" });
+  expect(reloaded.host.textContent).toContain("Reopen the confirmation link in your email");
+  expect(reloaded.host.querySelector(code())).not.toBeNull();
 });
 
 describe("the dead-link page has the control it names", () => {

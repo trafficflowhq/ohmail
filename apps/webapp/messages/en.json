@@ -292,6 +292,8 @@
     "working": "One moment…",
     "badToken": "This invite link does not work any more. Links work once and expire, so ask the person who invited you for a new one.",
     "tokenSpent": "This invite was already used for {email}. To use another email address, ask the person who invited you for a new link.",
+    "reopenTitle": "Reopen your invitation",
+    "reopenLine": "Open the original link you received to continue setting up your account.",
     "missingTitle": "This link is incomplete",
     "missingLine": "Ask the person who invited you to send the link again.",
     "missingNote": "The invite’s secret part is missing from the address. It usually gets lost when a link is copied by hand.",
@@ -2990,6 +2992,7 @@
   },
   "verify": {
     "confirmWith": "Confirm my email address with password <blank></blank>.",
+    "reopenLink": "Reopen the confirmation link in your email to continue without entering a code.",
     "codeIs": "The code from my email is <blank></blank>.",
     "passwordIs": "My password is <blank></blank>.",
     "tokenLabel": "Confirmation code from your email",

@@ -35,17 +35,18 @@ export function InvitePage({ door }: { door: InviteDoor | None }): ReactNode {
           </Page>
         </div>
       );
-    case "missing": {
+    case "missing":
+    case "reopen": {
       const { pending } = door as InviteDoor;
       return (
         <Page
           back={<ColdMark />}
           refusal={refusalOf(pending, null)}
-          line={invite("missingLine")}
-          note={invite("missingNote")}
+          line={invite(state.at === "reopen" ? "reopenLine" : "missingLine")}
+          note={state.at === "missing" ? invite("missingNote") : undefined}
           acts={<SignOutAgain pending={pending} busy={false} />}
         >
-          <Said text={invite("missingTitle")} />
+          <Said text={invite(state.at === "reopen" ? "reopenTitle" : "missingTitle")} />
         </Page>
       );
     }
