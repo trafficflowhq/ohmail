@@ -2,7 +2,7 @@
  * THE OHBOX'S HEAD: its name with the hot dot while something waits, and its own tools: the Screener's doorbell,
  * Mark all read, and the list's menu with Pull new mail and Mark all read.
  */
-import { useRef, useState } from "react";
+import { useRef, useState, type MouseEvent } from "react";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { sharedNotOrganizedWhy } from "@ohmail/app-logic/mail-state/mail-state";
 import { Button, Menu, MenuItem } from "@ohmail/ui/base";
@@ -15,6 +15,24 @@ import { useShortcutsMenu } from "../keys/ShortcutsMenuItem.js";
 import { NONE } from "../host/index.js";
 import { useLocale, useText } from "../text/index.js";
 import type { OhboxBeside } from "./beside.js";
+
+/** Keep a repeat press at the dismissed item's position off the controls it revealed. */
+function guardRepeatPress(event: MouseEvent<HTMLButtonElement>): void {
+  const win = event.currentTarget.ownerDocument.defaultView;
+  if (!win || event.detail === 0) return;
+  const { clientX, clientY } = event;
+  const stop = () => win.removeEventListener("click", repeat, true);
+  const repeat = (next: globalThis.MouseEvent) => {
+    if (next.detail === 0) return;
+    stop();
+    win.clearTimeout(timer);
+    if (Math.hypot(next.clientX - clientX, next.clientY - clientY) > 16) return;
+    next.preventDefault();
+    next.stopImmediatePropagation();
+  };
+  const timer = win.setTimeout(stop, 350);
+  win.addEventListener("click", repeat, true);
+}
 
 export function OhboxHead({
   model,
@@ -73,6 +91,7 @@ export function OhboxHead({
       />
       <Menu
         open={!displayOnly && menuOpen}
+        portal={plan.device === "phone"}
         onClose={close}
         onKey={shortcuts.onKey}
         anchor={menuButton}
@@ -97,8 +116,9 @@ export function OhboxHead({
             icon="read"
             disabled={markAll === null}
             note={model.mayState && unread > 0 ? unread.toLocaleString(locale) : undefined}
-            onPress={() => {
-              setMenuOpen(false);
+            onPress={(event) => {
+              guardRepeatPress(event);
+              close();
               markAll?.();
             }}
           >

@@ -112,6 +112,7 @@ export function useHistoryLive(args: PlaceLiveArgs, own: HistoryLiveOwn): Histor
   const model = useHistoryList({
     ...feed.list,
     arrival: "first",
+    walk: { ...feed.list.walk, replacePreview: (id) => args.commands.open(id, "replace") },
     messages,
     conversationMarks: conversations.marks,
     openMessage:
