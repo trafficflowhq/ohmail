@@ -18,7 +18,7 @@ import { useText } from "../../text/index.js";
 import { useCardKeys, useLetterKeys, useReaderKeys, type DeleteKeyTarget, type PanelMenu } from "../keys.js";
 import { useReplyVerbs } from "../parts.js";
 import { ReplyPanel } from "./ReplyRun.js";
-import { ActionMenus, useActionMenu } from "./ActionMenus.js";
+import { ActionMenus, useActionMenu, useReaderMore } from "./ActionMenus.js";
 import { useVerbs, type Verbs } from "./use-verbs.js";
 
 interface ActionBarProps {
@@ -84,6 +84,7 @@ export function ActionBar({
   const stop = useRef<HTMLDivElement | null>(null);
   const { anchor, menu, setMenu, toggle, close, byKey, trash, confirmTrash, trashAcknowledged } =
     useActionMenu(stop, verbs, onScreenKey);
+  const { more, catchMoreRepeat } = useReaderMore(room, menu, words.more, toggle("more"));
   /* The account's resurface hour and its writer, as the shell handed them to the room. */
   const hour = useResurfaceTime();
   const { mirror } = useMirror();
@@ -112,12 +113,6 @@ export function ActionBar({
     ...(replyItems?.filter((verb) => folded.includes(verb.id)) ?? []),
     ...behindMore(all, folded, reply !== null, card !== undefined),
   ];
-  const more = {
-    label: words.more,
-    behind: true,
-    expanded: menu === "more" || menu === "cardDelete",
-    onPress: toggle("more"),
-  };
   usePanelKeyboard({
     card,
     cardKeys,
@@ -133,7 +128,12 @@ export function ActionBar({
     tagLabel: canTag && reply === null && run === null ? words.tag : undefined,
   });
   return (
-    <div className="rd-stop" data-read-stop={showPanel ? "" : undefined} ref={stop}>
+    <div
+      className="rd-stop"
+      data-read-stop={showPanel ? "" : undefined}
+      ref={stop}
+      onClickCapture={catchMoreRepeat}
+    >
       {showPanel && verbs.pendingReplyCopy ? (
         <div className="oh-text" role="status" title={t("replyCopyWaiting")}>
           {t("replyCopySending")}
