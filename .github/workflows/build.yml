@@ -1123,6 +1123,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ohmail-dmg-${{ github.run_number }}
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 90 || 3 }}
           path: build/ohmail.dmg
           if-no-files-found: error
           overwrite: true
@@ -1131,6 +1132,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ohmail-app-tgz-${{ github.run_number }}
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 90 || 3 }}
           path: build/ohmail.app.tar.gz
           if-no-files-found: error
           overwrite: true
@@ -1580,6 +1582,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ohmail-windows-${{ github.run_number }}
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 90 || 3 }}
           path: build/ohmail-windows-setup.exe
           if-no-files-found: error
 
@@ -1591,6 +1594,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: cargo-lock-${{ github.run_number }}
+          retention-days: 3
           path: apps/desktop/src-tauri/Cargo.lock
           if-no-files-found: error
 
@@ -2800,6 +2804,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: perf-smoke-linux-x86_64-${{ github.run_number }}
+          retention-days: 3
           path: |
             perf-smoke/samples.tsv
             perf-smoke/verdict.txt
@@ -2810,6 +2815,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: launch-check-linux-x86_64-${{ github.run_number }}
+          retention-days: 3
           path: launch-check
           if-no-files-found: ignore
 
@@ -2817,6 +2823,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ohmail-appimage-${{ github.run_number }}
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 90 || 3 }}
           path: build/ohmail-linux-x86_64.AppImage
           if-no-files-found: error
 
@@ -2824,6 +2831,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ohmail-deb-${{ github.run_number }}
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 90 || 3 }}
           path: build/ohmail-linux-amd64.deb
           if-no-files-found: error
 
@@ -2834,6 +2842,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ohmail-rpm-${{ github.run_number }}
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 90 || 3 }}
           path: build/ohmail-linux-x86_64.rpm
           if-no-files-found: error
 
@@ -3758,6 +3767,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: launch-check-linux-aarch64-${{ github.run_number }}
+          retention-days: 3
           path: launch-check
           if-no-files-found: ignore
 
@@ -3765,6 +3775,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ohmail-appimage-aarch64-${{ github.run_number }}
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 90 || 3 }}
           path: build/ohmail-linux-aarch64.AppImage
           if-no-files-found: error
 
@@ -3772,6 +3783,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ohmail-deb-arm64-${{ github.run_number }}
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 90 || 3 }}
           path: build/ohmail-linux-arm64.deb
           if-no-files-found: error
 
@@ -3779,6 +3791,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ohmail-rpm-aarch64-${{ github.run_number }}
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 90 || 3 }}
           path: build/ohmail-linux-aarch64.rpm
           if-no-files-found: error
 

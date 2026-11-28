@@ -415,6 +415,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: suite-durations-${{ matrix.shard }}
+          retention-days: 1
           path: build/ci-suite-${{ matrix.shard }}.json
           if-no-files-found: warn
 
@@ -598,6 +599,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: sqlite-durations-${{ matrix.shard }}
+          retention-days: 1
           path: build/ci-sqlite-${{ matrix.shard }}.json
           if-no-files-found: warn
 
