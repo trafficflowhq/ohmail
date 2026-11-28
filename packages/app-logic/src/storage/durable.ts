@@ -22,6 +22,7 @@ export {
   durableSet,
   localStorageDoor,
   onDurabilityLost,
+  onLocalStorageChanged,
   resetDurabilityForTest,
   storageDoor,
 } from "@ohmail/client-engine/durable";

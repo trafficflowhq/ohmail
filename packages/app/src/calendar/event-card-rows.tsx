@@ -76,6 +76,9 @@ function rowsOf(
       children: event.viewOnly ? <Icon name="lock" size={16} className="oh-ecard-lock" /> : null,
     });
   }
+  if (event.viewOnlyReason) {
+    rows.push({ label: t("edit.access"), text: t(`edit.readOnlyReason.${event.viewOnlyReason}`) });
+  }
   if (calendar?.access === "busy" || !stored) return rows;
   const confirmed = host.engine.store.get<CalendarEventRecord>("calendar_event", stored.record.id);
   rows.push(...eventDetails(stored.record, confirmed, own, t, locale));

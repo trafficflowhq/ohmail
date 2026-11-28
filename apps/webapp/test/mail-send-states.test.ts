@@ -545,8 +545,9 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     const settled: string[] = [];
     const settledWith: Array<Record<string, unknown> | undefined> = [];
     const engine = {
-      mutate: async (m: Record<string, unknown>) => {
+      mutate: async (m: Record<string, unknown>, opts?: { onDurable?: () => void }) => {
         mutations.push(m);
+        opts?.onDurable?.();
         return {
           id: "i", key: `k${mutations.length}`, seq: 1,
           // Only the send itself takes the injected outcome; the follow-up `triage_set` is

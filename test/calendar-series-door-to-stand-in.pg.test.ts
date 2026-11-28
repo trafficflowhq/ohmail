@@ -185,7 +185,8 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
    * at (its row is the bench's).
    */
   async function bench(members: Record<string, string>, o: {
-    readonly autoSchedule?: boolean; readonly mailboxes?: readonly string[]; readonly proven?: ProvenRepeats;
+    readonly autoSchedule?: boolean; readonly nativeMove?: boolean; readonly mailboxes?: readonly string[]; readonly proven?: ProvenRepeats;
+    readonly configure?: (server: StandIn) => void;
     /** The shapes proven at this stand-in's place, in place of the bench's row. */
     readonly shapes?: readonly RepeatShape[];
     readonly currentQueue?: boolean;
@@ -196,6 +197,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     const identity = o.principal?.replace(/^mailto:/i, "");
     const dav = await startCalDavStandIn({
       autoSchedule: o.autoSchedule ?? false,
+      nativeMove: o.nativeMove ?? false,
       ...(identity === undefined ? {} : { schedulingAddresses: identity.includes("@") ? [identity] : [] }),
     });
     servers.push(dav);
@@ -203,6 +205,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     // is taken for one shared with the account, whose events by others its write access lets it change.
     const held = dav.addCalendar("studio", { name: "Studio", owner: dav.paths.principal });
     for (const [name, text] of Object.entries(members)) dav.put("studio", name, text, `"${name}-1"`);
+    o.configure?.(dav);
     const serverUrl = `http://127.0.0.1:${dav.port}${dav.paths.start}`;
     const boxes = o.mailboxes ?? [];
     const t = await seedConnection(w, {
@@ -225,7 +228,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       await w.db.update(calWrites).set({ nextAttemptAt: sql`now() - interval '1 second'` }).where(and(eq(calWrites.accountId, t.accountId), eq(calWrites.state, "pending")));
     };
     expect((await calendarSyncPass(readingOnly, t.due, never)).kind).toBe("synced");
-    const memberUrl = (name: string) => `http://127.0.0.1:${dav.port}${dav.paths.member("studio", name)}`;
+    const memberUrl = (name: string, slug = "studio") => `http://127.0.0.1:${dav.port}${dav.paths.member(slug, name)}`;
     const ctx = (): ServiceContext => ({ db: dbFor(w.db as unknown as ServicesDb, t.accountId), accountId: t.accountId, userId: null, now: () => new Date(), requestId: `sd-${randomUUID().slice(0, 8)}` });
     return {
       dav, t,
@@ -242,8 +245,8 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       /** A turn without the drain: a reading alone. */
       read: async () => { await due(); return (await calendarSyncPass(readingOnly, t.due, never)).kind; },
       /** The stored rows of a member: the series' own first. */
-      rows: (name: string) => w.db.select({ id: calEvents.id, updatedAt: calEvents.updatedAt, recurrenceId: calEvents.recurrenceId })
-        .from(calEvents).where(and(eq(calEvents.accountId, t.accountId), eq(calEvents.providerId, memberUrl(name)))).orderBy(asc(calEvents.recurrenceId)),
+      rows: (name: string, slug?: string) => w.db.select({ id: calEvents.id, updatedAt: calEvents.updatedAt, recurrenceId: calEvents.recurrenceId })
+        .from(calEvents).where(and(eq(calEvents.accountId, t.accountId), eq(calEvents.providerId, memberUrl(name, slug)))).orderBy(asc(calEvents.recurrenceId)),
       /** The press as the door takes it: its receipt's state and word, or the door's refusal. */
       door: async (key: string, act: unknown): Promise<string> => {
         try {
@@ -307,9 +310,139 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       /** The members the server holds now, by name. */
       held: () => new Map([...held.members].map(([name, m]) => [name, m.ics] as const)),
       feed: (ids: readonly string[]) => CALENDAR_BUILDERS.calendar_event(ctx().db, t.accountId, ids),
-      calendarId: async () => (await w.db.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, t.accountId)))[0]!.id,
+      calendarId: async (slug = "studio") => (await w.db.select({ id: calCalendars.id }).from(calCalendars).where(and(
+        eq(calCalendars.accountId, t.accountId), eq(calCalendars.providerId, `http://127.0.0.1:${dav.port}${dav.paths.collection(slug)}`),
+      )))[0]!.id,
     };
   }
+
+  it("edits a guestless annual all-day event on a calendar shared with write access", async () => {
+    const b = await bench({ anniversary: memberText({
+      uid: "annual-reminder", tz: null, start: "20261226", end: "20261227", rule: "FREQ=YEARLY", summary: "Annual reminder",
+    }) });
+    expect(await b.access(false)).toBe("synced");
+    const [calendar] = await w.db.select({ access: calCalendars.access }).from(calCalendars)
+      .where(eq(calCalendars.accountId, b.t.accountId));
+    expect(calendar?.access).toBe("writer");
+    const [row] = await b.rows("anniversary");
+    expect(await b.door("change-annual-reminder", {
+      kind: "calendar_event_update", ...on(row!), scope: { kind: "record" },
+      audience: { organizer: null, guests: [] }, change: { title: "Updated annual reminder" },
+    })).toBe("pending");
+    expect(await b.turn()).toBe("synced");
+    expect(b.dav.seen.filter(({ method }) => method === "PUT")).toEqual([
+      expect.objectContaining({ body: expect.stringContaining("SUMMARY:Updated annual reminder") }),
+    ]);
+    expect(await b.read()).toBe("synced");
+    const [record] = await w.db.select({ title: calEvents.title, repeat: calEvents.repeatRule }).from(calEvents)
+      .where(eq(calEvents.id, row!.id));
+    expect(record).toEqual({ title: "Updated annual reminder", repeat: "FREQ=YEARLY" });
+  });
+
+  it("moves a guestless annual event from a write-share using the provider's native move", async () => {
+    const annual = memberText({
+      uid: "annual-move", tz: null, start: "20261226", end: "20261227", rule: "FREQ=YEARLY", summary: "Annual reminder",
+    });
+    const b = await bench({}, { nativeMove: true, proven: {}, configure(dav) {
+      dav.addCalendar("shared", { owner: "/dav/principals/another/", privileges: ["read", "write-content", "bind", "unbind"] });
+      dav.put("shared", "anniversary", annual);
+    } });
+    const [row] = await b.rows("anniversary", "shared");
+    expect(await b.door("move-annual-reminder", {
+      kind: "calendar_event_move", ...on(row!), toCalendarId: await b.calendarId(),
+      audience: { organizer: null, guests: [] },
+    })).toBe("pending");
+    expect(await b.turn()).toBe("synced");
+    expect(b.dav.seen.filter(({ method }) => method === "MOVE")).toEqual([
+      expect.objectContaining({ path: b.dav.paths.member("shared", "anniversary") }),
+    ]);
+    expect(await b.read()).toBe("synced");
+    expect(await b.rows("anniversary", "shared")).toHaveLength(0);
+    expect(await b.rows("anniversary")).toHaveLength(1);
+    expect(b.held().get("anniversary")).toBe(annual);
+  });
+
+  it("creates, answers and deletes through the provider while read shares and subscriptions refuse writes", async () => {
+    const identity = ["guest", "example.test"].join("@");
+    const organizer = ["host", "example.test"].join("@");
+    const invitation = memberText({
+      uid: "provider-invitation", tz: null, start: "20261226", end: "20261227", rule: "FREQ=YEARLY", summary: "A meeting",
+      more: [`ORGANIZER:mailto:${organizer}`, `ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:${identity}`],
+    }).replace("RRULE:FREQ=YEARLY\r\n", "");
+    const b = await bench({}, { autoSchedule: true, principal: identity, configure(dav) {
+      dav.addCalendar("shared", { owner: "/dav/principals/another/" });
+      dav.addCalendar("reader", { owner: "/dav/principals/another/", privileges: ["read"] });
+      dav.addCalendar("subscription", { kind: "subscribed", owner: dav.paths.principal });
+      dav.put("shared", "invitation", invitation);
+    } });
+    const calendars = await w.db.select({ id: calCalendars.id, access: calCalendars.access }).from(calCalendars)
+      .where(eq(calCalendars.accountId, b.t.accountId));
+    const feed = await CALENDAR_BUILDERS.calendar(dbFor(w.db as unknown as ServicesDb, b.t.accountId),
+      b.t.accountId, calendars.map(({ id }) => id));
+    expect([...feed.values()].map(({ access }) => access).sort()).toEqual(["owner", "reader", "reader", "writer"]);
+    await w.db.update(calConnections).set({ status: "failing", errorCode: null }).where(eq(calConnections.accountId, b.t.accountId));
+    const create = async (slug: string) => b.door(`create-${slug}`, {
+      kind: "calendar_event_create", eventId: randomUUID(), calendarId: await b.calendarId(slug), event: {
+        title: `A new event in ${slug}`, start: { kind: "date", value: "20261226" }, end: { kind: "date", value: "20261227" },
+        busy: true, private: false, notes: null, place: null, callLink: null, repeat: null, invitees: [], alarms: [],
+      },
+    });
+    expect(await create("reader")).toBe("409 calendar_read_only");
+    expect(await create("subscription")).toBe("409 calendar_read_only");
+    expect(await create("studio")).toBe("pending");
+    expect(await create("shared")).toBe("pending");
+    const [invited] = await b.rows("invitation", "shared");
+    expect(await b.door("answer-invitation", {
+      kind: "calendar_event_answer", ...on(invited!), scope: { kind: "record" }, answer: "accepted",
+    })).toBe("pending");
+    expect(await b.turn()).toBe("synced");
+    const writes = b.dav.seen.filter(({ method }) => method === "PUT");
+    expect(writes.map(({ body }) => body)).toEqual(expect.arrayContaining([
+      expect.stringContaining("SUMMARY:A new event in studio"),
+      expect.stringContaining("SUMMARY:A new event in shared"),
+      expect.stringContaining("PARTSTAT=ACCEPTED"),
+    ]));
+    expect(writes).toHaveLength(3);
+    expect(await b.read()).toBe("synced");
+    expect((await b.feed([invited!.id])).get(invited!.id)?.myAnswer).toBe("accepted");
+    const [created] = await w.db.select({ id: calEvents.id, updatedAt: calEvents.updatedAt }).from(calEvents)
+      .where(and(eq(calEvents.accountId, b.t.accountId), eq(calEvents.title, "A new event in shared")));
+    expect(await b.door("delete-from-share", {
+      kind: "calendar_event_delete", ...on(created!), scope: { kind: "record" },
+    })).toBe("pending");
+    expect(await b.turn()).toBe("synced");
+    expect(b.dav.seen.filter(({ method }) => method === "DELETE")).toEqual([
+      expect.objectContaining({ path: expect.stringContaining(b.dav.paths.collection("shared")) }),
+    ]);
+    expect(await b.read()).toBe("synced");
+    expect((await b.feed([created!.id])).has(created!.id)).toBe(false);
+  });
+
+  it("restores the CalDAV subscription explanation on relisting an existing reader", async () => {
+    const b = await bench({});
+    const subscription = b.dav.addCalendar("subscription", { privileges: ["read"] });
+    b.dav.addCalendar("reader", { privileges: ["read"] });
+    expect(await b.access(true)).toBe("synced");
+    const id = await b.calendarId("subscription");
+    const readerId = await b.calendarId("reader");
+    const db = dbFor(w.db as unknown as ServicesDb, b.t.accountId);
+    const feed = () => CALENDAR_BUILDERS.calendar(db, b.t.accountId, [id, readerId]);
+    expect((await feed()).get(id)).toMatchObject({ access: "reader" });
+    expect((await feed()).get(id)).not.toHaveProperty("subscribed");
+    const priorChanges = await b.changes(id);
+
+    subscription.kind = "subscribed";
+    expect(await b.access(true)).toBe("synced");
+    expect(await b.calendarId("subscription")).toBe(id);
+    const refreshed = await feed();
+    expect(refreshed.get(id)).toMatchObject({ access: "reader", subscribed: true });
+    expect(refreshed.get(readerId)).not.toHaveProperty("subscribed");
+    expect((await b.changes(id)).slice(priorChanges.length)).toEqual(["update"]);
+
+    subscription.kind = "calendar";
+    expect(await b.access(true)).toBe("synced");
+    expect((await feed()).get(id)).not.toHaveProperty("subscribed");
+  });
 
   /** Nine Tuesdays at 18:00 in New York, ended by UNTIL told as the last day's own start (as many programs write it). */
   const NINE_TUESDAYS = memberText({

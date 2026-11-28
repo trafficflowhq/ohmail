@@ -68,7 +68,7 @@ import { letterDoor } from "../compose/letter-store";
 import type { FaceName } from "../theme/face";
 import { accountFaceShown, faceMirrorStands, faceScope } from "./face-scope";
 import { foldersFlag, freshestRead, signatureSequence, type FreshestRead, type SignatureSequence } from "./folders-flag";
-import { askEngineQueues, drainReads, readOnSentFolderAsk, type DrainRead } from "./drain-reads";
+import { drainReads, readOnSentFolderAsk, type DrainRead } from "./drain-reads";
 import { startUiVitals } from "../engine/engine-log";
 import { createProjector, listStamp, type Projected } from "./world-projection";
 import { usePrefs } from "./store";
@@ -817,19 +817,6 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
 }
 
 /* ────────────────────────────────────────────────────────────── the provider */
-
-/**
- * THE SCREENS THAT SHOW THE QUEUE ASK ON FOCUS — the Ohbox (the offer, the doorbell) and the
- * Screener, through this stable callback under `useFocusEffect`. The web asks on mount; a tab
- * screen stays mounted, so focus is the phone's mount.
- */
-export function useEngineQueuesAsk(): () => void {
-  const conn = useConnection();
-  const engine = conn.state.k === "live" ? conn.state.session.engine : null;
-  return useCallback(() => {
-    if (engine) askEngineQueues(engine);
-  }, [engine]);
-}
 
 /** No signature facts: nothing read yet, or nothing connected. */
 const NO_SIGNING: Omit<World["signing"], "write"> = { html: {}, sources: {}, changes: {} };

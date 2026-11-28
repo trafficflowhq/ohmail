@@ -15,6 +15,7 @@ import { sql, desc } from "drizzle-orm";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
 import type { ScreenerLearningState } from "./screener-learning-state.js";
 import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
+import type { DraftForwardSource } from "@ohmail/wire";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Migration 0008 — full-text `tsvector`. A DB-MANAGED
@@ -1500,8 +1501,8 @@ export const accounts = pgTable("accounts", {
    * whichever side wins the row lock, zero rows survive.
    */
   erasedAt: timestamp("erased_at", { withTimezone: true }),
-  erasureProgress: jsonb("erasure_progress").$type<AccountErasureProgress>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  erasureProgress: jsonb("erasure_progress").$type<AccountErasureProgress>(),
 });
 
 export const users = pgTable("users", {
@@ -2169,6 +2170,7 @@ export const drafts = pgTable("drafts", {
   // Mail 0179 — how many files the appointment carries (`scheduled_send_files`); 0 for a schedule
   // without files. After an ending without delivery it stays as the mark that the files were not kept.
   sendFiles: integer("send_files").notNull().default(0),
+  forwardSources: jsonb("forward_sources").$type<DraftForwardSource[]>(),
 }, (t) => ({
   ixIdAccount: uniqueIndex("drafts_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),

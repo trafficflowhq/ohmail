@@ -260,7 +260,7 @@ export {
 } from "./attachments-service.js";
 // Load it now: a letter emptied for space, read from the mail server for one view (on every door).
 export {
-  liveBody, LIVE_BODY_MAX_BYTES, LIVE_BODY_PER_HOUR, LIVE_BODY_PLACES,
+  forwardSource, liveBody, LIVE_BODY_MAX_BYTES, LIVE_BODY_PER_HOUR, LIVE_BODY_PLACES,
   type LiveBody, type LiveBodyPlace, type LiveBodyPorts, type LiveBodyRead,
 } from "./live-body.js";
 export {

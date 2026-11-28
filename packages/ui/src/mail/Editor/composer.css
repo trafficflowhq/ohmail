@@ -185,6 +185,8 @@
     box-sizing: border-box;
     min-height: var(--oh-composer-text-min);
     padding: var(--s3) var(--s4);
+    /* Keep earlier line breaks stable when the end of the paragraph changes. */
+    text-wrap-style: auto;
   }
 
   /* The words for a text not yet written: on the text's first line, in the second ink, and never in a press's way.

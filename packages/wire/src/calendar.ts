@@ -138,6 +138,8 @@ export interface CalendarRecord {
   name: string;
   color: string | null;
   access: CalendarAccess;
+  /** A read-only CalDAV subscription inside a calendar account. */
+  subscribed?: true;
   shown: boolean;
   timeZone: string | null;
   /** The days the last reading covered (`to` inclusive), or `null` when the reading has no window. */

@@ -14,6 +14,7 @@ import { GlassSidebar } from "./glass/GlassSidebar";
 import { MailAvatar } from "./MailAvatar";
 import { MailCalendarSwitch } from "./MailCalendarSwitch";
 import { MoreNav, Nav } from "./MoreNav";
+import { usePushMailPlace } from "./place-navigation";
 import { NavigationIcon } from "./Icon";
 
 const paper = design.faces.paper.phone;
@@ -30,6 +31,7 @@ export function MailPlacesDrawer({ open, active, onClose, onPlace, onCompose }: 
 }) {
   const w = useWorld();
   const t = useTheme();
+  const pushPlace = usePushMailPlace();
   const colors = mailColors(t);
   const pull = usePullToSync();
   const insets = useSafeAreaInsets();
@@ -60,14 +62,14 @@ export function MailPlacesDrawer({ open, active, onClose, onPlace, onCompose }: 
         <Scroller avoidKeyboard contentStyle={{ paddingTop: 0, paddingHorizontal: 0, paddingBottom: insets.bottom + paperEdge, gap: railGap }}>
           <MailCalendarSwitch drawer onNavigate={onClose} />
           <View style={{ gap: 2 }}>
-            {places.map((place) => <Nav key={place.id} label={place.label} drawer drawerIcon={place.icon}
+            {places.map((place) => <Nav key={place.id} label={place.label} drawer nativeFeedback drawerIcon={place.icon}
               selected={active === place.id} count={place.count || undefined}
               onPress={() => { onClose(); onPlace(place.id); }} />)}
           </View>
-          <Nav label={Copy.screener} drawer drawerIcon="screener"
+          <Nav label={Copy.screener} drawer nativeFeedback drawerIcon="screener"
             selected={active === "screener"} count={w.screener.waiting.length || undefined}
             onPress={() => { onClose(); onPlace("screener"); }} />
-          <MoreNav onNavigate={onClose} selected={active} drawer />
+          <MoreNav onNavigate={onClose} onPush={pushPlace} selected={active} drawer />
           <DrawerFooter onClose={onClose} pull={pull} />
         </Scroller>
       </View>

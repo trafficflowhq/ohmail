@@ -263,7 +263,7 @@ export {
   type DownloadAllInput, type DownloadAllResult, type AttachmentSink, type SavedPart,
 } from "./attachments-service.js";
 export {
-  liveBody, LIVE_BODY_MAX_BYTES, LIVE_BODY_PER_HOUR, LIVE_BODY_PLACES,
+  forwardSource, liveBody, LIVE_BODY_MAX_BYTES, LIVE_BODY_PER_HOUR, LIVE_BODY_PLACES,
   type LiveBody, type LiveBodyPlace, type LiveBodyPorts, type LiveBodyRead,
 } from "./live-body.js";
 export {

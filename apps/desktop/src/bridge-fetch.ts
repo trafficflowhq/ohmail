@@ -1,3 +1,4 @@
+import { forgetStartList } from "./start-list.js";
 /**
  * THE BRIDGE: the client engine's `fetch`, pointed at the local mail engine. The window
  * renders the same client app.ohmail.app renders, and that app talks through one function —
@@ -165,6 +166,7 @@ function noticeAccessAnswer(status: number, body: Uint8Array): void {
   } else if (answer.access === "refused") {
     forgetOpenVerdict();
     storeVerdict(storageOwner(), "closed");
+    forgetStartList();
   }
 }
 
@@ -201,6 +203,7 @@ function noticeAccessRefusal(status: number, body: Uint8Array): void {
   // The one staleness decision, shared with the drain loop (`shell/access-window.ts`).
   if (refusalIsStale(storageOwner())) return;
   storeVerdict(storageOwner(), "closed");
+  forgetStartList();
   const d = (env.details ?? {}) as { reason?: unknown; manageUrl?: unknown; lifecycle?: unknown };
   const url = typeof d.manageUrl === "string" && d.manageUrl.length > 0 ? d.manageUrl : undefined;
   const lifecycle = lifecycleOf(d.lifecycle);
@@ -557,6 +560,7 @@ export type DoorFlavorWire = "managed" | "selfhost" | "desktop-host";
 
 /** What the shell says about the engine. A tagged object; `state` is always there. */
 export interface EngineStatus {
+  startupListKey?: string;
   noticeDocument?: number;
   noticeSession?: number;
   /** The native shell's version of the installed standalone door. */
@@ -803,7 +807,10 @@ export async function engineConfigure(
   const payload = opts.provisional === true ? { config, provisional: true } : { config };
   return alone(
     "changing the door",
-    () => shell().invoke(CONFIGURE_COMMAND, payload) as Promise<EngineStatus>,
+    () => {
+      forgetStartList();
+      return shell().invoke(CONFIGURE_COMMAND, payload) as Promise<EngineStatus>;
+    },
   );
 }
 
@@ -917,6 +924,7 @@ export function waitingFor(door: EngineStatus): string | null {
  */
 export async function engineLogout(press: SignOutPress | null = null, expectedLocalDoor?: number): Promise<SignedOut> {
   return alone("signing out", async () => {
+    forgetStartList();
     let stillListedFrom: EngineStatus | null = null;
     let waiting: SignedOut["waiting"] = null;
     if (press !== null && endsAtServer(press)) {

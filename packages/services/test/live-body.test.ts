@@ -8,7 +8,7 @@ import {
 } from "@trafficflow/db";
 import { authThrottle } from "@trafficflow/db/cloud";
 import {
-  liveBody, liveBodyAdmitter, makeTestAuthDeps, throttleKeysFor, LIVE_BODY_MAX_BYTES, LIVE_BODY_PER_HOUR,
+  forwardSource, liveBody, liveBodyAdmitter, makeTestAuthDeps, throttleKeysFor, LIVE_BODY_MAX_BYTES, LIVE_BODY_PER_HOUR,
   ServiceError, type LiveBodyPlace, type LiveBodyRead, type ServiceContext,
 } from "../src/index.js";
 
@@ -154,5 +154,43 @@ describe("Load it now", () => {
     const other = await world("storage_cap", w.db);
     const theirs = { admit: liveBodyAdmitter(keys), ...reader(() => ({ raw: Buffer.from(LETTER(other.header)) })) };
     await expect(liveBody(ctxOf(other), other.messageId, theirs)).resolves.toMatchObject({ html: expect.any(String) });
+  });
+});
+
+describe("A message attached to a forward", () => {
+  it("returns all of the original bytes and leaves the message as it was", async () => {
+    const w = await world(null);
+    const raw = Buffer.from(LETTER(w.header));
+    const port = reader(() => ({ raw }));
+    const before = await snapshot(w);
+    expect(await forwardSource(ctxOf(w), w.messageId, port.read, raw.length)).toEqual(raw);
+    expect(port.asked).toEqual([{
+      mailboxId: w.mailboxId, maxBytes: raw.length,
+      places: [{ folder: "INBOX", uidvalidity: 7n, uid: 9 }, { folder: "Archive", uidvalidity: 7n, uid: 41 }],
+    }]);
+    expect(await snapshot(w)).toBe(before);
+  });
+
+  it("refuses a foreign or sensitive letter before opening its mailbox", async () => {
+    const w = await world(null);
+    const port = reader(() => ({ raw: Buffer.from(LETTER(w.header)) }));
+    const other = await world(null, w.db);
+    expect(await refusal(forwardSource(ctxOf(other), w.messageId, port.read, 100))).toEqual({
+      status: 404, code: "not_found",
+    });
+    await w.db.update(messages).set({ noForward: true }).where(eq(messages.id, w.messageId));
+    expect(await refusal(forwardSource(ctxOf(w), w.messageId, port.read, 100))).toEqual({
+      status: 403, code: "forbidden",
+    });
+    expect(port.asked).toEqual([]);
+  });
+
+  it("refuses a different message found at the saved location", async () => {
+    const w = await world(null);
+    const other = await world(null, w.db);
+    const port = reader(() => ({ raw: Buffer.from(LETTER(other.header)) }));
+    expect(await refusal(forwardSource(ctxOf(w), w.messageId, port.read, 1024))).toEqual({
+      status: 409, code: "letter_mismatch",
+    });
   });
 });

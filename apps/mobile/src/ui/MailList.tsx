@@ -74,6 +74,8 @@ export interface MailListProps<T> {
   groups: readonly ListGroup<T>[];
   rowKey: (row: T) => string;
   renderRow: (row: T) => ReactElement | null;
+  /** First viewport's render batch for lists of tall cards. */
+  initialNumToRender?: number;
   /** The place heading. On a refreshing list it stands above the scrollable sheet. */
   head?: ReactNode;
   /** Controls inside the sheet, before its first group. */
@@ -267,6 +269,7 @@ export function MailList<T>({
   groups,
   rowKey,
   renderRow,
+  initialNumToRender = LIST_WINDOW.initialNumToRender,
   head,
   sheetHead,
   gapAbove = 0,
@@ -479,6 +482,7 @@ export function MailList<T>({
            only. The window still bounds what is mounted. */
         removeClippedSubviews={Platform.OS === "android" && rowLayout === undefined}
         {...LIST_WINDOW}
+        initialNumToRender={initialNumToRender}
         style={{ flex: 1 }}
         contentContainerStyle={fitSurface ? { ...insets, minHeight: undefined } : insets}
         keyboardShouldPersistTaps={avoidKeyboard ? "handled" : undefined}

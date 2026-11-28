@@ -97,7 +97,8 @@ describe("the reply's sheet", () => {
   });
 
   it("folds its people into the name the send goes to, and leaves once however Send is pressed", async () => {
-    const w = await open("reply");
+    const original = "The earlier wording.";
+    const w = await open("reply", [message("m1", { body: original })]);
     expect(screen.getByRole("region", { name: W.reply.label.replace("{name}", "The colleague") })).toBeTruthy();
     expect(screen.getByText("The colleague")).toBeTruthy();
     expect(screen.queryByRole("combobox", { name: W.to })).toBeNull();
@@ -106,6 +107,8 @@ describe("the reply's sheet", () => {
     await act(async () => { fireEvent.click(sendButton()); });
     expect(sends(w)).toEqual([]);
     await write(W.reply.text, "Noon works for me.");
+    fireEvent.click(screen.getByRole("button", { name: W.history.edit }));
+    expect(await screen.findByText(/The earlier wording/)).toBeTruthy();
     w.sendGate.wait = new Promise(() => undefined);
     await act(async () => {
       fireEvent.click(sendButton());
@@ -120,6 +123,7 @@ describe("the reply's sheet", () => {
     await rounds(10);
     expect(sends(w)).toHaveLength(1);
     expect(sends(w)[0]).toMatchObject({ inReplyTo: "m1", body: "Noon works for me." });
+    expect(sends(w)[0]?.html).toBeUndefined();
     expect(sendButton().disabled).toBe(true);
   });
 
@@ -150,7 +154,7 @@ describe("the reply's sheet", () => {
     expect(screen.getByRole("group", { name: W.to }).textContent).toContain("The colleague");
     await person(W.cc, "lena@example.invalid");
     await write(W.reply.text, "Adding Lena.");
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: W.history.show })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: W.history.edit })); });
     const original = await screen.findByText(/The original wording/);
     const text = Array.from(original.childNodes).find((node) => node.textContent === "The original wording.")!;
     const start = box.editor.view.posAtDOM(text, 0);
@@ -285,10 +289,12 @@ describe("the reply's sheet", () => {
   });
 
   it("a forward names nobody: Send rests until a person is in To, then one send carries the original", async () => {
-    const w = await open("forward");
+    const w = await open("forward", [message("m1", { body: "The earlier wording." })]);
     expect(screen.queryByText("The original message is added when you send.")).toBeNull();
     expect(screen.getByRole<HTMLInputElement>("textbox", { name: W.subject }).readOnly).toBe(true);
     await write(W.reply.forwardText, "For your files.");
+    fireEvent.click(screen.getByRole("button", { name: W.history.edit }));
+    expect(await screen.findByText(/The earlier wording/)).toBeTruthy();
     expect(sendButton().disabled).toBe(true);
     await person(W.to, "lena@example.invalid");
     expect(sendButton().disabled).toBe(false);
@@ -297,6 +303,7 @@ describe("the reply's sheet", () => {
     });
     await rounds(10);
     expect(sends(w)).toHaveLength(1);
+    expect(sends(w)[0]?.html).toBeUndefined();
     expect(sends(w)[0]).toMatchObject({ forwardOf: "m1", body: "For your files." });
     expect(sends(w)[0]!.to?.map((p) => p.address)).toEqual(["lena@example.invalid"]);
   });

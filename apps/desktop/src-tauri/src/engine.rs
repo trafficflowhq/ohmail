@@ -2884,7 +2884,21 @@ impl Shell {
                 object.insert("localDoorVersion".into(), version.into());
             }
             match config {
-                Some(config) => door_fields(object, &config),
+                Some(config) => {
+                    door_fields(object, &config);
+                    let eligible = matches!(
+                        object.get("state").and_then(serde_json::Value::as_str),
+                        Some("starting" | "serving")
+                    );
+                    if eligible {
+                        if let Some(key) = self.paths.app_data.as_deref().and_then(|root| {
+                            if config::switch_path(root).exists() { return None; }
+                            config::startup_list_key(root, &config)
+                        }) {
+                            object.insert("startupListKey".into(), key.into());
+                        }
+                    }
+                }
                 // NAMED RATHER THAN OMITTED. A window that reads an absent `mode` as "still
                 // loading" would spin for ever on a fresh install, which is exactly the state that
                 // most needs to reach the door picker.
@@ -3247,8 +3261,14 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         // saving in the WEBVIEW's process, which is why that half does not exist.
         crate::allocator_arenas::apply_to_engine(&mut command);
         command.args(&launch.args);
+        let data_dir = plan_data_dir(&launch);
+        if let Some(dir) = &data_dir {
+            // Node can reuse compiled engine modules on the next launch. This cache contains
+            // code only and is disposable. Node ignores it if it cannot be used.
+            command.env("NODE_COMPILE_CACHE", dir.join("node-compile-cache"));
+        }
         // THE WITNESS, taken for this spawn and handed to this engine alone ([`witness`]).
-        let held = plan_data_dir(&launch).and_then(|dir| witness::take(&dir).map(|file| (dir, file)));
+        let held = data_dir.and_then(|dir| witness::take(&dir).map(|file| (dir, file)));
         if let Some((_, file)) = &held {
             witness::hand_to(&mut command, file);
         }

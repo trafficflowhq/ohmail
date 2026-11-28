@@ -35,7 +35,11 @@ await build({
   jsx: "automatic",
   sourcemap: "inline",
   outfile: resolve(out, "harness.js"),
-  alias: { "next-intl": resolve(here, "intl-shim.mjs"), "use-intl": useIntl },
+  alias: {
+    "next-intl": resolve(here, "intl-shim.mjs"),
+    "use-intl/core": resolve(useIntl, "dist/esm/core.js"),
+    "use-intl": useIntl,
+  },
   define: { "process.env.NODE_ENV": '"development"' },
   loader: { ".json": "json", ".css": "css", ".woff2": "file", ".woff": "file", ".svg": "file", ".png": "file" },
   logLevel: "warning",

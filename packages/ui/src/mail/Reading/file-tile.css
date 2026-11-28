@@ -85,6 +85,11 @@
     font-size: var(--t-meta);
   }
 
+  .oh-file-name[data-wrap] > * {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .oh-file-save {
     display: contents;
     color: var(--ink2);

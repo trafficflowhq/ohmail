@@ -1,4 +1,5 @@
-import type { EmailAddress } from "@ohmail/wire";
+import type { DraftForwardSource, EmailAddress } from "@ohmail/wire";
+import { FORWARD_MAX_RAW_BYTES } from "@trafficflow/core/attachment-limits";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
@@ -20,7 +21,8 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
  *  read-state door its INBOX-copy arm writes through. */
 type SentTxRepo = RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState" | "applyExternalFlag">;
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
-import { draftContentRevision } from "./draft-revision.js";
+import { requireDraftContentRevision } from "./draft-revision.js";
+import { requireDraftForwardAttachments } from "./forward-draft-sources.js";
 import { scheduledFilesMeta, type ScheduledFileMeta } from "./scheduled-send-files.js";
 import {
   readerFor, repairedPart, REPAIRS_PER_REQUEST, type FetchedBytes, type OpenAdapter, type RepairBudget,
@@ -28,7 +30,7 @@ import {
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { answerEnvelopeRefusal, isInvitationAnswerDraft, threadHeadersFit, type AnswerCalendar } from "./invitation-answer-draft.js";
 import { requireUuid } from "./ids.js";
-import { hasEditedQuotedHistory, repairLegacyDraftHtml } from "@trafficflow/core/outbound-text";
+import { draftForwardSourceTuples, hasEditedQuotedHistory, repairLegacyDraftHtml } from "@trafficflow/core/outbound-text";
 import { htmlToPlainText, prepareOutboundDelivery, sanitizeQuotedHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
@@ -542,12 +544,7 @@ function forwardPartsOf(d: typeof drafts.$inferSelect, input: SendInput): readon
   return forwardOf && d.forwardOfMessageId === forwardOf ? d.forwardParts ?? undefined : undefined;
 }
 
-/**
- * The whole-message read for an original whose stored words were let go: handed to `fetchRaw`,
- * which refuses on the server's RFC822.SIZE before buffering past it. 20 MiB of parts base64-encoded
- * plus headers stays under it, and it stays under `MAX_RAW_MESSAGE_BYTES`, so the parse never refuses.
- */
-export const FORWARD_MAX_RAW_BYTES = 32 * 1024 * 1024;
+export { FORWARD_MAX_RAW_BYTES, SEND_MAX_ATTACHMENT_PARTS } from "@trafficflow/core/attachment-limits";
 
 /** Where a forward's quoted words come from: already joined from the store, or read from the mailbox. */
 type ForwardWords =
@@ -623,18 +620,6 @@ function forwardReadRefusal(err: unknown): unknown {
   if ((err as { code?: unknown } | null)?.code === "ERAWTOOLARGE") return forwardTooLarge();
   return forwardOriginalUnavailable();
 }
-
-/**
- * HOW MANY ATTACHMENT PARTS ONE SEND REQUEST MAY NAME — per list, inline or staged. The byte cap
- * does not bound either list's LENGTH: an inline entry with no `contentBase64` decodes to zero
- * bytes, so any number clears every byte cap; a staged ticket may declare ONE byte, so 3 MB still
- * admits millions of references. 100 is `FORWARD_MAX_PARTS`, deliberately the same number —
- * pinning over picking, the `MARK_SEEN_MAX_IDS` rule. Refused on the RAW array (413),
- * deduplicated after. Not a limit legitimate use meets: the staged transport engages above 3 MB
- * and the mailbox's own `SIZE` binds first. PER LIST — a mixed send bounds at 200 parts, a mixed
- * forward at 300.
- */
-export const SEND_MAX_ATTACHMENT_PARTS = 100;
 
 /**
  * HOW MANY ADDRESSES ONE SENT MESSAGE MAY REACH — `to` + `cc` + `bcc`, together. The per-MESSAGE
@@ -948,6 +933,7 @@ export function sendContentFingerprint(input: {
   forwardOf: string | null;
   /** The forwarded parts a send named, when it named them; absent keeps every older digest. */
   forwardParts?: readonly string[] | null;
+  forwardSources?: readonly DraftForwardSource[] | null;
   sendAt: Date | null;
   /**
    * Inline files, digested by CONTENT. Staged files never reach here — a send carrying them is
@@ -984,6 +970,7 @@ export function sendContentFingerprint(input: {
     input.sendAt ? input.sendAt.toISOString() : null,
     files,
     ...(input.forwardParts ? [[...new Set(input.forwardParts)].sort()] : []),
+    ...(input.forwardSources?.length ? [{ forwardSources: draftForwardSourceTuples(input.forwardSources) }] : []),
     ...(input.calendar ? [{ calendar: input.calendar }] : []),
   ]);
   return createHash("sha256").update(canonical, "utf8").digest("hex");
@@ -1014,6 +1001,7 @@ function contentFingerprintOf(
     inReplyToMessageId: d.inReplyToMessageId ?? null,
     forwardOf: input.forwardOf ?? d.forwardOfMessageId ?? null,
     ...(forwardParts ? { forwardParts } : {}),
+    forwardSources: d.forwardSources,
     sendAt: d.sendAt ?? null,
     attachments: files,
     ...(input.calendar ? { calendar: createHash("sha256").update(input.calendar.text, "utf8").digest("hex") } : {}),
@@ -1648,6 +1636,7 @@ type Reservation =
       msg: OutboundMessage; seq: number;
       /** A forward's original parts (and, for a husked body, its words) — read outside the tx. */
       forward?: ForwardSource;
+      forwardSources?: DraftForwardSource[];
       /** This key's attempt: 1 for a fresh reservation, more for a re-armed one. */
       attempt: number;
       /** When the key was first reserved: the re-arm window's clock. */
@@ -2835,6 +2824,10 @@ export class SendService {
       msg.attachments = [...(msg.attachments ?? []), ...staged];
     }
 
+    if (reservation.forwardSources?.length) {
+      requireDraftForwardAttachments(reservation.forwardSources, msg.attachments ?? []);
+    }
+
     // ── FORWARD: STREAM THE ORIGINAL'S ATTACHMENTS, then send them with the message ──────────
     //
     // Done here, outside the reservation tx (it is IMAP network) and BEFORE `send`, so the
@@ -3183,12 +3176,7 @@ export class SendService {
        * would otherwise answer about content the caller never saw. BELOW the insert, so an
        * idempotent replay of a settled send gets its stored outcome rather than this.
        */
-      if (input.ifContentRevision && input.ifContentRevision !== draftContentRevision(d)) {
-        throw new ServiceError(
-          "draft_changed", 409,
-          "This draft changed in another window. Review it before sending.",
-        );
-      }
+      requireDraftContentRevision(d, input.ifContentRevision);
 
       /* THE FORWARD THIS SEND CARRIES: the request's, else the row's, so a forward kept
          as a draft leaves with its original whichever client sends it, and every reader below —
@@ -3449,6 +3437,7 @@ export class SendService {
         return {
           kind: "new", sendId, mintedMessageId, mailboxId: d.mailboxId, msg,
           seq: Number(seq), ...(forward ? { forward } : {}), attempt, reservedAt, claimed,
+          ...(d.forwardSources?.length ? { forwardSources: d.forwardSources } : {}),
           ...(stagedUntil !== null ? { staged: { ids: stagedIds, until: stagedUntil } } : {}),
         };
       };

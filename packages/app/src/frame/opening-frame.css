@@ -13,6 +13,15 @@
   min-height: 0;
   overflow: hidden;
 }
+.fr-opening-kept {
+  position: relative;
+  min-height: 0;
+}
+.fr-opening-status {
+  position: absolute;
+  inset: auto 0 0;
+  background: var(--sheet);
+}
 .fr-opening[data-wait] {
   --sheet: var(--ground);
   --ringw: 0px;

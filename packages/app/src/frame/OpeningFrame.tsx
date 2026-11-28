@@ -16,11 +16,13 @@ export function OpeningFrame({
   look,
   show,
   status,
+  kept,
 }: {
   facts: WindowFacts;
   look: Appearance;
   show: boolean;
   status?: ReactNode;
+  kept?: ReactNode;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const plan = useMemo(() => layoutPlan(facts, look.layout), [facts, look.layout]);
@@ -32,12 +34,18 @@ export function OpeningFrame({
       <RowsShape />
     </div>
   ) : null;
-  const list = (
-    <>
-      {listShape}
-      {railStatus ? null : status}
-    </>
-  );
+  const list =
+    kept && !railStatus && status ? (
+      <div className="fr-opening-kept">
+        {kept}
+        <div className="fr-opening-status">{status}</div>
+      </div>
+    ) : (
+      <>
+        {kept ?? listShape}
+        {railStatus ? null : status}
+      </>
+    );
   return (
     <FrameSurface drawn={root} attributes={attributes}>
       <div className="fr-frame fr-opening" data-rail={plan.rail} data-wait={show ? undefined : ""}>

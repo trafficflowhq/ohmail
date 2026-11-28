@@ -80,6 +80,8 @@ function playArrival(shell: HTMLElement, device: LayoutPlan["device"], switching
     const passive = !switching && column.matches(".fr-list, .fr-reading");
     const parts = passive ? (column.firstElementChild?.children ?? []) : [column];
     for (const part of parts) {
+      // The saved mail list is already on screen. Its live replacement keeps the same position.
+      if (!switching && part.hasAttribute("data-restored-viewport")) continue;
       animations.push(arrive(part, transform, duration, stagger * (index + 1)));
     }
   });

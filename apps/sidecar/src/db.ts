@@ -12,7 +12,8 @@ import { readMigrationFiles, type MigrationConfig, type MigrationMeta } from "dr
 import { mailSchema } from "@trafficflow/db/mail";
 import {
   MAIL_JOURNAL, NOTHING_OPENS, OLD_HEADS, TransitionFailed, TransitionRefused, adoptBaseline, adoptReissuedOriginals,
-  ensureSearchExtensions, readJournalOf, runTransition, sealedOpener, transitionState, type Decrypts,
+  ensureSearchExtensions, readJournalOf, runTransition, sealedOpener, transitionState,
+  validateCalendarSessionScope, type Decrypts,
 } from "@trafficflow/db/journal";
 import {
   INGEST_FOLD_WAL_BYTES, brandDialect, dialect,
@@ -1634,10 +1635,10 @@ function fsyncDir(dir: string): void {
  * refuses a directory holding anything. Only an absent or empty `pgdata` is filled here, so the
  * removal can only take files this call wrote.
  */
-async function makeFreshStore(pgDataDir: string, log?: Diagnostic): Promise<void> {
+async function makeFreshStore(pgDataDir: string, log?: Diagnostic): Promise<WebAssembly.Module | undefined> {
   if (existsSync(pgDataDir) && readdirSync(pgDataDir).length > 0) return;
   try {
-    await makeStoreInMemory(pgDataDir);
+    return await makeStoreInMemory(pgDataDir);
   } catch (err) {
     rmSync(pgDataDir, { recursive: true, force: true });
     log?.("fresh_store_copy_failed", {
@@ -2686,13 +2687,14 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
        AWAITED HERE ON PURPOSE: `new PGlite()` returns before the WASM, the mount and Postgres'
        startup are done, and without the wait all of it would be attributed to `adoptBaseline`. */
     const startPglite = async (): Promise<{ pg: PGlite; storeFs: LocalStoreFs }> => {
-      if (fresh) await makeFreshStore(pgDataDir, log);
+      const wasmModule = fresh ? await makeFreshStore(pgDataDir, log) : undefined;
       /* A cluster on the disk takes the log's method before Postgres reads its settings. */
       if (existsSync(join(pgDataDir, "PG_VERSION"))) await configureStoreLog(pgDataDir);
       const storeFs = new LocalStoreFs(pgDataDir);
       const pg = new PGlite({
         dataDir: pgDataDir,
         fs: storeFs,
+        wasmModule,
         ...(opts.withoutSearchExtensions ? {} : { extensions: LOCAL_STORE_EXTENSIONS }),
       });
       await pg.waitReady;
@@ -2823,6 +2825,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // The phase — and, per migration, how far it has got — is announced from inside, because only
     // there is the pending set known. See {@link applyMigrations}.
     const migrations = await applyMigrations(db, client, { ...opts, transition: { ...opts.transition, before: besideACopy } });
+    await validateCalendarSessionScope(db);
     // AFTER the pass, exactly as the server runner orders it: a journal entry that exists
     // twice (an original plus its reissue) owes the original's bookkeeping row wherever only
     // the reissue could run — a local mirror that migrated in the skip window is that

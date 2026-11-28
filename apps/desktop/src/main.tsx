@@ -38,7 +38,7 @@ import { startWindowAttentionRelay } from "./window-attention.js";
 import { omarchySchemeSource, startOmarchyFeed } from "./omarchy.js";
 import { configureSchemeTransitions } from "./scheme-platform.js";
 import { startLeaveSave, startUpdateCadence } from "./update-cadence.js";
-import { DesktopGate } from "./DesktopGate.js";
+import { DesktopBootStatus, DesktopGate } from "./DesktopGate.js";
 import { DOOR_COPY } from "./door-copy.js";
 import { errorSentence, GateBoundary } from "./GateBoundary.js";
 import { GateNotice } from "./GateNotice.js";
@@ -66,35 +66,10 @@ setUiVitalsSink((report) => {
   void reportUiVitals(report).then(setUiVitalsInterval);
 });
 
-/* ── THE BOOT CHECK: one status call over the shell's command channel, proving the shell is
-   reachable and this build compiled the real sync client (the MAIL engine is `DesktopGate`'s).
-   Its failure reaches the SCREEN: the rejection arm used to be `console.warn`, and a released
-   build failed this check on every launch into a console nobody in a packaged app can open — a
-   boot check whose failure is a log line is not a check, so this one draws the gate's notice.
-   `waitForBoot` holds the render for one status call, so a failure REPLACES the first paint
-   instead of racing it. Outside the app (dev server, the render check's headless DOM) there is
-   no shell — that is environment, not boot failure; the check does not run there (`readShell`). */
-/* THE THROWN VALUE, not a sentence — and the difference is a language, not a style.
-   `errorSentence` and the notice's button both read the message catalogue, and the catalogue is
-   set by `DesktopLocale` DURING ITS RENDER. This function resolves off a promise chain that is
-   not ordered against React's first flush, so composing the words here would read the register
-   before the provider had filled it and put an English "Reload" in a German window. The words
-   are composed inside {@link BootFailure}, which is a child of the provider by construction. */
-async function waitForBoot(): Promise<unknown> {
-  if (!bridgeAvailable()) return null;
-  try {
-    const status = await connectLocalEngine();
-    console.info(`ohmail: local engine — ${status.state}`);
-    return null;
-  } catch (err: unknown) {
-    console.warn(`ohmail: no local engine — ${String(err)}`);
-    /* Never `null`: that is this function's word for "the boot was fine", and a throw with a
-       falsy value is still a failed boot. */
-    return err ?? new Error("");
-  }
-}
+// The gate uses the same status answer that verifies the native bridge and real sync adapter.
+const initialStatus = bridgeAvailable() ? connectLocalEngine() : undefined;
 
-/** The boot check's failure, worded where the catalogue is reachable. See {@link waitForBoot}. */
+/** Word the boot failure inside the locale provider. */
 function BootFailure({ error }: { error: unknown }) {
   return (
     <GateNotice
@@ -249,7 +224,9 @@ const paint = (bootFailure: unknown): void =>
                 {bootFailure !== null ? (
                   <BootFailure error={bootFailure} />
                 ) : (
-                  <DesktopGate />
+                  <DesktopBootStatus.Provider value={initialStatus}>
+                    <DesktopGate />
+                  </DesktopBootStatus.Provider>
                 )}
               </GateBoundary>
             </FrameReports>
@@ -260,6 +237,10 @@ const paint = (bootFailure: unknown): void =>
   );
 
 paint(null);
-void waitForBoot().then((failure) => {
-  if (failure !== null) paint(failure);
-});
+void initialStatus?.then(
+  (status) => console.info(`ohmail: local engine — ${status.state}`),
+  (failure: unknown) => {
+    console.warn(`ohmail: no local engine — ${String(failure)}`);
+    paint(failure ?? new Error(""));
+  },
+);

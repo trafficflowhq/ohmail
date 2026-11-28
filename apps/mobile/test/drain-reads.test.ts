@@ -71,6 +71,26 @@ function rig() {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("the drain read's cadence", () => {
+  it("retries an unanswered first offer on the next drain and keeps the queue answer", async () => {
+    let queue = 0;
+    let offer = 0;
+    const read = drainReads({
+      rest: [],
+      consent: async () => null,
+      engine: {
+        refreshScreenerWaiting: async () => { queue += 1; },
+        refreshUnscreened: async () => {
+          offer += 1;
+          if (offer === 1) throw new Error("Unavailable");
+        },
+      },
+    });
+    await read();
+    await read();
+    await read();
+    expect({ queue, offer }).toEqual({ queue: 1, offer: 2 });
+  });
+
   it("boot asks once; idle drains ask nothing more; a gate arrival asks the page once", async () => {
     const { engine, flag, asks, push } = rig();
     await engine.start();

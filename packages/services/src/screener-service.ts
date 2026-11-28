@@ -999,6 +999,7 @@ export class ScreenerReadService {
     const { d, reps } = held;
     const sets = d.name === "pg" ? cutline : undefined;
     const withSets = await this.waitingSets(ctx, held, sets, gone);
+    // scoped-by: the representatives come from heldWindow, which filters by account and mailbox.
     const counts = ctx.db.select({ total: sql`count(*)` }).from(reps).where(and(
       ...this.waitingFilters(ctx, held, cutline, gone, sets !== undefined),
       sql`not ${this.decisionInFlightSql(ctx, d, sql`lower(${reps.fromAddress})`)}`,
@@ -1766,6 +1767,7 @@ export class ScreenerReadService {
       .limit(opts.limit);
     const sets = await this.waitingSets(ctx, held, cutline, opts.gone);
     const read = (db: Db) => {
+      // scoped-by: picked contains only representatives from the account-scoped heldWindow.
       const page = cutline ? db.select({
         messageId: sql<string>`picked.id`.as("picked_message_id"),
         sortKey: sql<Date>`picked.sort_key`.mapWith(messages.date).as("sort_key"),

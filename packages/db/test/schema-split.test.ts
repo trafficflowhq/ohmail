@@ -226,7 +226,8 @@ describe("the schema split matches the journal split", () => {
     // 37 → 38: `account_counters` (cloud 0101) — the counters that name a row, as above.
     // 38 → 39: `account_closures` (cloud 0104) — an account closed by staff, as above.
     // 39 → 40: `cal_push_channels` (cloud 0105) — a calendar's notice channels, as above.
-    expect(declaredTables("schema-cloud.ts").size).toBe(40);
+    // 40 → 41: `worker_topology` (cloud 0108) holds the verified host worker width.
+    expect(declaredTables("schema-cloud.ts").size).toBe(41);
   });
 
   /**

@@ -724,7 +724,8 @@ describe("the reader wires it", () => {
     expect(reader).toMatch(/jumpEnd\.current = setTimeout\(\(\) => \{ jumpEnd\.current = null; end\(\); \}, RAIL_JUMP_SETTLE_MS\)/);
   });
   it("looks only while its screen is in front, the app active, its window focused and no modal over it, and again when that changes", () => {
-    expect(reader).toMatch(/const screenShown = useIsFocused\(\);\s+const shown = useRef\(screenShown\);\s+shown\.current = screenShown;/);
+    expect(reader).toContain("const screenShown = useIsFocused();");
+    expect(reader).toMatch(/const shown = useRef\(screenShown\);\s+shown\.current = screenShown;/);
     expect(reader).toMatch(/active: \(\) => shown\.current && readerSees\(AppState\.currentState\)/);
     expect(reader).not.toMatch(/AppState\.currentState === "active"/);
     expect(reader).toMatch(/AppState\.addEventListener\("change", \(s\) => \{ if \(s === "active"\) seen\.poke\(\); \}\)/);
@@ -735,12 +736,16 @@ describe("the reader wires it", () => {
   it("every modal over the reader covers it while shown: each Sheet and the composer", () => {
     const src = (p: string) => withoutComments(readFileSync(fileURLToPath(new URL(p, import.meta.url)), "utf8"));
     const sheet = src("../src/ui/Sheet.tsx");
-    expect(sheet).toMatch(/useReaderCover\(open\);[\s\S]*if \(!open\) return null;/);
     const actions = src("../src/ui/MessageActions.tsx");
     expect(actions).toMatch(/export function ComposeSheet\([\s\S]*?useReaderCover\(true\);/);
-    /* Every Modal in the app is one of these two (a new one must cover the reader too). */
     const modals = (s: string) => (s.match(/<Modal\b/g) ?? []).length;
-    expect(modals(sheet)).toBe(1);
+    const phoneMenu = sheet.indexOf("function PhoneMenu(");
+    expect(phoneMenu).toBeGreaterThan(-1);
+    const sheetForms = [sheet.slice(0, phoneMenu), sheet.slice(phoneMenu)];
+    for (const form of sheetForms) {
+      expect(form).toMatch(/useReaderCover\(open\);[\s\S]*<Modal\b[^>]*visible=\{open\}/);
+      expect(modals(form)).toBe(1);
+    }
     expect(modals(actions)).toBe(1);
   });
   it("the opened message is ready only once its frame is final", () => {

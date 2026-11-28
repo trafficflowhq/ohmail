@@ -1,6 +1,7 @@
 import { hasEditedQuotedHistory } from "@trafficflow/core/outbound-text";
 import { BODY_PRELOAD_IDS_MAX, BODY_PRELOAD_LIMIT_HEADER } from "@trafficflow/core/drain-policy";
 import { requireDraftQuoteEcho } from "./draft-quote-echo.js";
+import { requireDraftSourceEcho } from "./draft-source-echo.js";
 import type { DraftBodyRead } from "./adapter.js";
 import { BODIES_IDS_MAX } from "../engine/server-wire.js";
 import {
@@ -1235,6 +1236,16 @@ export class HttpAdapter implements EngineAdapter {
    * throws through `rejectionOf` so "the server said no" cannot be mistaken for "the draft is
    * empty". A body the server omits is `null` — the one answer that means "no text of record".
    */
+  async draftFromCreate(key: string): Promise<CreatedDraftRow | null | undefined> {
+    const res = await this.call("GET /drafts/:id", { params: { id: key }, query: "by=create-key" });
+    if (res.status === 404) return (await this.rejectionOf(res, "read")).code === "draft_create_missing" ? null : undefined;
+    if (!res.ok) throw await this.rejectionOf(res);
+    const row = await this.readUntrusted<"GET /drafts/:id">(res);
+    return typeof row?.id === "string" && typeof row.createdRevision === "string"
+      ? { id: row.id, revision: row.createdRevision }
+      : undefined;
+  }
+
   async fetchDraftBody(draftId: string): Promise<DraftBodyRead | null> {
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
       const res = await this.call("GET /drafts/:id", { params: { id: draftId }, signal });
@@ -1246,6 +1257,7 @@ export class HttpAdapter implements EngineAdapter {
         body: wire.body,
         html: typeof wire.html === "string" ? wire.html : null,
         ...(rationale === null || typeof rationale === "string" ? { rationale } : {}),
+        ...(typeof wire.contentRevision === "string" ? { contentRevision: wire.contentRevision } : {}),
       };
     });
   }
@@ -1903,6 +1915,19 @@ export class HttpAdapter implements EngineAdapter {
     const res = await this.call("GET /attachments/:id", { params: { id: attachmentId }, urgent: true });
     if (!res.ok) throw await this.rejectionOf(res, "read");
     return await responseBlob(res);
+  }
+
+  fetchForwardSource(messageId: string, maxBytes: number): Promise<Blob> {
+    return this.withDeadline(30_000, async (signal) => {
+      const query = new URLSearchParams({ format: "eml", maxBytes: String(maxBytes) });
+      const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/live-body?${query}`, {
+        urgent: true, ...(signal ? { signal } : {}),
+      });
+      if (!res.ok) throw await this.rejectionOf(res, "read");
+      const type = res.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
+      if (type !== "application/octet-stream") throw new Error("Message source unavailable");
+      return responseBlob(res);
+    });
   }
 
   /**
@@ -2592,6 +2617,7 @@ export class HttpAdapter implements EngineAdapter {
               inReplyToMessageId: m.inReplyToMessageId ?? null,
               ...(m.forwardOfMessageId ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
               ...(m.forwardOfMessageId && m.forwardParts !== undefined ? { forwardParts: m.forwardParts } : {}),
+              ...(m.forwardSources !== undefined ? { forwardSources: m.forwardSources } : {}),
               ...fields,
             },
             idempotencyKey: opts.idempotencyKey, ...sig,
@@ -2621,6 +2647,7 @@ export class HttpAdapter implements EngineAdapter {
           // THE VERSION THIS CLIENT WAS TOLD, kept — see `revisionForDraft`. The row was just
           // written from this screen, so it is a version this client vouched for by writing it.
           requireDraftQuoteEcho(m.html, dto.html, dto.id);
+          requireDraftSourceEcho(m.forwardSources, dto.forwardSources, dto.id);
           this.noteDraftRevision(dto.id, dto.contentRevision);
           return {
             changes: seq === null ? [] : [{
@@ -2645,6 +2672,7 @@ export class HttpAdapter implements EngineAdapter {
             // Absent leaves the row's own (the server's patch rule); `null` clears it.
             ...(m.forwardOfMessageId !== undefined ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
             ...(m.forwardParts !== undefined ? { forwardParts: m.forwardParts } : {}),
+            ...(m.forwardSources !== undefined ? { forwardSources: m.forwardSources } : {}),
             ...(stated ? { ifContentRevision: stated } : {}),
           },
           idempotencyKey: opts.idempotencyKey, ...sig,
@@ -2655,6 +2683,7 @@ export class HttpAdapter implements EngineAdapter {
         // THE AUTOSAVE'S OWN OBSERVATION. This answer names the version the row is now at, and a
         // send whose own PUT fails carries it rather than nothing — the whole of the fallback.
         requireDraftQuoteEcho(m.html, dto.html, m.draftId);
+        requireDraftSourceEcho(m.forwardSources, dto.forwardSources, m.draftId);
         this.noteDraftRevision(m.draftId, dto.contentRevision);
         this.noteOwnStep(m.draftId, stated, dto.contentRevision);
         return {
@@ -2896,9 +2925,10 @@ export class HttpAdapter implements EngineAdapter {
       this.forgetSendKey(idempotencyKey);
       throw new MutationRejectedError("This message can't be sent again from here.", { code: "send_again_invalid", retryable: false });
     }
-    const confirmQuote = (html: unknown, row: string): void => {
+    const confirmDraftContent = (echo: { html?: unknown; forwardSources?: unknown } | null, row: string): void => {
       try {
-        requireDraftQuoteEcho(m.html, html, row);
+        requireDraftQuoteEcho(m.html, echo?.html, row);
+        requireDraftSourceEcho(m.forwardSources, echo?.forwardSources, row);
       } catch (error) {
         this.forgetSendKey(idempotencyKey);
         throw error;
@@ -2914,7 +2944,7 @@ export class HttpAdapter implements EngineAdapter {
       const wantsBcc = (m.bcc?.length ?? 0) > 0;
       // `draftId` is a `let` and a closure does not keep its narrowing; the row is fixed here.
       const row = draftId;
-      type PutEcho = Pick<Untrusted<AnswerOf<"PUT /drafts/:id">>, "bcc" | "mailboxId" | "contentRevision" | "status" | "html">;
+      type PutEcho = Pick<Untrusted<AnswerOf<"PUT /drafts/:id">>, "bcc" | "mailboxId" | "contentRevision" | "status" | "html" | "forwardSources">;
       /**
        * How the last save ended: `answered` with an echo, `frozen` (a send holds the row), `own` (the
        * edit itself was refused — {@link EDIT_OWN_REFUSALS}), or `unanswered`: no reply, an
@@ -2949,6 +2979,7 @@ export class HttpAdapter implements EngineAdapter {
               // The original a forward sends, and the files it keeps, onto the row it sends.
               ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
               ...(m.forwardOf && m.forwardParts ? { forwardParts: m.forwardParts } : {}),
+              ...(m.forwardSources !== undefined ? { forwardSources: m.forwardSources } : {}),
               ...(stated ? { ifContentRevision: stated } : {}),
             },
             echoLater: this.sendEchoLater,
@@ -3066,7 +3097,7 @@ export class HttpAdapter implements EngineAdapter {
         : recordedRevision !== null && typeof echoed?.contentRevision === "string" && echoed.contentRevision !== recordedRevision;
       if (frozen || (pastDraft && rewritten)) earlierWordsKept = true;
       if (!frozen) {
-        confirmQuote(echoed?.html, row);
+        confirmDraftContent(echoed, row);
 
         // ── THE VERSION-SKEW GUARD, ON THIS PATH TOO ────────────────────────────────────────
         //
@@ -3167,6 +3198,7 @@ export class HttpAdapter implements EngineAdapter {
           // The row a forward makes names its original, so a reopened copy still forwards it.
           ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
           ...(m.forwardOf && m.forwardParts ? { forwardParts: m.forwardParts } : {}),
+          ...(m.forwardSources !== undefined ? { forwardSources: m.forwardSources } : {}),
           subject: m.subject ?? "",
           // The body fields follow `bodyOnWire`. `DraftsService` derives the text/plain alternative
           // from the sanitized html itself and refuses a request that carries a `body`
@@ -3236,7 +3268,7 @@ export class HttpAdapter implements EngineAdapter {
         );
       }
       draftId = draft.id;
-      confirmQuote(draft.html, draftId);
+      confirmDraftContent(draft, draftId);
       this.draftForKey.set(idempotencyKey, draftId);
       // The row this press made a moment ago — vouched for on the send exactly as an existing
       // row's is, so the field is on every send this client makes rather than on most of them.
@@ -3259,6 +3291,7 @@ export class HttpAdapter implements EngineAdapter {
     // What differs is the second request: `POST /drafts/:id/schedule` writes `send_at` +
     // `status: 'scheduled'` and dials nothing; the server's scheduled-send pass runs the
     // ordinary gated send when the time comes.
+    const vouched = again ? undefined : this.revisionForKey.get(idempotencyKey);
     if (m.sendAt) {
       // The scheduled pass cannot stream a forward's original, so a forward carries no
       // appointment; a letter's files go with it to a door that keeps them (`scheduleFilesCheck`,
@@ -3294,15 +3327,16 @@ export class HttpAdapter implements EngineAdapter {
         files = { attachments: m.attachments };
       }
 
+      const body = { sendAt: m.sendAt, ...(vouched ? { ifContentRevision: vouched } : {}) };
       const res = withFiles
         ? await this.call("POST /drafts/:id/schedule-with-files", {
           params: { id: draftId },
-          body: { sendAt: m.sendAt, ...files },
+          body: { ...body, ...files },
           idempotencyKey,
         })
         : await this.call("POST /drafts/:id/schedule", {
           params: { id: draftId },
-          body: { sendAt: m.sendAt },
+          body,
           idempotencyKey,
         });
       const seq = this.noteSeq(res);
@@ -3327,7 +3361,11 @@ export class HttpAdapter implements EngineAdapter {
       }
       if (!res.ok) {
         this.forgetSendKey(idempotencyKey);
-        throw await this.rejectionOf(res);
+        const refusal = await this.rejectionOf(res);
+        if (refusal.code === "draft_changed") {
+          throw new MutationRejectedError(refusal.message, { ...refusal, entityId: draftId });
+        }
+        throw refusal;
       }
       this.forgetSendKey(idempotencyKey);
       // THE SCHEDULED ROW RIDES THE ECHO — the route answers the draft DTO with its seq, and
@@ -3375,7 +3413,6 @@ export class HttpAdapter implements EngineAdapter {
     // WHICH VERSION OF THE ROW THIS PRESS SAW — see `revisionForKey`. Absent only where the server
     // never named one; the server reads absence as unstated and sends, which is what keeps this
     // client working against an API that predates the field.
-    const vouched = again ? undefined : this.revisionForKey.get(idempotencyKey);
     if (vouched) sendBody.ifContentRevision = vouched;
     /* THE KEY GOES FIRST ON A STAGED SEND. A reservation under it means this press has already
        been answered once, so nothing is re-uploaded: the request below carries no files and the

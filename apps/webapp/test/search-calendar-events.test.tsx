@@ -3,7 +3,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CalendarSettingsWire } from "@ohmail/wire";
 import { calendarOf, connection, event } from "../../../packages/app-logic/test/calendar/invitations/fixtures";
-import { ACCOUNT, ISO, closeMailPage, mountMailPage, prepareMailPage, scopedSyncResponse, tick } from "./fixtures/mounted-mail-page";
+import { ACCOUNT, ISO, calendarSnapshot, closeMailPage, mountMailPage, prepareMailPage, scopedSyncResponse, tick } from "./fixtures/mounted-mail-page";
 import { searchField, typeSearch } from "./search-registered-fixture";
 import { json } from "./account/account-harness";
 
@@ -22,7 +22,7 @@ it.each([true, false])("uses only matching visible events from the mirror when C
   const shown = calendarOf();
   const hidden = calendarOf({ id: "hidden", shown: false });
   const records = [
-    ["settings", { id: ACCOUNT, accountId: ACCOUNT, calendarEnabledAt: ISO, updatedAt: ISO }],
+    ["settings", { id: ACCOUNT, accountId: ACCOUNT, calendarEnabledAt: settings.enabledAt, updatedAt: ISO }],
     ["calendar_connection", connection()],
     ["calendar", shown],
     ["calendar", hidden],
@@ -35,6 +35,7 @@ it.each([true, false])("uses only matching visible events from the mirror when C
     "GET /api/hello": () => json({ product: "ohmail", flavor: "managed", needsSetup: false, features: { calendar: true } }),
     "GET /api/calendar/settings": () => scopedSyncResponse(settings),
     "GET /api/search": () => scopedSyncResponse({ items: [], total: 0, totalExact: true, ms: 4 }),
+    ...(enabled ? { "GET /api/sync/snapshot": () => calendarSnapshot(records) } : {}),
     "GET /api/sync": () => scopedSyncResponse({
       changes: {
         creates: records.map(([type, entity], index) => ({

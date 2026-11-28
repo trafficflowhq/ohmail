@@ -594,6 +594,14 @@ export function seriesDeleteMembers(
   return result;
 }
 
+/** Require a complete CalDAV series with no scheduling participants in any member. */
+export function unscheduledSeriesOf(text: string | null, zones: ZoneSource): boolean {
+  const members = seriesDeleteMembers(text, zones);
+  return (
+    members !== null && members.every(({ organizer, guests }) => organizer === null && guests.length === 0)
+  );
+}
+
 /** Resolve the same version's audience for both the queue and the writer. */
 export function confirmedDeleteAudience(
   place: ProofPlace | null,

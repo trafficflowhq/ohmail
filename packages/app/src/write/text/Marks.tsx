@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { ariaShortcut, useModGlyph, useOptionalKeyBindings } from "@ohmail/app-logic/keys";
-import { editorHelp, paragraphChoices } from "../editor/shortcuts.js";
+import { editorHelp, paragraphChoices } from "../format-help.js";
 import { Button, Field, Menu, MenuItem } from "@ohmail/ui/base";
 import type { ComposerMark, ComposerMarksProps, ComposerProps } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";

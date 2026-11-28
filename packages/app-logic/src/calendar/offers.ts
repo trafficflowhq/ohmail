@@ -4,14 +4,20 @@
  */
 import type { CalendarConnectionRecord, CalendarRecord } from "@ohmail/wire";
 
+export function connectionAllowsCalendarWrites(connection: CalendarConnectionRecord): boolean {
+  return (
+    connection.status === "active" || (connection.provider === "caldav" && connection.status === "failing")
+  );
+}
+
 /** A calendar that can be looked at here and not changed: shared to look at, busy times only, a subscription, a connection that waits. */
 export function viewOnlyOf(
   calendar: CalendarRecord,
   connection: CalendarConnectionRecord | undefined,
 ): boolean {
-  if (calendar.access === "reader" || calendar.access === "busy") return true;
+  if (calendar.access === "reader" || calendar.access === "busy" || calendar.subscribed) return true;
   if (connection === undefined) return true;
-  return connection.provider === "ics" || connection.status !== "active";
+  return connection.provider === "ics" || !connectionAllowsCalendarWrites(connection);
 }
 
 /**

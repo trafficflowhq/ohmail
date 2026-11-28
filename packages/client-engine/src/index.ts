@@ -416,6 +416,7 @@ export {
   isOwnOutbound,
   isItipAcknowledgement,
   isResurfaced,
+  messageIdKey,
   messageDisplayTime,
   // The shared whole-mirror date order — one sort per (reader, version), which every
   // whole-mirror selector filters from. Exported for the cache-identity guard.

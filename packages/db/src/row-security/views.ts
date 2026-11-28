@@ -141,7 +141,7 @@ const PREDICATE = "its keys plain columns compared by leakproof operators; its p
 const UNBOUNDED = (what: string): string => `under the policy the account's prefix is its condition and ${what} a filter over one account's rows; `
   + "the product sets no bound on them (the search ruling counts them small; no constant makes them so): a judge that finds one slow names it";
 
-/** EVERY SUCH INDEX OF THE 2.0 STORE, by name: 43 on the locked tables (8 no btree, 35 with an expression or a predicate). */
+/** Every non-btree, expression or partial index on the locked tables. */
 export const INDEX_READS: Readonly<Record<string, IndexRead>> = {
   // The search documents: every arm reads through the account's views.
   message_search_head_terms_trgm_idx: { table: "message_search", read: "view", through: "message_search" },
@@ -181,6 +181,8 @@ export const INDEX_READS: Readonly<Record<string, IndexRead>> = {
   cal_suggestions_account_open_idx: { table: "cal_suggestions", read: "kept", why: PREDICATE },
   cal_writes_pending_idx: { table: "cal_writes", read: "kept", why: PREDICATE },
   change_log_move_to_inbox_idx: { table: "change_log", read: "kept", why: `${PREDICATE}: its \`->>\` too` },
+  change_log_account_entity_deleted_idx: { table: "change_log", read: "kept",
+    why: "the bound compactor probes the account, entity and feed ceiling with the same delete predicate as the partial index" },
   drafts_account_reply_idx: { table: "drafts", read: "kept", why: PREDICATE },
   drafts_scheduled_due_idx: { table: "drafts", read: "kept", why: PREDICATE },
   flag_state_pending_queue_idx: { table: "flag_state", read: "kept", why: PREDICATE },
@@ -195,6 +197,9 @@ export const INDEX_READS: Readonly<Record<string, IndexRead>> = {
   pairing_tokens_account_idx: { table: "pairing_tokens", read: "kept", why: PREDICATE },
   rules_retro_owed_idx: { table: "rules", read: "kept", why: PREDICATE },
   staff_role_grants_live_uq: { table: "staff_role_grants", read: "kept", why: PREDICATE },
+  threads_account_subject_key_idx: { table: "threads", read: "kept",
+    why: "the bound repair can page threads in index order by subject prefix, digest and id. "
+      + "The group probe stays under the account policy and checks the whole subject even when the planner keeps only the account prefix" },
   webauthn_challenges_open_login_idx: { table: "webauthn_challenges", read: "kept", why: PREDICATE },
   webauthn_challenges_open_user_idx: { table: "webauthn_challenges", read: "kept", why: PREDICATE },
 };

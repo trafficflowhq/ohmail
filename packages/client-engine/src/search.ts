@@ -232,10 +232,6 @@ function diceSimilarity(a: Set<string>, b: Set<string>): number {
   return (2 * common) / (a.size + b.size);
 }
 
-interface Posting {
-  weight: number;
-}
-
 /** Which sides of ONE message ONE address sat on. Both can be true — see {@link AddressCounts}. */
 interface AddressSides {
   from: boolean;
@@ -262,7 +258,8 @@ export interface SearchDelta {
 
 export class SearchIndex {
   /** term → messageId → best field weight */
-  private readonly postings = new Map<string, Map<string, Posting>>();
+  // Each posting stores only the strongest field weight for this term and message.
+  private readonly postings = new Map<string, Map<string, number>>();
   /**
    * EXACT ADDRESS → messageId → which sides — a SEPARATE map from {@link postings}, and the separation is the whole
    * feature. {@link tokenize} splits on every non-alphanumeric character, so `anna@corp.com` enters `postings` as the
@@ -388,7 +385,7 @@ export class SearchIndex {
     }
     const existing = map.get(messageId);
     if (existing === undefined) posted.terms.push(term);
-    if (!existing || existing.weight < weight) map.set(messageId, { weight });
+    if (existing === undefined || existing < weight) map.set(messageId, weight);
   }
 
   /**
@@ -581,18 +578,18 @@ export class SearchIndex {
     const hits = new Map<string, { score: number; match: SearchMatch }>();
     const exact = this.postings.get(q);
     if (exact) {
-      for (const [id, p] of exact) {
-        if (stopword && p.weight === FIELD_WEIGHT.text) continue;
-        hits.set(id, { score: p.weight, match: { token: q, term: q, fuzzy: false } });
+      for (const [id, weight] of exact) {
+        if (stopword && weight === FIELD_WEIGHT.text) continue;
+        hits.set(id, { score: weight, match: { token: q, term: q, fuzzy: false } });
       }
     }
     for (const [term, map] of this.postings) {
       if (term === q || !term.startsWith(q)) continue;
       // `your` → `yours`, `agai` → `again`: from four letters the server's text holds no stopword to start.
       const stopTerm = q.length >= 4 && SEARCH_STOPWORDS.has(term);
-      for (const [id, p] of map) {
-        if (stopTerm && p.weight === FIELD_WEIGHT.text) continue;
-        const score = p.weight * 0.7;
+      for (const [id, weight] of map) {
+        if (stopTerm && weight === FIELD_WEIGHT.text) continue;
+        const score = weight * 0.7;
         const prev = hits.get(id);
         if (!prev || prev.score < score) hits.set(id, { score, match: { token: q, term, fuzzy: false } });
       }
@@ -623,9 +620,9 @@ export class SearchIndex {
       if (sim < FUZZY_THRESHOLD) continue;
       // The server's closest words hold no stopword: `yours` never reaches the text's `your`.
       const stopTerm = SEARCH_STOPWORDS.has(term);
-      for (const [id, p] of map) {
-        if (stopTerm && p.weight === FIELD_WEIGHT.text) continue;
-        const score = p.weight * sim;
+      for (const [id, weight] of map) {
+        if (stopTerm && weight === FIELD_WEIGHT.text) continue;
+        const score = weight * sim;
         const prev = hits.get(id);
         if (!prev || prev.score < score) hits.set(id, { score, match: { token: q, term, fuzzy: true } });
       }

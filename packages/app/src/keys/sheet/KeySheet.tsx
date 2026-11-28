@@ -12,7 +12,7 @@ import type { OverProps } from "../../frame/contract.js";
 import { useText } from "../../text/index.js";
 import { sheetColumns } from "./rows.js";
 
-import { SHEET_CHORD, useKeyboardHelpAvailable } from "../availability.js";
+import { SHEET_CHORD, useKeyboardHelpAvailable } from "../../frame/keyboard/availability.js";
 
 const MODIFIER_KEYS: ReadonlySet<string> = new Set([
   "Shift",

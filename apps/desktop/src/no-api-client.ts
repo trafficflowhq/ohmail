@@ -550,7 +550,8 @@ export interface MailboxErasure {
 }
 
 export interface ErasureResult {
-    erased: true;
+    erased: boolean;
+    accepted?: true;
     usersErased?: number;
     tables?: Record<string, number>;
     retained: string;

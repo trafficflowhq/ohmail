@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { within } from "@testing-library/react";
+import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -184,11 +184,27 @@ describe("Escape in the shipped reply and compose bodies", { timeout: 30_000 }, 
   it("Escape in the compose body leaves Compose and keeps the draft", async () => {
     await shellOnDocument();
     const surface = await openCompose();
-    await act(async () => { typeInto(surface, "A letter begun"); });
+    await act(async () => {
+      fireEvent.change(within(compose()!).getByRole("textbox", { name: "Subject" }), {
+        target: { value: "An unfinished letter" },
+      });
+      typeInto(surface, "A letter begun");
+    });
     await press(surface, "Escape");
     await waitFor(() => compose() == null, "Escape in the compose body left Compose open");
-    await openCompose();
-    expect(editorOf(composeSurface()!).getText(), "leaving Compose lost the body").toContain("A letter begun");
+    await act(async () => {
+      window.location.hash = "#/drafts";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    const draft = () => {
+      const list = page().queryByRole("listbox", { name: "Drafts" });
+      return list && within(list).queryByRole("option", { name: /An unfinished letter/ });
+    };
+    await waitFor(() => draft() != null, "leaving Compose lost the draft");
+    await act(async () => { fireEvent.click(draft()!); });
+    const saved = () => page().queryByRole("textbox", { name: messages.write.text });
+    await waitFor(() => saved() != null, "the saved draft did not open");
+    expect(editorOf(saved()!).getText(), "leaving Compose lost the body").toContain("A letter begun");
   });
 });
 

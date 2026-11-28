@@ -881,5 +881,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"accounts\" ADD COLUMN \"erasure_progress\" TEXT;"
     ]
+  },
+  {
+    "name": "0234_draft_forward_sources.sql",
+    "statements": [
+      "ALTER TABLE \"drafts\" ADD COLUMN \"forward_sources\" TEXT;"
+    ]
   }
 ] as const;

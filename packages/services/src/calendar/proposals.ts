@@ -55,7 +55,7 @@ async function proposalEvent(ctx: ServiceContext, act: CalendarProposalAct) {
   if (!held) throw new ServiceError("not_found", 404, "The event was not found.");
   const { event, calendar, connection } = held;
   if (!event.organizer || event.partial || event.heldBack || event.thisAndFuture || event.status === "cancelled" ||
-    !calendar.shown || calendar.access === "reader" || calendar.access === "busy" || connection.provider === "ics") {
+    !calendar.shown || (calendar.access !== "owner" && calendar.access !== "writer") || connection.provider === "ics") {
     throw notAnswerable("This event cannot take a proposal.");
   }
   if (act.base !== event.updatedAt.toISOString() || typeof act.occurrence !== "string" ||

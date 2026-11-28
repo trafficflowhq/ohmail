@@ -3,7 +3,7 @@ import { Frame } from "@ohmail/app/frame";
 import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
 import { TextProvider, type Messages } from "@ohmail/app/text";
 import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
-import { fireEvent, render, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { ReactNode } from "react";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
@@ -190,7 +190,7 @@ it("clears the chosen end date and stores null", async () => {
 it("chooses a day from the calendar, writes its last second, and reads back the same date", async () => {
   const s = await mount({ row: { enabled: true } });
   await press(s.date());
-  const picker = within(s.ui.getByRole("dialog", { name: A.untilPick }));
+  const picker = within(screen.getByRole("dialog", { name: A.untilPick }));
   const today = picker.getByRole("gridcell", { name: /September 4, 2026/ });
   expect(today.getAttribute("aria-disabled")).toBe("true");
   const tomorrow = picker.getByRole("gridcell", { name: /September 5, 2026/ });
@@ -315,7 +315,7 @@ it("uses the frame's non-UTC day for the picker, stored instant and saved date",
   expect(s.date().textContent).toBe("Sep 14, 2036");
   expect(s.text()).toContain("On until Sep 14, 2036.");
   await press(s.date());
-  const picker = within(s.ui.getByRole("dialog", { name: A.untilPick }));
+  const picker = within(screen.getByRole("dialog", { name: A.untilPick }));
   await press(picker.getByRole("gridcell", { name: /September 15, 2036/ }));
   await s.save();
   expect(s.writes.map((w) => w.endsAt)).toEqual(["2036-09-16T06:59:59.000Z"]);

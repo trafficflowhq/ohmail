@@ -32,3 +32,16 @@
 .ob-wait {
   min-height: 0;
 }
+
+.ob-held {
+  position: absolute;
+  inset: 0;
+}
+[data-saved-row] {
+  display: contents;
+}
+
+/* Give the live window its real geometry before replacing the saved viewport. */
+.ob-list[data-preparing] > :not(.ob-held) {
+  visibility: hidden;
+}

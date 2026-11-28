@@ -1,4 +1,5 @@
 import type { EngineDraft } from "@ohmail/wire";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { bindDb, drafts, outboundSends, scheduledSendFiles } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
@@ -6,7 +7,7 @@ import { localRoutes } from "@trafficflow/api/local";
 import { SCHEDULED_FILES_PLAIN, type ScheduledFilesKeeping } from "@trafficflow/services/mail";
 import { keepScheduledFilesSealed, runScheduledSendPass } from "@trafficflow/services";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../api/test/helpers.js";
+import { FIXED_NOW, makeDeps, seedMailbox, seedMessage, seedSession } from "../../api/test/helpers.js";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import {
   HttpAdapter,
@@ -84,14 +85,15 @@ async function world(o: {
     const pass = (): Promise<Response> => base(url, init);
     return intercept?.(url, pass) ?? pass();
   };
-  const engine = new OhmailEngine({
+  const makeEngine = (fetch: FetchLike) => new OhmailEngine({
     adapter: new HttpAdapter({
-      baseUrl: "http://localhost", fetch: fetchImpl, ...(o.scheduleFilesCheck ? { scheduleFilesCheck: true } : {}),
+      baseUrl: "http://localhost", fetch, ...(o.scheduleFilesCheck ? { scheduleFilesCheck: true } : {}),
     }),
     store: new MemoryMirrorStore(),
   });
   return {
-    db, spy, engine, calls, mailboxId,
+    db, spy, engine: makeEngine(fetchImpl), calls, mailboxId, accountId: s.accountId,
+    otherDevice: () => makeEngine(base),
     setIntercept: (fn: Intercept | null) => { intercept = fn; },
   };
 }
@@ -327,6 +329,46 @@ describe("the demo world (FixturesAdapter)", () => {
  * schedule on the hosted table, the server keeps the file sealed, and its pass sends it once.
  */
 describe("the hosted door keeps a scheduled letter's files sealed until its pass sends them", () => {
+  it.each(["before the press", "between the save and the booking"])("refuses Send later when another device removes an original %s", async (when) => {
+    const keeping = keepScheduledFilesSealed(new StaticKeyProvider({ 1: Buffer.alloc(32, 9) }));
+    if (keeping.atRest !== "sealed") throw new Error("a server keeps its files sealed");
+    const w = await world({ scheduleFilesCheck: true, scheduleFiles: true, sealed: keeping });
+    const other = w.otherDevice();
+    const originals = await Promise.all(["Workshop plans", "Materials list"].map(async (subject) => {
+      const { id } = await seedMessage(w.db, { accountId: w.accountId, mailboxId: w.mailboxId, subject });
+      const content = Buffer.from(`Subject: ${subject}\r\n\r\nAn original message.\r\n`);
+      const filename = `${subject}.eml`;
+      return {
+        source: { id, filename, subject, sender: "Workshop", sha256: createHash("sha256").update(content).digest("hex") },
+        file: { filename, contentType: "message/rfc822", contentBase64: content.toString("base64") },
+      };
+    }));
+    const send = COMPOSE(w.mailboxId);
+    const save = {
+      kind: "draft_save" as const, mailboxId: w.mailboxId, subject: send.subject, body: send.body,
+      threadId: null, inReplyToMessageId: null, to: send.to, cc: [], bcc: [],
+    };
+    const forwardSources = originals.map(({ source }) => source);
+    const saved = await w.engine.mutate({ ...save, draftId: null, forwardSources });
+    const { entityId: draftId, revision } = saved;
+    if (!draftId || !revision) throw new Error("the saved draft has no id or revision");
+    await other.syncOnce();
+    const remaining = forwardSources.slice(0, 1);
+    const removeOriginal = async () => {
+      const removed = await other.mutate({ ...save, draftId, ifContentRevision: revision, forwardSources: remaining });
+      expect({ status: removed.status, code: removed.error?.code }).toEqual({ status: "confirmed", code: undefined });
+    };
+    if (when === "before the press") await removeOriginal();
+    else w.setIntercept((url, pass) => url.endsWith("/schedule-with-files") ? removeOriginal().then(pass) : null);
+
+    const attempted = await w.engine.mutate({
+      ...send, draftId, ifContentRevision: revision, forwardSources, attachments: originals.map(({ file }) => file),
+    });
+    expect.soft(attempted).toMatchObject({ status: "rolled_back", error: { code: "draft_changed", entityId: draftId } });
+    expect.soft(await w.db.select().from(drafts)).toMatchObject([{ id: draftId, status: "draft", sendAt: null, forwardSources: remaining }]);
+    expect(await w.db.select().from(scheduledSendFiles)).toEqual([]);
+  });
+
   it("the engine's press is kept as ciphertext and leaves once, byte-equal, with no row left", async () => {
     const sealed = keepScheduledFilesSealed(new StaticKeyProvider({ 1: Buffer.alloc(32, 9) }));
     if (sealed.atRest !== "sealed") throw new Error("a server keeps its files sealed");

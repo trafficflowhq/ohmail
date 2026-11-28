@@ -7,8 +7,8 @@ import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { StaticKeyProvider, type OpenSendAdapter, type OutboundMessage } from "@trafficflow/core";
-import { ScheduleService, dbFor, keepScheduledFilesSealed, runScheduledSendPass } from "../src/index.js";
-import type { ScheduledFilesKeeping, ServiceContext } from "../src/index.js";
+import { DraftsService, ScheduleService, dbFor, keepScheduledFilesSealed, runScheduledSendPass } from "../src/index.js";
+import type { ScheduledFilesKeeping, ServiceContext, StagedAttachmentSource } from "../src/index.js";
 
 /**
  * SEND LATER's CANCEL vs the worker's CLAIM, under a genuinely HELD cross-connection row lock —
@@ -70,7 +70,7 @@ async function seeded(
   }).returning();
   const ctx: ServiceContext = { db: dbFor(dbA, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   await schedules.schedule(ctx, d!.id, sendAt.toISOString(), files ? { files, surfaceMaxTotalBytes: null, ...(keeping ? { keeping } : {}) } : undefined);
-  return { ctx, accountId, draftId: d!.id };
+  return { ctx, accountId, draftId: d!.id, mailboxId: mb!.id };
 }
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
@@ -222,5 +222,73 @@ describe.skipIf(!PG_UP)("cancel vs the scheduled-send claim, across two real con
     expect(sha(mine[0]!.attachments![0]!.content)).toBe(sha(content));
     expect(await dbA.select().from(outboundSends).where(eq(outboundSends.accountId, w.accountId))).toHaveLength(1);
     expect(await dbA.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, w.draftId))).toHaveLength(0);
+  });
+});
+
+describe.skipIf(!PG_UP)("editing originals vs booking a scheduled send", () => {
+  it.each([{ stateRevision: false }, { stateRevision: true }])("refuses files prepared before another connection removed an original ($stateRevision)", async ({ stateRevision }) => {
+    const w = await seeded();
+    await schedules.cancel(w.ctx, w.draftId);
+    const originals = ["Workshop plans", "Materials list"].map((subject) => ({
+      filename: `${subject}.eml`, contentType: "message/rfc822",
+      content: Buffer.from(`Subject: ${subject}\r\n\r\nAn original message.\r\n`),
+    }));
+    const sources = originals.map(({ filename, content }) => ({
+      id: randomUUID(), filename, sender: "Workshop", subject: filename,
+      sha256: createHash("sha256").update(content).digest("hex"),
+    }));
+    await dbA.update(drafts).set({ forwardSources: sources }).where(eq(drafts.id, w.draftId));
+    const keeping = keepScheduledFilesSealed(new StaticKeyProvider({ 1: randomBytes(32) }));
+    if (keeping.atRest !== "sealed") throw new Error("a server's keeping is sealed");
+    const secondConnection = makeOwnedDb(PG_TEST_URL);
+    try {
+      const secondDevice = { ...w.ctx, db: dbFor(secondConnection.db, w.accountId) };
+      const draftsService = new DraftsService();
+      const shown = await draftsService.get(w.ctx, w.draftId);
+      const tickets = new Map(originals.map((file) => [randomUUID(), file]));
+      const ids = [...tickets.keys()];
+      const source: StagedAttachmentSource = {
+        async declare(_account, ids) {
+          return ids.map((id) => {
+            const file = tickets.get(id)!;
+            return { id, filename: file.filename, contentType: file.contentType, sizeBytes: file.content.length, expiresAt: DUE };
+          });
+        },
+        async fetch(_account, ticketIds) {
+          if (ticketIds[0] === ids[0]) {
+            await draftsService.update(secondDevice, w.draftId, { forwardSources: sources.slice(0, 1) });
+          }
+          return ticketIds.map((id) => tickets.get(id)!);
+        },
+      };
+      const failed = await schedules.schedule(w.ctx, w.draftId, DUE.toISOString(), {
+        keeping, staged: { ids, source },
+      }, stateRevision ? shown.contentRevision : undefined).catch((error: unknown) => error);
+      expect.soft(failed).toMatchObject({
+        code: stateRevision ? "draft_changed" : "forward_original_unavailable", httpStatus: 409,
+      });
+      expect.soft(await draftsService.get(secondDevice, w.draftId)).toMatchObject({
+        status: "draft", forwardSources: sources.slice(0, 1),
+      });
+
+      const fake = fakeAdapter();
+      const pass = {
+        mailboxIds: [w.mailboxId], openSendAdapter: fake.factory,
+        now: () => new Date(DUE.getTime() + 60_000),
+        files: { open: keeping.sealer.open.bind(keeping.sealer), tidy: true },
+      };
+      const accountDb = bindDb(dbA, { account: null });
+      await runScheduledSendPass(accountDb, pass);
+      expect(fake.state.delivered).toEqual([]);
+
+      const [remaining] = originals;
+      const { draft } = await schedules.schedule(w.ctx, w.draftId, DUE.toISOString(), { keeping, files: [remaining!] });
+      expect(draft).toMatchObject({ status: "scheduled", sendFiles: 1, forwardSources: sources.slice(0, 1) });
+      await expect(draftsService.update(secondDevice, w.draftId, { forwardSources: [] })).rejects.toMatchObject({ httpStatus: 409 });
+      expect(await runScheduledSendPass(accountDb, pass)).toMatchObject({ sent: 1, failed: 0 });
+      expect(fake.state.delivered.map(({ attachments }) => attachments)).toEqual([[remaining]]);
+    } finally {
+      await secondConnection.close();
+    }
   });
 });

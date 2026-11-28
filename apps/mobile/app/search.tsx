@@ -93,7 +93,8 @@ function SearchBody({ inPane }: { inPane: boolean }) {
   const warm = useRef(w.search.warm);
   warm.current = w.search.warm;
   useEffect(() => {
-    warm.current();
+    const idle = requestIdleCallback(() => warm.current());
+    return () => cancelIdleCallback(idle);
   }, []);
   /* A result opened from here stays over Search, on two panes too: Back returns to the query. In
      More's pane only while that result is open: the pane stays mounted behind the other tabs. */
@@ -122,7 +123,10 @@ function SearchBody({ inPane }: { inPane: boolean }) {
   }, [people, resting, trimmed]);
   const few = resting ? 5 : 3;
   const questionKey = JSON.stringify(question);
-  const answer = addr === null ? (question?.filters || question?.sort ? w.search.query(q, undefined, filters, order) : w.search.query(q)) : null;
+  // The resting view draws people and the mailbox count. Its first paint needs no device query.
+  const answer = addr === null && !resting
+    ? (question?.filters || question?.sort ? w.search.query(q, undefined, filters, order) : w.search.query(q))
+    : null;
   const around = addr !== null ? w.search.address(addr, dir) : null;
   const archive = useAddressArchive(addr, dir);
   /* The archive's rows only under All or the direction it answered (`address-view.ts`'s rule). */
@@ -198,6 +202,7 @@ function SearchBody({ inPane }: { inPane: boolean }) {
      One list per screen: the branch below decides its groups, its head and its empty state. */
   const resultCount = new Intl.NumberFormat(locale).format(store.ready && !store.totalExact ? store.about ?? store.total : found);
   const resultStamp = store.ready && !store.totalExact && store.about === null ? `${resultCount}+` : resultCount;
+  const similarReach = partsSaid ? Copy.searchPartReach : undefined;
   const resultHeading = (key: string, title: string, rows: Row[], note?: string): Row[] => {
     if (!t.mail || rows.length === 0) return rows;
     const first = rows[0];
@@ -225,9 +230,9 @@ function SearchBody({ inPane }: { inPane: boolean }) {
             {
               key: "similar", title: t.mail && shownItems.length === 0 ? undefined : Copy.searchSimilarHead,
               note: t.mail && shownItems.length === 0 ? undefined
-                : `${store.ready && store.importing ? Copy.searchSimilarHintSynced : Copy.searchSimilarHint}${partsSaid ? ` ${Copy.searchPartReach}` : ""}`,
+                : `${store.ready && store.importing ? Copy.searchSimilarHintSynced : Copy.searchSimilarHint}${similarReach ? ` ${similarReach}` : ""}`,
               rows: shownItems.length === 0
-                ? resultHeading("similar-heading", Copy.searchSimilarHead, shownSimilar, partsSaid ? Copy.searchPartReach : undefined)
+                ? resultHeading("similar-heading", Copy.searchSimilarHead, shownSimilar, similarReach)
                 : shownSimilar,
             },
           ]

@@ -44,3 +44,4 @@ export {
  * none of which opens a server connection or names the server driver.
  */
 export { ensureSearchExtensions, TRIGRAM_INDEX_SPECS } from "./search-setup.js";
+export { validateCalendarSessionScope } from "./calendar-session-scope.js";

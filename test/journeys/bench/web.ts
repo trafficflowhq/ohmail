@@ -204,10 +204,17 @@ interface ApiFeatures {
   pairing?: boolean;
   remoteImages?: boolean;
   calendar?: boolean;
+  composeSend?: boolean;
 }
 
 async function makeApi(f: "managed" | "selfhost", origin: () => string, features: ApiFeatures): Promise<Api> {
-  const made = await makeDeps(new Date(), { origin: [origin()] });
+  const made = await makeDeps(new Date(), { origin: [origin()] }, features.composeSend ? {
+    sendAdapter: async () => ({
+      async send(message) { return { providerMessageId: message.messageId! }; },
+      async messageInSent() { return true; },
+      async close() {},
+    }),
+  } : {});
   made.deps.hello = {
     flavor: f, needsSetup: false,
     auth: { password: true, totp: true, webauthn: true, publicSignup: f === "managed" },
@@ -258,6 +265,10 @@ async function makeApi(f: "managed" | "selfhost", origin: () => string, features
       const body = method === "GET" || method === "HEAD" || chunks.length === 0 ? undefined : Buffer.concat(chunks);
       const answer = await app.handle(new Request(url, { method, headers, body }), { ...made.deps, session: null, idempotency: null });
       heard.push({ method, pattern, status: answer.status });
+      if (door.includes("hold-answer")) {
+        if (!res.destroyed) await once(res, "close");
+        return;
+      }
       res.statusCode = answer.status;
       answer.headers.forEach((v, k) => { if (k !== "set-cookie") res.setHeader(k, v); });
       const cookies = answer.headers.getSetCookie();
@@ -529,6 +540,7 @@ export async function startBench(f: Flavour, recordAs = "bench", features: ApiFe
         ? (await seedSessionFor(api!.db, { accountId: a.accountId, userId: a.userId, now: api!.now(), lastTwofaAt: api!.now() })).token
         : a.access;
       const headers = new Headers({ cookie: `tf_session=${access}; tf_csrf=${csrfTokenFor(access)}`, "x-csrf-token": csrfTokenFor(access), origin });
+      if (o.session === "fresh") headers.set("authorization", `Bearer ${access}`);
       if (o.body !== undefined) {
         headers.set("content-type", "application/json");
         headers.set("idempotency-key", crypto.randomUUID());

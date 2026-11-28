@@ -32,8 +32,8 @@ export interface StandInCalendar {
   readonly slug: string;
   name: string;
   color: string | null;
-  /** What the collection is. Only `calendar` is one; the others stand in the home beside it. */
-  kind: "calendar" | "inbox" | "folder";
+  /** What kind of collection the home advertises. */
+  kind: "calendar" | "subscribed" | "inbox" | "folder";
   components: readonly string[] | null;
   /** Whether the collection keeps a sync token. */
   sync: boolean;
@@ -194,7 +194,8 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
   const collectionProps = (c: Held, asked: (name: string) => boolean, atHome = false): string => {
     const shareAccess = atHome && c.homeShareAccess !== undefined ? c.homeShareAccess : c.shareAccess;
     const privileges = atHome && c.homePrivileges !== undefined ? c.homePrivileges : c.privileges;
-    const type = c.kind === "calendar" ? "<collection/><C:calendar/>" : c.kind === "inbox" ? "<collection/><C:schedule-inbox/>" : "<collection/>";
+    const type = c.kind === "calendar" ? "<collection/><C:calendar/>" : c.kind === "inbox" ? "<collection/><C:schedule-inbox/>" :
+      c.kind === "subscribed" ? "<collection/><CS:subscribed/>" : "<collection/>";
     let ok = "";
     let missing = "";
     const put = (name: string, element: string | null, empty: string): void => {

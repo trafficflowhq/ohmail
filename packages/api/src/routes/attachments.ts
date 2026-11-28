@@ -1,5 +1,5 @@
 import {
-  liveBody, type AttachmentAdapter, type AttachmentSink, type DownloadAllInput, type OpenAdapter,
+  forwardSource, liveBody, FORWARD_MAX_RAW_BYTES, ServiceError, type AttachmentAdapter, type AttachmentSink, type DownloadAllInput, type OpenAdapter,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { answer, answerBuilt, jsonResponse } from "../responses.js";
@@ -110,6 +110,23 @@ export const attachmentRoutes: Route[] = [
     options: { raw: true, middleware: BYTE_ROUTE_MIDDLEWARE },
     handler: async (req, deps, params) => {
       try {
+        const query = new URL(req.url).searchParams;
+        if (query.get("format") === "eml") {
+          const maxBytes = Number(query.get("maxBytes"));
+          if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > FORWARD_MAX_RAW_BYTES) {
+            throw new ServiceError("validation_failed", 400, "Invalid message attachment size limit.");
+          }
+          const raw = await forwardSource(serviceContext(deps, req), params.id!, liveBodyReader(deps), maxBytes);
+          return new Response(toBody(raw), {
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "Content-Disposition": contentDisposition("message.eml"),
+              "Content-Length": String(raw.byteLength),
+              "X-Content-Type-Options": "nosniff",
+              "Cache-Control": "no-store",
+            },
+          });
+        }
         const body = await liveBody(serviceContext(deps, req), params.id!, {
           ...(deps.services?.liveBodyAdmit ? { admit: deps.services.liveBodyAdmit } : {}),
           read: liveBodyReader(deps),

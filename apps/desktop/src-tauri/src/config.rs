@@ -922,6 +922,40 @@ pub fn data_dir(root: &Path, mode: Mode) -> PathBuf {
     root.join(mode.dir_name())
 }
 
+/// A saved viewport belongs to this door and this local copy. All these facts are available
+/// before the database opens. Missing evidence leaves the window on its normal loading screen.
+pub fn startup_list_key(root: &Path, config: &Config) -> Option<String> {
+    use sha2::{Digest, Sha256};
+
+    let dir = data_dir(root, config.mode());
+    let generation: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("store-generation.json")).ok()?).ok()?;
+    let generation = generation.get("generation")?.as_u64().filter(|n| *n > 0)?;
+    let created = fs::metadata(dir.join("pgdata")).ok()?.created().ok()?;
+    let created = created.duration_since(std::time::UNIX_EPOCH).ok()?;
+    let mut hash = Sha256::new();
+    hash.update(to_json(config).to_string());
+    hash.update(generation.to_be_bytes());
+    hash.update(created.as_nanos().to_be_bytes());
+    if let Config::Cloud(cloud) = config {
+        if cloud.identity_pending || !dir.join(CLOUD_SESSION_SEAL).is_file()
+            || dir.join("cloud-session-refused.json").exists()
+        {
+            return None;
+        }
+        let raw = fs::read(dir.join(MIRROR_OWNER_FILE)).ok()?;
+        let owner: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+        owner.get("account")?.as_str().filter(|name| !name.is_empty())?;
+        if ["erased", "revoked", "discardPending"].iter()
+            .any(|flag| owner.get(*flag).and_then(serde_json::Value::as_bool) == Some(true))
+        {
+            return None;
+        }
+        hash.update(&raw);
+    }
+    Some(format!("{:x}", hash.finalize()))
+}
+
 /// The engine's environment, composed from the configuration and the app's data directory.
 ///
 /// **`OHMAIL_MODE=cloud` on the cloud branch is the safety-critical line in this file.** Read the

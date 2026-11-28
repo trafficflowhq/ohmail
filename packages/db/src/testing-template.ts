@@ -8,6 +8,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { adoptBaseline, type JournalSpec } from "./baseline.js";
+import { validateCalendarSessionScope } from "./calendar-session-scope.js";
 import { JOURNALS } from "./journal-specs.js";
 import { brandDialect } from "./dialect/index.js";
 
@@ -103,6 +104,7 @@ export async function migrateFresh(client: PGlite, specs: readonly JournalSpec[]
   for (const spec of specs) {
     await adoptBaseline(db, spec);
     await migrate(db, { migrationsFolder: spec.dir, migrationsSchema: spec.migrationsSchema });
+    if (spec.name === "mail") await validateCalendarSessionScope(db);
   }
 }
 

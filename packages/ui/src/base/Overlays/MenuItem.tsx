@@ -1,4 +1,4 @@
-import { useId, type ReactNode, type Ref } from "react";
+import { useId, type MouseEventHandler, type ReactNode, type Ref } from "react";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { Dot } from "../Primitives/Dot.js";
 import { KeyHint } from "../Primitives/KeyHint.js";
@@ -34,7 +34,7 @@ export interface MenuItemProps {
   /** Led by the dot: hot when it wants you. Its words may then take two lines. */
   dot?: "hot" | "ink";
   ref?: Ref<HTMLButtonElement>;
-  onPress?: () => void;
+  onPress?: MouseEventHandler<HTMLButtonElement>;
 }
 
 /** One line of a menu. */

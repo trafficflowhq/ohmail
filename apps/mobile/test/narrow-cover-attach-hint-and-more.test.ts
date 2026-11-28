@@ -27,11 +27,14 @@ describe("the attach hint", () => {
   });
   it("the composer decides from widths, which the hint's margin never moves", () => {
     const sheet = src("../src/ui/MessageActions.tsx");
-    const at = sheet.indexOf("{Copy.attachCap(sizeLabel(attachCap))}");
+    const rowStart = sheet.indexOf("columnGap: ATTACH_ROW_GAP");
+    expect(rowStart).toBeGreaterThan(-1);
+    const at = sheet.indexOf("{Copy.attachCap(sizeLabel(attachCap))}", rowStart);
+    expect(at).toBeGreaterThan(rowStart);
     const hint = sheet.slice(sheet.lastIndexOf("<Txt", at), at);
     expect(hint).toContain("style={attachHintStyle(attachHintFits(attachRow.row, [attachRow.files, attachRow.photos], attachRow.hint))}");
     expect(hint).toContain('onLayout={(e) => measureAttach("hint", e.nativeEvent.layout.width)}');
-    const row = sheet.slice(sheet.lastIndexOf("columnGap: ATTACH_ROW_GAP", at), at);
+    const row = sheet.slice(rowStart, at);
     for (const k of ['measureAttach("row"', 'measureAttach("files"', 'measureAttach("photos"']) expect(row).toContain(k);
     expect(row, "a position read feeds the margin back into the wrap").not.toMatch(/layout\.(x|y)\b/);
   });

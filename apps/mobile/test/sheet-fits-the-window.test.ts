@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { SHEET_TOP_ROOM, sheetPanelBounds } from "../src/ui/sheet-bounds";
@@ -62,11 +63,34 @@ describe("the sheet scrolls and its way out does not", () => {
 /* A LIST INSIDE A SHEET STILL SCROLLS once the sheet scrolls (REVIEW-026-PHONE-SAYS-EVERY-PRESS-2 L4):
    on Android a same-direction inner ScrollView needs `nestedScrollEnabled`, or the outer takes the
    gesture. Measured on the AVD at a 900 px window: the time list stopped at its first screen. */
+function scrollViews(source: string) {
+  const file = ts.createSourceFile("sheet.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const opens: (ts.JsxOpeningElement | ts.JsxSelfClosingElement)[] = [];
+  const visit = (node: ts.Node) => {
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText(file) === "ScrollView") {
+      opens.push(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return opens;
+}
+
+function nestedScrollEnabled(node: ts.JsxOpeningElement | ts.JsxSelfClosingElement): boolean {
+  const attr = node.attributes.properties.find((prop): prop is ts.JsxAttribute =>
+    ts.isJsxAttribute(prop) && prop.name.getText() === "nestedScrollEnabled");
+  return attr !== undefined && (attr.initializer === undefined ||
+    (ts.isJsxExpression(attr.initializer) && attr.initializer.expression?.kind === ts.SyntaxKind.TrueKeyword));
+}
+
 describe("the scrollers inside the reader's sheets", () => {
-  const ACTIONS = withoutComments(readFileSync(fileURLToPath(new URL("../src/ui/MessageActions.tsx", import.meta.url)), "utf8"));
+  const ACTIONS = readFileSync(fileURLToPath(new URL("../src/ui/MessageActions.tsx", import.meta.url)), "utf8");
   it("every ScrollView in the sheets passes nestedScrollEnabled", () => {
-    const opens = [...ACTIONS.matchAll(/<ScrollView\b[^>]*>/g)].map((m) => m[0]);
+    const control = scrollViews(`<>\n      <ScrollView ref={ref as Ref<ScrollView>} nestedScrollEnabled />\n      <ScrollView accessibilityLabel="nestedScrollEnabled" />\n      <ScrollView nestedScrollEnabled={false} />\n    </>`);
+    expect(control.map(nestedScrollEnabled)).toEqual([true, false, false]);
+    const opens = scrollViews(ACTIONS);
     expect(opens.length, "the sheets' scrollers moved; this census reads nothing").toBeGreaterThanOrEqual(5);
-    for (const o of opens) expect(o, "an inner list that stops scrolling on Android").toContain("nestedScrollEnabled");
+    expect(opens.filter((node) => !nestedScrollEnabled(node)).map((node) => node.getText()),
+      "an inner list that stops scrolling on Android").toEqual([]);
   });
 });

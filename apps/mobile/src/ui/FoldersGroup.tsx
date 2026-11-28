@@ -28,6 +28,7 @@ import {
 import { folderNameError } from "../state/live";
 import { Rule, Tap, TapRow, Txt } from "./base";
 import { DrawerGroup } from "./DrawerGroup";
+import { DrawerTapRow } from "./DrawerTapRow";
 import { Icon } from "./Icon";
 import { Sheet, SheetRow } from "./Sheet";
 
@@ -100,6 +101,7 @@ export function FoldersGroup({
   junkSaid?: { named: string } | "unnamed" | null;
 }) {
   const t = useTheme();
+  const FolderRow = drawer ? DrawerTapRow : TapRow;
   /** The opened branches, per visit — the spec's opened-set, see the header on persistence. */
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const [filter, setFilter] = useState<Record<string, string>>({});
@@ -280,7 +282,7 @@ export function FoldersGroup({
           ) : (
             <View style={{ width: 28 }} />
           )}
-          <TapRow
+          <FolderRow
             onPress={() => onOpen(f.id)}
             selected={f.id === selectedId}
             accessibilityState={{ selected: f.id === selectedId }}
@@ -320,7 +322,7 @@ export function FoldersGroup({
                 {count}
               </Txt>
             ) : null}
-          </TapRow>
+          </FolderRow>
           {/* The … control — stage 2's verbs. Absent while a command is in flight and on the
               read-only render, exactly the webapp's two absences. */}
           {verbs && !f.op ? (
