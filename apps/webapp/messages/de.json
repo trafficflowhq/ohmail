@@ -292,6 +292,8 @@
     "working": "Einen Moment …",
     "badToken": "Dieser Einladungslink funktioniert nicht mehr. Links funktionieren einmal und laufen ab, also bitte die Person, die dich eingeladen hat, um einen neuen.",
     "tokenSpent": "Diese Einladung wurde bereits für {email} verwendet. Für eine andere E-Mail-Adresse bitte die Person, die dich eingeladen hat, um einen neuen Link.",
+    "reopenTitle": "Öffne deine Einladung erneut",
+    "reopenLine": "Öffne den Link aus deiner Einladung, um mit der Kontoeinrichtung fortzufahren.",
     "missingTitle": "Dieser Link ist unvollständig",
     "missingLine": "Bitte die Person, die dich eingeladen hat, den Link noch einmal zu schicken.",
     "missingNote": "Der geheime Teil der Einladung fehlt in der Adresse. Das passiert oft, wenn ein Link von Hand kopiert wird.",
@@ -2990,6 +2992,7 @@
   },
   "verify": {
     "confirmWith": "Bestätige meine E-Mail-Adresse mit dem Passwort <blank></blank>.",
+    "reopenLink": "Öffne den Bestätigungslink in deiner E-Mail erneut, um ohne Code fortzufahren.",
     "codeIs": "Der Code aus meiner E-Mail ist <blank></blank>.",
     "passwordIs": "Mein Passwort ist <blank></blank>.",
     "tokenLabel": "Bestätigungscode aus deiner E-Mail",

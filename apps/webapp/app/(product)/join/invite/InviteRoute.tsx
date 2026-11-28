@@ -14,6 +14,7 @@ function stateOf(c: InviteCeremony): InviteState {
   switch (c.phase) {
     case "reading": return { at: "opening" };
     case "missing": return { at: "missing" };
+    case "reopen": return { at: "reopen" };
     case "unconfigured": return { at: "unavailable" };
     case "form": return { at: "form", busy: c.busy, refusal: c.error };
   }

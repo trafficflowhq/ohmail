@@ -38,7 +38,7 @@ import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import { usePendingSignOut, type PendingSignOut } from "../../login/pending-sign-out";
 
 /** What this page knows, in order of discovery. `reading` is the mount tick before the hash is read. */
-export type Phase = "reading" | "form" | "missing" | "unconfigured";
+export type Phase = "reading" | "form" | "missing" | "reopen" | "unconfigured";
 
 /** What the invite's ceremony shows, and its acts. The link's token never leaves it. */
 export interface InviteCeremony {
@@ -71,41 +71,37 @@ export function useInviteDoor(): InviteCeremony {
   /** A redeem that succeeded while register did not — kept so a retry never re-burns the token. */
   const [minted, setMinted] = useState<{ code: string; email: string } | null>(null);
 
-  /**
-   * The fragment, read ONCE and kept in a ref — because the read is destructive. This effect
-   * scrubs the hash the moment the token is held, and React 18's Strict Mode replays the
-   * mount effect: a replay that re-read `location.hash` would find the emptiness the first
-   * pass created and overwrite the phase with the incomplete-link screen — every valid link
-   * broken under `pnpm dev`. Review finding, watched red under a Strict Mode mount. The ref
-   * survives the replay (Strict Mode remounts effects, not the instance), so both passes
-   * agree on what the address bar originally said.
-   */
-  const fragment = useRef<string | null>(null);
+  // The ref keeps the second Strict Mode effect pass from treating a scrubbed link as missing.
+  const linkRead = useRef(false);
   useEffect(() => {
     if (!apiConfigured()) {
       setPhase("unconfigured");
       return;
     }
-    // THE FRAGMENT, AND ONLY THE FRAGMENT. A token someone moved into the query is refused
-    // rather than accepted-with-a-shrug: accepting it would put the credential in access logs
-    // and referrers on every open, and the incomplete-link screen tells the holder to ask for
-    // a fresh link — which the minting pane produces in one click.
-    if (fragment.current === null) {
-      const hash = window.location.hash;
-      fragment.current = hash.startsWith("#") ? hash.slice(1).trim() : "";
-      if (fragment.current !== "") {
-        // Scrub: out of the visible URL, out of history, out of the bar of an abandoned tab.
-        // The token lives on in the ref and component state for exactly as long as this
-        // mount does.
-        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    if (linkRead.current) return;
+
+    const readInvite = () => {
+      if (linkRead.current) return;
+      // Only the fragment carries an invite. The history entry remembers that a link was opened.
+      const fragment = window.location.hash.slice(1).trim();
+      if (fragment === "") {
+        setPhase(window.history.state?.inviteOpened === true ? "reopen" : "missing");
+        return;
       }
-    }
-    if (fragment.current === "") {
-      setPhase("missing");
-      return;
-    }
-    setToken(fragment.current);
-    setPhase("form");
+      linkRead.current = true;
+      setToken(fragment);
+      window.history.replaceState(
+        { inviteOpened: true },
+        "",
+        `${window.location.pathname}${window.location.search}`,
+      );
+      setPhase("form");
+    };
+
+    readInvite();
+    // Reopening the original link in this tab may only change the fragment.
+    window.addEventListener("hashchange", readInvite);
+    return () => window.removeEventListener("hashchange", readInvite);
   }, []);
 
   /**

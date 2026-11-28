@@ -97,6 +97,7 @@ function VerifyForm(p: {
       <Page
         refusal={refusalOf(pending, state.refusal)}
         line={verify("line")}
+        note={state.asksCode ? verify("reopenLink") : undefined}
         acts={
           <>
             <Button type="submit" size="l" keyHint="↵" disabled={dead || state.busy || pending.signingOut}>
