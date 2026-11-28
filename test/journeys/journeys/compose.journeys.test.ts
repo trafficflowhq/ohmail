@@ -1,5 +1,4 @@
 import { expect } from "vitest";
-import type { PlaywrightPerson } from "../bench/dom-playwright.js";
 import { EVERY_WEB, WEB, journey, journeysOf, signedIn, type Guard } from "../bench/web.js";
 import type { Account, Bench, Person } from "../bench/seam.js";
 
@@ -193,20 +192,20 @@ journeysOf("compose", () => {
     const { creates } = await draftChanges(b, account);
     const draft = creates.find((change) => change.entity?.subject === SUBJECT)!;
     await expect.poll(() => person.storedWriting(WORDS, SUBJECT)).toContain("draft");
-    const next = (await person.tab()) as PlaywrightPerson;
+    const next = await person.tab();
     await person.closeTab();
     await next.arrive("ohbox");
     await expect.poll(() => next.offered("compose-restore")).toBe(true);
     // Keep the clock inside the notice's lifetime so a timeout cannot pass this check.
-    const now = await next.page.evaluate(() => Date.now());
-    await next.page.clock.pauseAt(new Date(now + 150));
+    await next.pauseClock();
+    expect(await next.offered("compose-restore")).toBe(true);
     const discarded = await b.ask(account, "DELETE", `/drafts/${draft.id}`, { session: "fresh" });
     expect(discarded.status).toBe(204);
-    await next.page.evaluate(() => window.dispatchEvent(new Event("online")));
-    await next.page.clock.runFor(500);
+    await next.signalReconnect();
+    await next.later(500);
     await expect.poll(() => next.storedWriting(WORDS, SUBJECT)).toEqual([]);
     await expect.poll(() => scratchWords(next)).toEqual([]);
-    await next.page.clock.runFor(150);
+    await next.later(150);
     expect(await next.offered("compose-restore")).toBe(false);
   });
 

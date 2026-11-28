@@ -80,6 +80,10 @@ export class PlaywrightPerson implements Person {
     await this.context.setOffline(false);
   }
 
+  async signalReconnect(): Promise<void> {
+    await this.page.evaluate(() => window.dispatchEvent(new Event("online")));
+  }
+
   async closeTab(): Promise<void> {
     const closed = this.page.waitForEvent("close");
     await this.page.close({ runBeforeUnload: true });
@@ -123,6 +127,7 @@ export class PlaywrightPerson implements Person {
   /** A second tab of the same browser: the same cookies and storage, its own page. */
   async tab(): Promise<PlaywrightPerson> {
     const other = new PlaywrightPerson(await this.context.newPage(), this.context, this.origin, this.base, this.lang);
+    other.driven = this.driven;
     this.tabs.push(other);
     return other;
   }
@@ -429,11 +434,18 @@ export class PlaywrightPerson implements Person {
     return (await this.page.evaluate(() => document.body.innerText)).includes(words);
   }
 
-  /** Set by the bench that opened this window with its clock driven (`person({ clock: "driven" })`). */
+  /** Set by the bench that opened this browser context with a driven clock. */
   driven = false;
+
+  async pauseClock(): Promise<void> {
+    if (!this.driven) throw new Error("this window's clock is not driven: open the person with { clock: \"driven\" }");
+    const now = await this.page.evaluate(() => Date.now());
+    await this.context.clock.pauseAt(new Date(now + 150));
+  }
+
   async later(ms: number): Promise<void> {
     if (!this.driven) throw new Error("this window's clock is not driven: open the person with { clock: \"driven\" }");
-    await this.page.clock.runFor(ms);
+    await this.context.clock.runFor(ms);
   }
 
   /** The jar this window shares, signed in as an account with the bench's sign-in cookies (`web.ts`). */
