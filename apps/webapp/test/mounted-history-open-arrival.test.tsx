@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { FIXTURE_NOW, idOf, storeFixture, storeMessage, storeRows, type Fixture } from "./_store-fixture";
 import {
-  ISO, act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  ISO, act, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, page, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 import { readingColumn, seatedList } from "./ohbox/_finders";
 
@@ -128,6 +129,23 @@ describe("an open History shows mail that reaches the store while it is open", (
       if (desc) Object.defineProperty(target, key, desc);
       else delete (target as Record<string, unknown>)[key];
     }
+  });
+
+  it("returns from the History footer link to Ohbox with one Back", async () => {
+    answerSyncWith(() => page(1));
+    const host = await mountShell([mailbox({ lastSyncAt: ISO })]);
+    await settle();
+    const from = window.location.hash;
+    const entries = window.history.length;
+
+    fireEvent.click(within(seatedList(host)!).getByRole("button", { name: "History" }));
+    await settle();
+
+    expect(readingColumn(host)?.textContent).toMatch(/subject of m\d+/);
+    expect(window.history.length).toBe(entries + 1);
+    window.history.back();
+    await tick(50);
+    expect(window.location.hash).toBe(from);
   });
 
   it("read at the top: after one drain the new message is the first row; the column keeps its message", async () => {
