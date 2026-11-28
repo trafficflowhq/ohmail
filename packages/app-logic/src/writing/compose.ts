@@ -340,36 +340,85 @@ function removeUnit(keys: readonly string[], unit: readonly (string | null)[]): 
 type OfferComposer = (restore: () => boolean, available: () => boolean) => void;
 type RestoreOffer = { restore: () => Promise<boolean>; available: () => boolean };
 
+type ClosedCompose = { key: string; raw: string; unit: (string | null)[]; ownTab: boolean };
+
+function closedVersion({ unit }: ClosedCompose) {
+  const [, row, raw] = unit;
+  if (!row || !raw) return null;
+  const { holds } = JSON.parse(raw) as { holds?: Partial<ComposeRowHolds> };
+  if (holds?.row !== row || typeof holds.rev !== "string" || !holds.rev
+    || typeof holds.sig !== "string" || holds.gone) return null;
+  const fields = decodeComposeDraft(raw);
+  const edited = holds.sig !== holdsSig(fields) || holds.pending !== undefined || fields.sig?.kind === "edited"
+    || (holds.fromMailboxId !== undefined && holds.fromMailboxId !== fields.fromMailboxId);
+  // Older markers lack the From choice. Their matching text can rank the copies,
+  // but only the full saved proof lets recovery remove a duplicate.
+  const saved = !edited && matchesSavedMarker(fields, holds, { id: row, contentRevision: holds.rev });
+  return { row, revision: holds.rev, edited, saved };
+}
+
 function adoptClosedComposer(
   owner: string, own: readonly string[], live?: ReadonlySet<string>, offer?: OfferComposer,
 ): boolean {
   const prefix = handoffPrefix(owner);
   const mine = prefix + composerId();
   const keys = [mine, ...Object.keys(window.localStorage).filter((key) => key !== mine && key.startsWith(prefix))];
+  const candidates: ClosedCompose[] = [];
   for (const key of keys) {
     const source = key.slice(prefix.length).split(":", 1)[0]!;
-    if (source !== composerId() && live?.has(composerLockName(source))) continue;
+    const ownTab = source === composerId();
+    if (!ownTab && live?.has(composerLockName(source))) continue;
     const raw = window.localStorage.getItem(key);
+    if (raw === null) continue;
     const unit = decodeUnit(raw);
     if (unit === null) continue;
     if (!hasRecoveryContent(unit[2])) {
       if (handoffs.get(key) === raw) handoffs.remove(key);
       continue;
     }
-    if (offer && source !== composerId()) {
+    candidates.push({ key, raw, unit, ownTab });
+  }
+  const first = candidates[0];
+  if (first) {
+    // A fresh tab should recover edits made against the same saved revision before an
+    // untouched copy of it. A reload still takes its own tab's work first.
+    const version = closedVersion(first);
+    const siblings = version === null ? [] : candidates.filter((candidate) => candidate.unit[1] === version.row)
+      .map((candidate) => ({ candidate, version: closedVersion(candidate) }))
+      .filter((copy) => copy.version?.revision === version.revision);
+    const changed = !first.ownTab && version?.edited === false
+      ? siblings.find((copy) => copy.version?.edited === true)
+      : undefined;
+    const selected = changed?.candidate ?? first;
+    const recoveringEdits = changed !== undefined || version?.edited === true;
+    const take = (unit: (string | null)[], raw: string): boolean => {
+      const accepted = acceptUnit(own, unit, () =>
+        handoffs.get(selected.key) === raw && handoffs.remove(selected.key) === "stored");
+      if (accepted && recoveringEdits && selected.raw === raw) {
+        // These copies hold only the base revision of the edits just recovered.
+        for (const copy of siblings) {
+          if (copy.version?.saved && handoffs.get(copy.candidate.key) === copy.candidate.raw) {
+            handoffs.remove(copy.candidate.key);
+          }
+        }
+      }
+      return accepted;
+    };
+    if (offer && !selected.ownTab) {
       offer(() => {
-        const current = handoffs.get(key);
+        const current = handoffs.get(selected.key);
         const left = decodeUnit(current);
-        if (holdsMessage(readUnit(own)) || left === null || left[0] !== unit[0] || !hasRecoveryContent(left[2])) return false;
-        return acceptUnit(own, left, () => handoffs.get(key) === current && handoffs.remove(key) === "stored");
+        if (current === null || holdsMessage(readUnit(own)) || left === null || left[0] !== selected.unit[0]
+          || !hasRecoveryContent(left[2])) return false;
+        return take(left, current);
       }, () => {
-        const left = decodeUnit(handoffs.get(key));
-        return left !== null && left[0] === unit[0] && hasRecoveryContent(left[2]);
+        const left = decodeUnit(handoffs.get(selected.key));
+        return left !== null && left[0] === selected.unit[0] && hasRecoveryContent(left[2]);
       });
       return true;
     }
-    const accepted = acceptUnit(own, unit, () => handoffs.get(key) === raw && handoffs.remove(key) === "stored");
-    if (accepted && source !== composerId()) unannounced.add(owner);
+    const accepted = take(selected.unit, selected.raw);
+    if (accepted && !selected.ownTab) unannounced.add(owner);
     return accepted;
   }
   const legacy = unitKeys(owner);

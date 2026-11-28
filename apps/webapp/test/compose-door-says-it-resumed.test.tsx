@@ -17,7 +17,7 @@ import { COMPOSE_SEND_KEY } from "@ohmail/app-logic/writing/mail-send";
 import { settleFirstPaint } from "./_first-paint.js";
 import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { DraftServer, mountShell as mountWithDraftServer, press as pressInShell, storeWith, stubDom, unmountAll, waitFor } from "./_draft-shell.js";
-import { holdTheWire, letter } from "./_handoff-steps.js";
+import { holdTheWire, letter, navigate } from "./_handoff-steps.js";
 
 /**
  * THE PLAIN COMPOSE DOOR SAYS IT RESUMED A MESSAGE. `#/compose` opens the message left unfinished
@@ -252,6 +252,69 @@ describe("recovering and ending a draft", () => {
     await unmountAll();
     resetStorageOwnerForTest();
   });
+
+  it.each([
+    { scenario: "one closed tab", closeOrder: ["editing-tab"] },
+    { scenario: "two tabs with the older copy first", closeOrder: ["older-tab", "editing-tab"] },
+    { scenario: "two tabs with the older copy last", closeOrder: ["editing-tab", "older-tab"] },
+  ])("keeps recovered edits when opening their older Drafts row with $scenario", async ({ closeOrder }) => {
+    const id = "saved-draft";
+    const latest = words + " Use the south gate.";
+    const server = new DraftServer([letter(id, subject, words, recipient)]);
+    const saved = { ...fields, to: recipient.address, fromMailboxId: "mb1" };
+    const tab = (name: string) => {
+      resetComposerForTest();
+      window.sessionStorage.setItem(COMPOSER_KEY, name);
+    };
+    const openSavedVersion = (name: string) => {
+      tab(name);
+      composeSessionId(owner);
+      writeComposeDraft(saved, owner);
+      writeComposeRow(id, owner);
+      markComposeRowHolds({
+        row: id, sig: holdsSig(saved), fromMailboxId: saved.fromMailboxId, rev: server.rows.get(id)!.contentRevision,
+      }, owner);
+    };
+    if (closeOrder.length > 1) openSavedVersion("older-tab");
+    openSavedVersion("editing-tab");
+    writeComposeDraft({ ...saved, body: latest }, owner);
+    for (const name of closeOrder) {
+      tab(name);
+      handOffComposer();
+    }
+    tab("next-tab");
+    if (closeOrder.length > 1) {
+      Object.defineProperty(navigator, "locks", {
+        configurable: true,
+        value: {
+          request: async (_name: string, _options: unknown, run: (lock: object) => unknown) => run({}),
+          query: async () => ({ held: [], pending: [] }),
+        },
+      });
+      onTestFinished(() => { Reflect.deleteProperty(navigator, "locks"); });
+    }
+
+    const shell = await mountWithDraftServer("#/drafts", [], [], { server });
+    const list = await screen.findByRole("listbox", { name: messages.drafts.title });
+    await pressInShell(within(list).getByRole("option", { name: new RegExp(subject) }), "open the saved draft");
+    const body = (await form()).getByRole("textbox", { name: messages.write.text });
+    expect(body.textContent).toContain(latest);
+    await waitFor(() => server.rows.get(id)?.body === latest, "the recovered edit to reach the draft");
+    expect(shell.sent.filter((m) => m.kind === "draft_save" && m.draftId === null)).toEqual([]);
+
+    await navigate("#/drafts");
+    const drafts = await screen.findByRole("listbox", { name: messages.drafts.title });
+    await pressInShell(within(drafts).getByRole("option", { name: new RegExp(subject) }), "reopen the saved draft");
+    expect((await form()).getByRole("textbox", { name: messages.write.text }).textContent).toContain(latest);
+
+    await act(async () => { handOffComposer(); });
+    await unmountAll();
+    tab("another-fresh-tab");
+    await mountWithDraftServer("#/drafts", [], [], { server });
+    const restore = await screen.findByRole("button", { name: messages.compose.restoreDraft });
+    await pressInShell(restore, "restore the draft in another fresh tab");
+    expect((await form()).getByRole("textbox", { name: messages.write.text }).textContent).toContain(latest);
+  }, 30_000);
 
   it("Send uses the first save's row when the recipient was entered while that save was answering", async () => {
     const server = new DraftServer();

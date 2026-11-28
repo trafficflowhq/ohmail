@@ -2586,6 +2586,13 @@ export function useShellCompose({
         toast(t(why));
         return;
       }
+      // Keep this row's unsaved edits on screen. A flush could save them while the
+      // row captured by this click still contains the earlier version.
+      if (!waiting && !parked && heldRow === d.id && !autosave.holdsOnScreen()) {
+        composeSeeded.current = true;
+        go("compose");
+        return;
+      }
       /* THE ROW A HANDED-OFF SEND'S REFUSAL LEFT gets that press's files back: no row stores them,
          and the composer that held them has moved on (or holds them still, and is replaced here). */
       const owedFiles = [...handedPress.current].find(([, p]) => p.row === d.id);
