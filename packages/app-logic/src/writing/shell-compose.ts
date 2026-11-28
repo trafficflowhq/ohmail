@@ -48,6 +48,7 @@ import {
   composePlan,
   composeSessionId,
   EMPTY_COMPOSE,
+  hasLocalDeletedDraftEdits,
   missingComposeFiles,
   onComposeStorageChanged,
   parseRecipients,
@@ -582,7 +583,7 @@ export function useShellCompose({
       reconcileComposeRecovery(engine, scope, { includeCurrent: true });
       const saved = readComposeDraft(scope);
       fill(saved);
-      if (takeRecoveredComposer(scope) && worthSaving(saved)) {
+      if (takeRecoveredComposer(scope) && worthSaving(saved) && !hasLocalDeletedDraftEdits(scope)) {
         const session = readComposeSession(scope);
         const available = (): boolean => readComposeSession(scope) === session && worthSaving(readComposeDraft(scope));
         restoreOffer = { available, withdraw: () => notice.abort() };
@@ -2257,6 +2258,7 @@ export function useShellCompose({
       setComposeResumed(false);
     },
   });
+  const restoreDeletedDraft = useStableCallback(() => go("compose"));
   settleComposeRef.current = autosave.settleCompose;
   // The engine's kept-as-new-draft list, handed to the composer on each change: it takes its own.
   const keptAsNew = useSyncExternalStore(keptSubscriber(engine),
@@ -3639,6 +3641,7 @@ export function useShellCompose({
     composeReopenedSending: composeHandedOff.current && pressedHere,
     composeResumed,
     restoreClosedCompose: worthSaving(compose) ? undefined : restoreClosedCompose,
+    restoreDeletedDraft: autosave.recoverDeletedDraft && worthSaving(compose) ? restoreDeletedDraft : undefined,
     composeWaitNote: sendCarriesThis ? waitNote : null,
     composeCloseRefusal,
     confirmForward,

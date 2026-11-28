@@ -23,7 +23,7 @@ import { COMPOSE_SEND_KEY, composeBufferFingerprint, replyLanesOf, sendLockOwed,
 import { holdOf, recordForEndedSend, releaseSendLockForRow, sendRecordNames, sendRecordsNaming, type Hold } from "./send-lock.js";
 import {
   clearComposeDraft, clearKnownComposeCopies, clearSavedComposeCopies, clearEndedComposeCopies, composeBufferMatchesRevision,
-  composeDraftKey, composeSessionId, forwardSourceShape, holdsSig, markComposeRowHolds, parseRecipients, readComposeCreates, readComposeDraft,
+  composeDraftKey, composeSessionId, forwardSourceShape, hasLocalDeletedDraftEdits, holdsSig, markComposeRowHolds, parseRecipients, readComposeCreates, readComposeDraft,
   readComposeRow, readComposeRowHolds, readComposeSession, sameRecipientList, storedComposeDraft, whenComposerReady,
   signatureOf, worthSaving, writeComposeCreates, writeComposeRow,
 } from "./compose.js";
@@ -369,6 +369,8 @@ export interface ComposeAutosave {
    * (a tab closed or offline at the time), and are kept rather than cleared.
    */
   elsewhere: ComposeElsewhere | null;
+  /** An edit to a deleted draft is still held in the local composer. */
+  recoverDeletedDraft: boolean;
   /**
    * The account refused the last save (`rolled_back`, not the row's own end): what is on screen is
    * not what Drafts holds, so the surface may not promise it is. Cleared by a save that lands or
@@ -1717,7 +1719,8 @@ export function useComposeAutosave(opts: {
     if ([f.to, f.cc ?? "", f.bcc ?? ""].some((line) => parseRecipients(line).invalid.length > 0)) return false;
     const sig = signatureOf(f);
     // The row's or a create's, an update on the outbox, or the message let go of unchanged.
-    if (keptNow(sig) || pendingLand.current?.signature === sig || abandonedAt.current === sig) return true;
+    if (keptNow(sig) || pendingLand.current?.signature === sig) return true;
+    if (abandonedAt.current === sig) return !hasLocalDeletedDraftEdits(owner.current);
     // The row marker: what the bound row held at this browser's last write (a launch, before adoption).
     const marked = readComposeRowHolds(owner.current);
     if (marked !== null && marked.row === readComposeRow(owner.current) && marked.sig === holdsSig(f)
@@ -1753,5 +1756,6 @@ export function useComposeAutosave(opts: {
   return {
     draftId, adopt, release, discard, flush, firstSave, rowNow, sending, notSent, holdsCreate, awaitCreate, restored, settled, settleCompose, elsewhere, saveRefused, epochNow,
     baseNow, keptAsNew, holdsOnScreen, adoptionAnswered, rowHoldsOnScreen, endWaiting,
+    recoverDeletedDraft: elsewhere?.why === "deleted" && hasLocalDeletedDraftEdits(owner.current),
   };
 }

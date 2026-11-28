@@ -31,6 +31,7 @@ export function DraftsList({ route, plan }: PaneProps) {
   const commands = useContext(FrameContext)?.api.commands;
   const t = useText("drafts");
   const composer = useWritingIfMounted();
+  const restore = route.place === "drafts" ? composer?.restoreDeletedDraft : undefined;
   const writing = route.place === "write" ? composer : null;
   const boundDraft = writing?.plan.mutation.draftId;
   const openDraft = boundDraft ?? route.open;
@@ -128,16 +129,28 @@ export function DraftsList({ route, plan }: PaneProps) {
     <ListColumn
       plan={plan}
       scrollerRef={scroller}
-      head={
-        <ListHead
-          title={t("title")}
-          count={model.draftsSettled && count > 0 ? t("metaCount", { count }) : undefined}
-          aside={<ListMenu label={t("listMenu")} mail />}
-        />
-      }
+      head={<DraftsHead count={model.draftsSettled && count > 0 ? count : undefined} restore={restore} />}
     >
       {rows}
     </ListColumn>
+  );
+}
+
+function DraftsHead({ count, restore }: { count?: number; restore?: () => void }) {
+  const t = useText("drafts");
+  return (
+    <>
+      <ListHead
+        title={t("title")}
+        count={count === undefined ? undefined : t("metaCount", { count })}
+        aside={<ListMenu label={t("listMenu")} mail />}
+      />
+      {restore ? (
+        <RefusalLine start way={{ label: t("restoreDraft"), onPress: restore }}>
+          {t("deletedDraftLocalEdits")}
+        </RefusalLine>
+      ) : null}
+    </>
   );
 }
 

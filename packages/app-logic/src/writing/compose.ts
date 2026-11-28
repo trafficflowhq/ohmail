@@ -941,6 +941,13 @@ export function readComposeRowHolds(owner: StorageScope): ComposeRowHolds | null
   return rowHoldsOf(composeDraftKey(owner));
 }
 
+/** A queued edit may have reached the deleted row. Its local copy can still be reopened. */
+export function hasLocalDeletedDraftEdits(owner: StorageScope): boolean {
+  const marker = readComposeRowHolds(owner);
+  return marker?.gone === true && marker.pending !== undefined && marker.pending !== marker.sig
+    && readComposeRow(owner) === null;
+}
+
 /** Record what the row holds, and write it into the stored buffer now. */
 export function markComposeRowHolds(holds: ComposeRowHolds, owner: StorageScope): void {
   const key = composeDraftKey(owner);
