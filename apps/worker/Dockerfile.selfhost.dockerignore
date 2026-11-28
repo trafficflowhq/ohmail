@@ -22,6 +22,7 @@
 # The build steps the image runs: the host bundler and the esbuild loader it shares with the
 # engine build (the version pin lives there).
 !scripts/bundle-host.mjs
+!scripts/host-watchdog.mjs
 !scripts/engine-bundle.mjs
 
 # The organizer's compile closure — core and db because the organizer names them, db-mail

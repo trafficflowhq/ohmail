@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { setNoticeSink, noticeSinkFor } from "@trafficflow/db";
 import { sealedOpener, setupProdDatabase } from "@trafficflow/db/admin";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
-import { createLogger } from "@trafficflow/core";
+import { createLogger, startProcessWatchdog } from "@trafficflow/core";
 import { aiBootFields } from "@trafficflow/core/ai-provider-env";
 import { awaitDatabase } from "./await-database.js";
 import { processDoor } from "./build-release.js";
@@ -149,6 +149,7 @@ async function main(): Promise<void> {
   const { webClientIpSecret: clientIpSecret, clientIpHeader } = settings.network;
   const eventStreamShutdown = new AbortController();
   const server = makeHttpServer(program.dispatch, {
+    localLiveness: true,
     bodyMaxBytes: cfg.bodyMaxBytes,
     headersTimeoutMs: cfg.headersTimeoutMs,
     requestTimeoutMs: cfg.requestTimeoutMs,
@@ -179,11 +180,13 @@ async function main(): Promise<void> {
   // THE CLOCKS (`clocks.ts`): a self-hosted server's own sending chain and alert clock, armed as
   // they always were; with `TF_API_CLOCKS=1` also the passes a scheduler pokes, under one leader.
   const clocks = program.startClocks();
+  const stopProcessWatchdog = startProcessWatchdog();
 
   let stopping = false;
   const shutdown = (signal: string): void => {
     if (stopping) return;
     stopping = true;
+    stopProcessWatchdog();
     // The clocks first: a pass that has not started must not start over a closing pool. One
     // already in flight finishes — a send mid-flight must finalize its reservation, and an alert
     // pass must not log `alert_pass_failed` at every restart — and the pool closes after it.

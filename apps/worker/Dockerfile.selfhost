@@ -74,6 +74,7 @@ RUN test -f build/host-worker/bin/ohmail-worker.mjs \
 
 # ── Runtime ──────────────────────────────────────────────────────────────────────────────
 FROM base AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 # glibc gives a thread that first allocates under contention its own 64 MB arena and returns
 # those bytes only from the top of one, so a burst leaves them resident for the life of the
@@ -95,9 +96,10 @@ COPY --from=build --chown=node:node /app/build/host-worker /app
 # engine's EXTERNAL memory, not the JS heap — the ceiling does not bound them. The actual
 # memory bound is the per-cycle batch budget in `packages/core/src/adapters/imap-types.ts`.
 # The ceiling is a visibility aid and the known-set memo's room (a quarter of it), only.
-COPY apps/worker/entrypoint.sh /app/bin/entrypoint.sh
+COPY --chmod=0644 apps/worker/entrypoint.sh /app/bin/entrypoint.sh
+COPY --chmod=0644 scripts/host-watchdog.mjs /app/bin/host-watchdog.mjs
 USER node
 # The health server binds PORT (defaulting to 8080), which the compose healthcheck polls.
 EXPOSE 8080
-ENTRYPOINT ["/bin/sh", "/app/bin/entrypoint.sh"]
-CMD ["node", "/app/bin/ohmail-worker.mjs"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/bin/sh", "/app/bin/entrypoint.sh"]
+CMD ["node", "/app/bin/host-watchdog.mjs", "node", "/app/bin/ohmail-worker.mjs"]

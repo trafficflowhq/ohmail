@@ -38,7 +38,7 @@ import {
   type AttachmentStagingStorage,
 } from "@trafficflow/db/cloud";
 import {
-  createLogger, silentLogger, resolveOhboxPolicy, resolveScreeningCutoff, DEFAULT_OHBOX_POLICY, type Logger,
+  createLogger, silentLogger, startProcessWatchdog, resolveOhboxPolicy, resolveScreeningCutoff, DEFAULT_OHBOX_POLICY, type Logger,
   providerAuthservIds,
   MicrosoftTokenProvider, type OAuthTokenProvider, type UpdateSecretPort, type FetchLike,
   type MicrosoftClientCredentials, type MicrosoftClientKind,
@@ -326,6 +326,8 @@ export interface WorkerStats {
    * many others end beside it.
    */
   cycleProgressAt: Date | null;
+  heartbeatAt: number | null;
+  calendarProgress: ReturnType<CalendarRunner["progress"]> | null;
   /** The last rotation's wall clock, and the last completed tail walk's work time (ms). */
   lastRotationMs: number | null;
   lastTailMs: number | null;
@@ -376,6 +378,8 @@ export interface WorkerHooks {
    * (`stop()`) and start over as a waiting start.
    */
   onLockLost?: (err: LockLostError) => void;
+  onLockWatch?: () => void;
+  onStartupDatabaseFault?: (err: unknown) => void;
   onInitialRoster?: (worker: RunningWorker) => void;
   }
 
@@ -1073,6 +1077,7 @@ export async function startWorkerWithLock(
      * the boot beat's place above: which beat comes first is call order, and a claim must not rest on it.
      */
     scope.claimed = false;
+    scope.heartbeatAt = null;
     scope.expected = 0;
     scope.truncated = 0;
     scope.dutyGap = false;
@@ -1535,6 +1540,7 @@ export async function startWorkerWithLock(
         }
       })();
     }, heartbeatMs);
+    hooks.onLockWatch?.();
 
     // Claim leadership and read the entire first roster before any cycle. The provider
     // dials themselves run outside the queue, so each successful attach can get a turn.
@@ -1779,6 +1785,8 @@ export async function startWorkerWithLock(
           apiCron: scope.apiCron?.health() ?? [],
           parkedReader: parkedAccountsReader ? "composed" : "absent",
           cycleProgressAt: cycleProgressAt(),
+          heartbeatAt: scope.heartbeatAt,
+          calendarProgress: scope.calendar?.progress() ?? null,
           lastRotationMs: scope.lastRotationMs,
           lastTailMs: scope.lastTailMs,
           tail: scope.tailPosition(),
@@ -1830,6 +1838,7 @@ export async function startWorkerWithLock(
     if (fault !== null) throw fault;
     return running;
   } catch (err) {
+    hooks.onStartupDatabaseFault?.(err);
     if (running) {
       await running.stop();
       throw err;
@@ -1921,6 +1930,7 @@ export async function runWorkerCli(
         info: (event, fields) => cliLog.info(event, fields),
       }));
 
+      startProcessWatchdog();
       const sup = await runWorkerSupervised({ ...config, logger: cliLog }, {
         onFatal: (err) => { cliLog.error("fatal_after_takeover", { err }); flushExit(1); },
       });

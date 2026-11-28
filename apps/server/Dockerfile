@@ -68,6 +68,7 @@ RUN test -f build/host-server/bin/ohmail-server.mjs \
 
 # ── Runtime: the bundle, its journals, and nothing else ─────────────────────────────────
 FROM base AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 # Heap ceiling below the container cap so the JS engine aborts loggably instead of the
 # kernel SIGKILLing the process — an OOM kill leaves a log that says nothing.
@@ -87,7 +88,9 @@ ENV MALLOC_ARENA_MAX=2
 ARG TF_BUILD_VERSION=""
 ENV TF_BUILD_VERSION=${TF_BUILD_VERSION}
 COPY --from=build --chown=node:node /app/build/host-server /app
+COPY --chmod=0644 scripts/host-watchdog.mjs /app/bin/host-watchdog.mjs
 USER node
 EXPOSE 8080
 # The bundled entry: the process that runs is the one file the build above produced.
-CMD ["node", "/app/bin/ohmail-server.mjs"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "/app/bin/host-watchdog.mjs", "node", "/app/bin/ohmail-server.mjs"]

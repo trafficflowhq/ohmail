@@ -5,6 +5,7 @@ import { calendarRoutes } from "@trafficflow/api/calendar";
 import { calendarNoticeRoutes } from "@trafficflow/api/calendar-notices";
 import type { MailService } from "@trafficflow/services";
 import { startClocks, type ClockHandle, type ClockRow } from "./clocks.js";
+import { observeClocks, type ClockProgress } from "./clock-health.js";
 import {
   alertHeartbeat, alertReadersFor, buildServices, customerMailFor, depsFor, oauthProvider, ownedDbPort,
   pagerArms, pooledDbPort, staffDbFor,
@@ -97,6 +98,7 @@ export function buildProgram(settings: Settings, door: DoorInput): Program {
     billing,
   };
 
+  let clockProgress: (() => Record<string, ClockProgress> | undefined) | undefined;
   const dispatch = makeDispatch({
     // The calendar's routes only beside the calendar's port: one member says both (`buildServices`).
     // With them the two routes a calendar's provider rings, whose door is in the same bag.
@@ -107,6 +109,7 @@ export function buildProgram(settings: Settings, door: DoorInput): Program {
     ...(settings.rotationProof ? { rotationProof: dbRotationProof(settings.rotationProof) } : {}),
     logger,
     buildDeps: (req) => depsFor(req, runtime),
+    clockProgress: () => clockProgress?.(),
   });
 
   return {
@@ -117,7 +120,12 @@ export function buildProgram(settings: Settings, door: DoorInput): Program {
     runtime,
     buildDeps: (req) => depsFor(req, runtime),
     dispatch,
-    startClocks: (seams) => startClocks(runtime, dispatch, seams),
+    startClocks(seams) {
+      const observed = observeClocks(runtime, dispatch, seams?.rows);
+      const clocks = startClocks(observed.runtime, observed.dispatch, seams);
+      clockProgress = clocks ? () => observed.progress(clocks.leading()) : undefined;
+      return clocks;
+    },
     async close() {
       // The send door's kept IMAP connections: closed here, never left to their idle clock.
       await sendConnections.closeAll();

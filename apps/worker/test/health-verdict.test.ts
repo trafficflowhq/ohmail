@@ -74,11 +74,21 @@ function away(waitedMs: number): HealthInput {
   return { ...spare(waitedMs), standby: false, waiting: true, waitingSince: t0 };
 }
 
+it("does not surrender leadership while mail keeps moving past a stale heartbeat", () => {
+  expect(evaluateHealth({ ...base(), now: t0 + 121_000, cycleProgressAt: t0 + 120_000,
+    heartbeatStalledSince: t0 })).toMatchObject({ healthy: true, unhealthyReason: null });
+});
+
 describe("evaluateHealth", () => {
   it("a serving leader is healthy", () => {
     expect(evaluateHealth(base())).toEqual({
       healthy: true, degraded: false, degradedReason: null, unhealthyReason: null,
     });
+  });
+
+  it("reports a hung calendar scan even after an earlier scan failed", () => {
+    expect(evaluateHealth({ ...base(), calendarDatabaseFault: true, calendarStalled: true }))
+      .toMatchObject({ healthy: false, unhealthyReason: "stuck_cycle" });
   });
 
   // ── RULE 1: THE LEADER THAT SERVES NOTHING ───────────────────────────────────────────────
