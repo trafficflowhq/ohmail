@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   COMPOSER_KEY, EMPTY_COMPOSE, clearComposeDraft, composeDraftKey, composeRowKey, composeSessionId,
-  composeSessionKey, composeStillHolds, handOffComposer, readComposeDraft, readComposeRow,
+  composeSessionKey, composeStillHolds, handOffComposer, holdsSig, markComposeRowHolds, readComposeDraft, readComposeRow,
   resetComposerForTest, setComposerScope, writeComposeDraft, writeComposeRow,
 } from "@ohmail/app-logic/writing/compose";
 
@@ -113,6 +113,26 @@ describe("each tab's composer owns its own message-in-progress", () => {
     expect(readComposeDraft(null).subject).toBe("older");
     expect(composeSessionId(null)).toBe("older-session");
     expect(readComposeRow(null)).toBe("older-row");
+  });
+
+  it("keeps both versions when two closed tabs independently edited the same saved draft", () => {
+    const base = message("Garden plans");
+    for (const id of ["first-edit", "second-edit"]) {
+      tab(id);
+      composeSessionId(null);
+      writeComposeRow("shared-row", null);
+      writeComposeDraft({ ...base, body: id }, null);
+      markComposeRowHolds({ row: "shared-row", sig: holdsSig(base), rev: "saved-revision" }, null);
+    }
+    for (const id of ["first-edit", "second-edit"]) {
+      tab(id);
+      handOffComposer();
+    }
+
+    tab("fresh-a");
+    expect(readComposeDraft(null).body).toBe("first-edit");
+    tab("fresh-b");
+    expect(readComposeDraft(null).body).toBe("second-edit");
   });
 
   it("a window the host names keeps its message across a restart that fired no pagehide", () => {

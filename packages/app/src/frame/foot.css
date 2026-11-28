@@ -20,7 +20,7 @@
 
 /* In two columns the report keeps its own margin or the inset, the larger. */
 :root[data-foot="glass"] .fr-frame:not([data-rail="dock"]) .fr-report {
-  bottom: max(calc(var(--edge) + var(--s3)), var(--sys-b, 0px));
+  bottom: calc(max(var(--edge) + var(--s3), var(--sys-b, 0px)) + var(--fr-report-selection-clearance, 0px));
 }
 
 /* A book: the list ends at the fold, less half the larger of the gap and the band the hinge keeps clear. */
